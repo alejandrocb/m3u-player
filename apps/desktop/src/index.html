@@ -1,0 +1,25 @@
+<meta charset="utf-8" />
+<title>Prueba mpv</title>
+<style>
+  html,
+  body {
+    margin: 0;
+    height: 100%;
+    /* Transparente a propósito: el vídeo de mpv está detrás de esta ventana. */
+    background: transparent;
+    color: #fff;
+    font: 14px system-ui, sans-serif;
+  }
+  .aviso {
+    margin: 1rem;
+    padding: 0.75rem 1rem;
+    display: inline-block;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(6px);
+  }
+</style>
+<div class="aviso">
+  Interfaz en ventana superpuesta. Si ves el vídeo detrás de este recuadro, la
+  arquitectura funciona.
+</div>

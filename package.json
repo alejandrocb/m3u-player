@@ -1,0 +1,25 @@
+{
+  "name": "m3u-player",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tools/*"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "probe": "node tools/probe/src/index.ts",
+    "test": "node --test packages/*/test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "start:desktop": "electron apps/desktop",
+    "bench": "node tools/probe/src/bench.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.7.0"
+  }
+}

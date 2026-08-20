@@ -1,0 +1,21 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="" tvg-name="ANUNCIOS DEL SERVER" tvg-logo="" group-title="== NOVEDADES",ANUNCIOS DEL SERVER
+http://host/anuncio
+#EXTINF:-1 tvg-id="24 Horas" tvg-name="24 Horas FHD" tvg-logo="https://cdn/24horashd.png" group-title="== NOTICIAS",24 Horas FHD
+http://host/live/u/p/101.ts
+#EXTINF:-1 tvg-id="24 Horas" tvg-name="24 Horas SD" tvg-logo="https://cdn/24horashd.png" group-title="== NOTICIAS",24 Horas SD
+http://host/live/u/p/102.ts
+#EXTINF:-1 tvg-id="Al Jazeera English HD" tvg-name="Al Jazeera English HD" tvg-logo="https://cdn/aljazeera.png" group-title="== NOTICIAS",Al Jazeera English HD
+http://host/live/u/p/103.ts
+#EXTINF:-1 tvg-id="" tvg-name="Al Jazeera Arabic" tvg-logo="https://cdn/aljazeera.png" group-title="== NOTICIAS",Al Jazeera Arabic
+http://host/live/u/p/104.ts
+#EXTINF:-1 tvg-id="" tvg-name="Pa Quererte (2020) 1080p S1 E47" tvg-logo="" group-title="TV Series OTROS",Pa Quererte (2020) 1080p S1 E47
+http://host/series/u/p/2001.mkv
+#EXTINF:-1 tvg-id="" tvg-name="Pa Quererte (2020) 1080p S1 E48" tvg-logo="" group-title="TV Series OTROS",Pa Quererte (2020) 1080p S1 E48
+http://host/series/u/p/2002.mkv
+#EXTINF:-1 tvg-id="" tvg-name="Pa Quererte (2020) 1080p S2 E1" tvg-logo="" group-title="TV Series NETFLIX",Pa Quererte (2020) 1080p S2 E1
+http://host/series/u/p/2003.mkv
+#EXTINF:-1 tvg-id="" tvg-name="Avatar: La leyenda de Aang 1080p S1 E1" tvg-logo="https://cdn/avatar.jpg" group-title="TV Series NETFLIX",Avatar: La leyenda de Aang 1080p S1 E1
+http://host/series/u/p/2004.mkv
+#EXTINF:-1 tvg-id="" tvg-name="Lola Pater (2017)_720p x264" tvg-logo="https://cdn/lola.jpg" group-title="Peliculas 2017",Lola Pater (2017)_720p x264
+http://host/movie/u/p/3001.mkv

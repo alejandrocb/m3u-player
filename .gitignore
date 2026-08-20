@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+*.log
+.cache/
+.probe-cache/
+playlists/
+downloads/

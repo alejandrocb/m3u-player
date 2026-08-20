@@ -1,0 +1,13 @@
+{
+  "name": "@m3u/probe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "probe": "./src/index.ts"
+  },
+  "dependencies": {
+    "@m3u/core": "*",
+    "@m3u/storage": "*"
+  }
+}

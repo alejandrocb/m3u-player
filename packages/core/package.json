@@ -1,0 +1,11 @@
+{
+  "name": "@m3u/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./m3u": "./src/m3u/index.ts",
+    "./xtream": "./src/xtream/index.ts"
+  }
+}
