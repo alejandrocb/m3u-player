@@ -1,0 +1,7 @@
+# Normaliza finales de línea: LF en el repositorio, para que trabajar desde dos
+# equipos no muestre el proyecto entero como modificado.
+* text=auto eol=lf
+
+# Los ficheros por lotes de Windows conservan CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
