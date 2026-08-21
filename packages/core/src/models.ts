@@ -55,6 +55,18 @@ export interface Movie {
   /** Título limpio, sin calidad, códec ni año. */
   title: string;
   year: number | null;
+  /**
+   * Nota del panel, de 0 a 10. `null` si no la da: la mayoría la trae, pero no
+   * todas —en la lista de referencia, 33 de cada 34 películas—.
+   */
+  rating: number | null;
+  /**
+   * Cuándo entró en el catálogo del proveedor, en segundos de época.
+   *
+   * Es el campo `added` de `player_api.php`. Sirve para ordenar por novedades,
+   * que es lo que uno quiere al abrir la aplicación: ver qué han metido.
+   */
+  added: number | null;
   /** Un mismo título puede estar en varias categorías del proveedor. */
   groups: string[];
   logo: string | null;
@@ -66,9 +78,24 @@ export interface Movie {
 export interface Episode {
   season: number;
   episode: number;
-  /** Título del episodio si el proveedor lo da aparte. Casi nunca. */
+  /**
+   * Título del episodio, ya limpio de la decoración del proveedor.
+   *
+   * Llega como "True Detective - S01E01 - La larga y clara oscuridad" o como
+   * "Outer Banks 1080P S01E01", que no es un título sino el nombre de la serie
+   * otra vez. `null` cuando no queda nada después de quitar esa parte.
+   */
   title: string | null;
+  /** Fotograma del episodio. Medido: lo trae el 85-100 % de la ficción. */
   logo: string | null;
+  /** Sinopsis del episodio. Alrededor de la mitad la traen. */
+  plot: string | null;
+  /** Nota del episodio, de 0 a 10, o `null`. */
+  rating: number | null;
+  /** Año de emisión, sacado de la fecha que da el panel. */
+  year: number | null;
+  /** Duración en segundos, para pintar "48 min". */
+  seconds: number | null;
   groups: string[];
   variants: Variant[];
 }
@@ -82,7 +109,25 @@ export interface Series {
   id: string;
   title: string;
   year: number | null;
+  /** Nota del panel, de 0 a 10, o `null`. */
+  rating: number | null;
+  /**
+   * Última vez que el proveedor la tocó, en segundos de época.
+   *
+   * En series no hay `added`: la API da `last_modified`, que sube al añadir
+   * episodios. Para "lo último que ha entrado" es incluso mejor, porque una
+   * serie en emisión se mueve cada semana.
+   */
+  added: number | null;
   logo: string | null;
+  /**
+   * Identificadores de la serie en el panel Xtream, si vino por ahí.
+   *
+   * Hacen falta para pedir sus temporadas con `get_series_info`, que es una
+   * petición por serie y por eso no se hace en la importación. Van en plural
+   * porque el proveedor repite la misma serie en varias categorías.
+   */
+  panelIds?: number[];
   /**
    * Una misma serie puede aparecer en varios grupos del proveedor
    * ("TV Series NETFLIX" y "TV Series OTROS"), así que se guardan todos.

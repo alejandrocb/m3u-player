@@ -14,7 +14,14 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Library, Variant } from '@m3u/core';
 import { fold } from '@m3u/core';
 
-import { CONTENT_TABLES, SCHEMA_SQL, SCHEMA_VERSION } from './schema.ts';
+import {
+  CONTENT_TABLES,
+  COLUMNAS_MIGRADAS,
+  INDICES_TRAS_MIGRAR_SQL,
+  SCHEMA_FTS_SQL,
+  SCHEMA_SQL,
+  SCHEMA_VERSION,
+} from './schema.ts';
 
 export type OwnerKind = 'channel' | 'movie' | 'episode';
 
@@ -35,6 +42,10 @@ export interface MovieRow {
   id: string;
   title: string;
   year: number | null;
+  /** Nota del panel, de 0 a 10, o null si no la valoró. */
+  rating: number | null;
+  /** Cuándo entró en el catálogo, en segundos de época. */
+  added: number | null;
   logo: string | null;
   tags: string[];
 }
@@ -43,6 +54,8 @@ export interface SeriesRow {
   id: string;
   title: string;
   year: number | null;
+  rating: number | null;
+  added: number | null;
   logo: string | null;
 }
 
@@ -53,6 +66,10 @@ export interface EpisodeRow {
   episode: number;
   title: string | null;
   logo: string | null;
+  plot: string | null;
+  rating: number | null;
+  year: number | null;
+  seconds: number | null;
 }
 
 export interface SearchHit {
@@ -77,6 +94,11 @@ export interface PageOptions {
   offset?: number;
   /** Filtrar por categoría del proveedor. */
   group?: string;
+  /**
+   * `rating` pone arriba lo mejor valorado y `added` lo último que entró en
+   * el catálogo; por defecto va por título.
+   */
+  sort?: 'title' | 'rating' | 'added';
 }
 
 export class LibraryStore {
@@ -95,6 +117,15 @@ export class LibraryStore {
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec('PRAGMA foreign_keys = ON');
     db.exec(SCHEMA_SQL);
+    // La búsqueda va aparte porque FTS5 es opcional en SQLite. La compilación
+    // que trae Node lo incluye, así que aquí siempre debería crearse.
+    db.exec(SCHEMA_FTS_SQL);
+    // Columnas añadidas después de la primera versión: `CREATE TABLE IF NOT
+    // EXISTS` no toca una tabla que ya existe. La lista vive en el esquema,
+    // que es lo que comparten escritorio y Android.
+    for (const { tabla, columna, tipo } of COLUMNAS_MIGRADAS) ensureColumn(db, tabla, columna, tipo);
+    // Estos índices necesitan las columnas de arriba: van los últimos.
+    for (const indice of INDICES_TRAS_MIGRAR_SQL) db.exec(indice);
 
     const store = new LibraryStore(db);
     store.#setMeta('schema_version', String(SCHEMA_VERSION));
@@ -135,11 +166,14 @@ export class LibraryStore {
         'INSERT INTO channel (id, name, sort_name, group_name, logo, tvg_id) VALUES (?, ?, ?, ?, ?, ?)',
       );
       const insertMovie = db.prepare(
-        'INSERT INTO movie (id, title, sort_title, year, logo, tags) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO movie (id, title, sort_title, year, rating, added, logo, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       );
-      const insertSeries = db.prepare('INSERT INTO series (id, title, sort_title, year, logo) VALUES (?, ?, ?, ?, ?)');
+      const insertSeries = db.prepare(
+        'INSERT INTO series (id, title, sort_title, year, rating, added, logo) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      );
       const insertEpisode = db.prepare(
-        'INSERT INTO episode (series_id, season, episode, title, logo) VALUES (?, ?, ?, ?, ?)',
+        `INSERT INTO episode (series_id, season, episode, title, logo, plot, rating, year, seconds)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const insertItemGroup = db.prepare(
         'INSERT OR IGNORE INTO item_group (kind, item_id, group_name) VALUES (?, ?, ?)',
@@ -166,7 +200,16 @@ export class LibraryStore {
       }
 
       for (const movie of library.movies) {
-        insertMovie.run(movie.id, movie.title, fold(movie.title), movie.year, movie.logo, JSON.stringify(movie.tags));
+        insertMovie.run(
+          movie.id,
+          movie.title,
+          fold(movie.title),
+          movie.year,
+          movie.rating,
+          movie.added,
+          movie.logo,
+          JSON.stringify(movie.tags),
+        );
         insertSearch.run(movie.title, 'movie', movie.id);
         for (const group of movie.groups) insertItemGroup.run('movie', movie.id, group);
         saveVariants('movie', movie.id, movie.variants);
@@ -174,7 +217,15 @@ export class LibraryStore {
 
       let episodes = 0;
       for (const series of library.series) {
-        insertSeries.run(series.id, series.title, fold(series.title), series.year, series.logo);
+        insertSeries.run(
+          series.id,
+          series.title,
+          fold(series.title),
+          series.year,
+          series.rating,
+          series.added,
+          series.logo,
+        );
         insertSearch.run(series.title, 'series', series.id);
         for (const group of series.groups) insertItemGroup.run('series', series.id, group);
 
@@ -186,6 +237,10 @@ export class LibraryStore {
               episode.episode,
               episode.title,
               episode.logo,
+              episode.plot,
+              episode.rating,
+              episode.year,
+              episode.seconds,
             );
             episodes++;
             saveVariants('episode', String(result.lastInsertRowid), episode.variants);
@@ -239,40 +294,92 @@ export class LibraryStore {
     return rows.map(toChannel);
   }
 
+  /** Todos los canales por orden alfabético, paginados. */
+  channels(options: PageOptions = {}): ChannelRow[] {
+    const { limit = 100, offset = 0 } = options;
+    const rows = this.#db
+      .prepare(
+        `SELECT id, name, group_name, logo, tvg_id
+           FROM channel ORDER BY sort_name LIMIT ? OFFSET ?`,
+      )
+      .all(limit, offset) as unknown as Array<Record<string, unknown>>;
+    return rows.map(toChannel);
+  }
+
   movies(options: PageOptions = {}): MovieRow[] {
-    const { limit = 100, offset = 0, group } = options;
+    const { limit = 100, offset = 0, group, sort } = options;
+    // Lo que no tiene el dato, al final: `NULL` no es un cero ni una fecha
+    // antiquísima.
+    const orden = ordenDe(sort);
     const rows = group
       ? (this.#db
           .prepare(
-            `SELECT m.id, m.title, m.year, m.logo, m.tags
+            `SELECT m.id, m.title, m.year, m.rating, m.added, m.logo, m.tags
                FROM movie m
                JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
               WHERE g.group_name = ?
-              ORDER BY m.sort_title LIMIT ? OFFSET ?`,
+              ORDER BY ${orden.replace(/(rating|sort_title)/g, 'm.$1')} LIMIT ? OFFSET ?`,
           )
           .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
-          .prepare('SELECT id, title, year, logo, tags FROM movie ORDER BY sort_title LIMIT ? OFFSET ?')
+          .prepare(
+            `SELECT id, title, year, rating, added, logo, tags FROM movie ORDER BY ${orden} LIMIT ? OFFSET ?`,
+          )
           .all(limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toMovie);
   }
 
   series(options: PageOptions = {}): SeriesRow[] {
-    const { limit = 100, offset = 0, group } = options;
+    const { limit = 100, offset = 0, group, sort } = options;
+    const orden = ordenDe(sort);
     const rows = group
       ? (this.#db
           .prepare(
-            `SELECT s.id, s.title, s.year, s.logo
+            `SELECT s.id, s.title, s.year, s.rating, s.added, s.logo
                FROM series s
                JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
               WHERE g.group_name = ?
-              ORDER BY s.sort_title LIMIT ? OFFSET ?`,
+              ORDER BY ${orden.replace(/(rating|sort_title)/g, 's.$1')} LIMIT ? OFFSET ?`,
           )
           .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
-          .prepare('SELECT id, title, year, logo FROM series ORDER BY sort_title LIMIT ? OFFSET ?')
+          .prepare(`SELECT id, title, year, rating, added, logo FROM series ORDER BY ${orden} LIMIT ? OFFSET ?`)
           .all(limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toSeries);
+  }
+
+  /**
+   * Fichas concretas por identificador, en el orden en que se piden.
+   *
+   * Es lo que necesita el grupo de favoritos: los identificadores los tiene el
+   * perfil y hay que rellenarlos con carátula y nota. Se respeta el orden de
+   * entrada —lo marcado más recientemente primero— y por eso se reordena en
+   * memoria: SQL devuelve lo que le da la gana con un `IN`.
+   */
+  moviesById(ids: string[]): MovieRow[] {
+    return enElOrdenPedido(ids, this.#porId('movie', ids).map(toMovie));
+  }
+
+  seriesById(ids: string[]): SeriesRow[] {
+    return enElOrdenPedido(ids, this.#porId('series', ids).map(toSeries));
+  }
+
+  channelsById(ids: string[]): ChannelRow[] {
+    return enElOrdenPedido(ids, this.#porId('channel', ids).map(toChannel));
+  }
+
+  #porId(tabla: 'movie' | 'series' | 'channel', ids: string[]): Array<Record<string, unknown>> {
+    if (ids.length === 0) return [];
+    const huecos = ids.map(() => '?').join(', ');
+    const columnas =
+      tabla === 'movie'
+        ? 'id, title, year, rating, added, logo, tags'
+        : tabla === 'series'
+          ? 'id, title, year, rating, added, logo'
+          : 'id, name, group_name, logo, tvg_id';
+    return this.#db
+      .prepare(`SELECT ${columnas} FROM ${tabla} WHERE id IN (${huecos})`)
+      .all(...ids) as unknown as Array<Record<string, unknown>>;
   }
 
   /** Números de temporada de una serie, con cuántos episodios tiene cada una. */
@@ -289,7 +396,7 @@ export class LibraryStore {
   episodes(seriesId: string, season: number): EpisodeRow[] {
     const rows = this.#db
       .prepare(
-        `SELECT id, series_id, season, episode, title, logo
+        `SELECT id, series_id, season, episode, title, logo, plot, rating, year, seconds
            FROM episode WHERE series_id = ? AND season = ? ORDER BY episode`,
       )
       .all(seriesId, season) as unknown as Array<Record<string, unknown>>;
@@ -318,6 +425,33 @@ export class LibraryStore {
     return rows.map((row) => ({ kind: row.kind as SearchHit['kind'], id: row.ref, title: row.title }));
   }
 
+  /**
+   * Categorías del proveedor en una sección, con cuántas fichas tiene cada una.
+   *
+   * Es lo que alimenta la barra lateral de películas y series: el proveedor ya
+   * reparte el catálogo así, y sin enseñarlo hay que recorrer 18.000 fichas de
+   * una tacada.
+   */
+  categories(kind: 'movie' | 'series'): Array<{ name: string; items: number }> {
+    const rows = this.#db
+      .prepare(
+        `SELECT group_name AS name, COUNT(*) AS items
+           FROM item_group WHERE kind = ?
+          GROUP BY group_name
+          ORDER BY group_name`,
+      )
+      .all(kind) as unknown as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ name: row['name'] as string, items: row['items'] as number }));
+  }
+
+  /** Identificadores de las fichas que hay en una categoría, sea del tipo que sea. */
+  itemsInGroup(group: string): string[] {
+    const rows = this.#db
+      .prepare('SELECT item_id FROM item_group WHERE group_name = ?')
+      .all(group) as unknown as Array<Record<string, unknown>>;
+    return rows.map((row) => row['item_id'] as string);
+  }
+
   counts(): { channels: number; movies: number; series: number; episodes: number } {
     const one = (sql: string): number => (this.#db.prepare(sql).get() as { n: number }).n;
     return {
@@ -327,6 +461,19 @@ export class LibraryStore {
       episodes: one('SELECT COUNT(*) AS n FROM episode'),
     };
   }
+}
+
+/**
+ * Añade una columna si falta, mirando primero qué hay.
+ *
+ * SQLite no tiene `ADD COLUMN IF NOT EXISTS`. Envolver el `ALTER` en un
+ * `try/catch` mudo esconde los fallos de verdad: la columna no aparece y el
+ * error sale mucho después, como un "no such column" incomprensible.
+ */
+function ensureColumn(db: DatabaseSync, table: string, column: string, type: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{ name?: string }>;
+  if (columns.some((row) => row.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
 }
 
 /**
@@ -340,6 +487,25 @@ export function toMatchQuery(text: string): string | null {
   const words = fold(text).split(/\s+/).filter(Boolean);
   if (words.length === 0) return null;
   return words.map((word, index) => (index === words.length - 1 ? `"${word}"*` : `"${word}"`)).join(' ');
+}
+
+/**
+ * El `ORDER BY` de cada criterio.
+ *
+ * Lo que no tiene el dato va al final en los dos criterios que no son el
+ * título: sin nota no es lo mismo que tenerla mala, y sin fecha de alta no es
+ * ser lo más viejo del catálogo.
+ */
+/** Devuelve las filas en el orden en que se pidieron los identificadores. */
+function enElOrdenPedido<T extends { id: string }>(ids: string[], filas: T[]): T[] {
+  const porId = new Map(filas.map((fila) => [fila.id, fila]));
+  return ids.map((id) => porId.get(id)).filter((fila): fila is T => fila !== undefined);
+}
+
+function ordenDe(sort: PageOptions['sort']): string {
+  if (sort === 'rating') return 'rating IS NULL, rating DESC, sort_title';
+  if (sort === 'added') return 'added IS NULL, added DESC, sort_title';
+  return 'sort_title';
 }
 
 function toChannel(row: Record<string, unknown>): ChannelRow {
@@ -357,6 +523,8 @@ function toMovie(row: Record<string, unknown>): MovieRow {
     id: row['id'] as string,
     title: row['title'] as string,
     year: (row['year'] as number | null) ?? null,
+    rating: (row['rating'] as number | null) ?? null,
+    added: (row['added'] as number | null) ?? null,
     logo: (row['logo'] as string | null) ?? null,
     tags: JSON.parse((row['tags'] as string) || '[]') as string[],
   };
@@ -367,6 +535,8 @@ function toSeries(row: Record<string, unknown>): SeriesRow {
     id: row['id'] as string,
     title: row['title'] as string,
     year: (row['year'] as number | null) ?? null,
+    rating: (row['rating'] as number | null) ?? null,
+    added: (row['added'] as number | null) ?? null,
     logo: (row['logo'] as string | null) ?? null,
   };
 }
@@ -379,5 +549,9 @@ function toEpisode(row: Record<string, unknown>): EpisodeRow {
     episode: row['episode'] as number,
     title: (row['title'] as string | null) ?? null,
     logo: (row['logo'] as string | null) ?? null,
+    plot: (row['plot'] as string | null) ?? null,
+    rating: (row['rating'] as number | null) ?? null,
+    year: (row['year'] as number | null) ?? null,
+    seconds: (row['seconds'] as number | null) ?? null,
   };
 }

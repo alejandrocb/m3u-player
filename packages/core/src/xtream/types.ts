@@ -52,6 +52,8 @@ export interface XtreamVodStream {
   category_id?: string;
   rating?: string;
   year?: string;
+  /** Cuándo entró en el catálogo, en segundos de época y como cadena. */
+  added?: string;
 }
 
 export interface XtreamSeries {
@@ -63,6 +65,8 @@ export interface XtreamSeries {
   releaseDate?: string;
   category_id?: string;
   rating?: string;
+  /** En series no hay `added`: esto sube cada vez que le añaden episodios. */
+  last_modified?: string;
 }
 
 export interface XtreamEpisode {
@@ -70,7 +74,17 @@ export interface XtreamEpisode {
   episode_num: number | string;
   title: string;
   container_extension: string;
-  info?: { duration?: string; plot?: string; movie_image?: string };
+  season?: number | string;
+  added?: string;
+  info?: {
+    duration?: string;
+    /** Segundos, pero llega a 0 en bastantes episodios: hay que mirar `duration`. */
+    duration_secs?: number | string;
+    plot?: string;
+    movie_image?: string;
+    rating?: number | string;
+    releaseDate?: string;
+  };
 }
 
 export interface XtreamSeriesInfo {
@@ -78,4 +92,34 @@ export interface XtreamSeriesInfo {
   info?: { name?: string; cover?: string; plot?: string; releaseDate?: string };
   /** Clave = número de temporada. */
   episodes?: Record<string, XtreamEpisode[]>;
+}
+
+/**
+ * Un programa del EPG, tal y como lo manda `get_short_epg`.
+ *
+ * `title` y `description` vienen en base64, y los tiempos **en UTC**: tanto
+ * los sellos como las cadenas `start` y `end`, que parecen hora local y no lo
+ * son. Fiarse de ellas pinta la programación con dos horas de desfase en
+ * España.
+ */
+export interface XtreamEpgListing {
+  id: string;
+  epg_id: string;
+  title: string;
+  lang?: string;
+  /** "2026-08-21 08:35:00", en UTC pese a las apariencias. */
+  start: string;
+  end: string;
+  description: string;
+  channel_id: string;
+  /** Epoch en segundos, como cadena. Es lo que hay que usar. */
+  start_timestamp: string;
+  stop_timestamp: string;
+  /** 1 en el que está emitiéndose ahora, según el reloj del servidor. */
+  now_playing?: number;
+  has_archive?: number;
+}
+
+export interface XtreamShortEpg {
+  epg_listings?: XtreamEpgListing[];
 }

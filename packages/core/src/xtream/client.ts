@@ -14,6 +14,7 @@ import type {
   XtreamSeries,
   XtreamSeriesInfo,
   XtreamServerInfo,
+  XtreamShortEpg,
   XtreamUserInfo,
   XtreamVodStream,
 } from './types.ts';
@@ -130,6 +131,17 @@ export class XtreamClient {
     this.request<XtreamSeries[]>('get_series', categoryId ? { category_id: categoryId } : {});
 
   seriesInfo = (seriesId: number | string) => this.request<XtreamSeriesInfo>('get_series_info', { series_id: seriesId });
+
+  /**
+   * Programación de un canal: lo que echan ahora y lo que viene detrás.
+   *
+   * Se pide por canal y no de una vez porque el EPG entero es enorme: medido
+   * contra el panel real, `get_short_epg` son 3,4 KB por canal y
+   * `get_simple_data_table` 186 KB —314 programas, una semana— para el mismo
+   * canal. Con la lista delante y el foco moviéndose, solo vale el primero.
+   */
+  shortEpg = (streamId: number | string, limit = 8) =>
+    this.request<XtreamShortEpg>('get_short_epg', { stream_id: streamId, limit });
 
   /** URL del EPG completo en XMLTV. */
   epgUrl(): string {

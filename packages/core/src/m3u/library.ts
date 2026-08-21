@@ -28,6 +28,7 @@ import type {
   Variant,
 } from '../models.ts';
 import { cleanGroup, parseChannelName, parseName, qualityRank, slug } from '../normalize.ts';
+import { ordenarPor } from '../ordenar.ts';
 
 /** Acumuladores con Set para no repetir grupos ni etiquetas. */
 interface MovieDraft {
@@ -118,27 +119,33 @@ export function buildLibrary(entries: RawEntry[]): Library {
 
   for (const channel of channels.values()) sortVariants(channel.variants);
 
-  const channelList = [...channels.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const channelList = ordenarPor([...channels.values()], (canal) => canal.name);
 
-  const groupList: ChannelGroup[] = [...groups.entries()]
-    .map(([name, ids]) => ({ name, channelIds: [...ids] }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+  const groupList: ChannelGroup[] = ordenarPor(
+    [...groups.entries()].map(([name, ids]) => ({ name, channelIds: [...ids] })),
+    (grupo) => grupo.name,
+  );
 
-  const movieList: Movie[] = [...movies.values()]
-    .map((draft) => ({
+  const movieList: Movie[] = ordenarPor(
+    [...movies.values()].map((draft) => ({
       id: draft.id,
       title: draft.title,
       year: draft.year,
+      // El M3U no trae valoraciones ni fechas de alta: eso solo viene por la
+      // API del panel.
+      rating: null,
+      added: null,
       logo: draft.logo,
       groups: [...draft.groups],
       tags: [...draft.tags],
       variants: sortVariants(draft.variants),
-    }))
-    .sort((a, b) => a.title.localeCompare(b.title, 'es'));
+    })),
+    (pelicula) => pelicula.title,
+  );
 
   let episodes = 0;
-  const seriesList: Series[] = [...seriesById.values()]
-    .map((draft) => {
+  const seriesList: Series[] = ordenarPor(
+    [...seriesById.values()].map((draft) => {
       const bySeason = new Map<number, Episode[]>();
       for (const episodeDraft of draft.episodes.values()) {
         episodes++;
@@ -147,6 +154,12 @@ export function buildLibrary(entries: RawEntry[]): Library {
           episode: episodeDraft.episode,
           title: episodeDraft.title,
           logo: episodeDraft.logo,
+          // La ficha del episodio —sinopsis, nota, duración— la da
+          // `get_series_info`; por M3U no llega nada de esto.
+          plot: null,
+          rating: null,
+          year: null,
+          seconds: null,
           groups: [...episodeDraft.groups],
           variants: sortVariants(episodeDraft.variants),
         };
@@ -163,12 +176,15 @@ export function buildLibrary(entries: RawEntry[]): Library {
         id: draft.id,
         title: draft.title,
         year: draft.year,
+        rating: null,
+        added: null,
         logo: draft.logo,
         groups: [...draft.groups],
         seasons,
       };
-    })
-    .sort((a, b) => a.title.localeCompare(b.title, 'es'));
+    }),
+    (serie) => serie.title,
+  );
 
   const stats: LibraryStats = {
     entries: entries.length,

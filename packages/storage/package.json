@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
   },
   "dependencies": {
-    "@m3u/core": "*"
+    "@m3u/core": "*",
+    "@m3u/ui": "*"
   }
 }

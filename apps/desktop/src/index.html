@@ -1,25 +1,228 @@
 <meta charset="utf-8" />
-<title>Prueba mpv</title>
+<title>Prueba de orden Z</title>
 <style>
   html,
   body {
     margin: 0;
     height: 100%;
-    /* Transparente a propósito: el vídeo de mpv está detrás de esta ventana. */
+    overflow: hidden;
+    /* Transparente a propósito: mpv pinta detrás, en la misma ventana. Un
+       fondo opaco aquí taparía el vídeo por completo. */
     background: transparent;
     color: #fff;
-    font: 14px system-ui, sans-serif;
+    font: 14px/1.45 system-ui, sans-serif;
+    user-select: none;
   }
-  .aviso {
-    margin: 1rem;
-    padding: 0.75rem 1rem;
-    display: inline-block;
-    border-radius: 8px;
+
+  .marca {
+    position: fixed;
+    padding: 0.4rem 0.7rem;
+    border: 2px solid #35d07f;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.55);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .ne { top: 12px; left: 12px; }
+  .se { bottom: 64px; left: 12px; }
+  .so { bottom: 64px; right: 12px; }
+
+  /* Botón de cerrar: en pantalla completa no hay marco de ventana, así que
+     esta es la única salida junto al "atrás" repetido. Tamaño generoso
+     porque el objetivo son pantallas táctiles y mandos a distancia. */
+  .cerrar {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    width: 52px;
+    height: 52px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
     background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(6px);
+    color: #fff;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
   }
+  /* El foco tiene que verse: en un televisor se navega con el mando, y sin
+     esto no hay forma de saber qué está seleccionado. */
+  .cerrar:focus-visible,
+  .cerrar:hover {
+    outline: none;
+    border-color: #35d07f;
+    box-shadow: 0 0 0 4px rgba(53, 208, 127, 0.35);
+  }
+
+  .panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(520px, 76vw);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  }
+  .panel h1 {
+    margin: 0;
+    padding: 0.8rem 1rem;
+    font-size: 15px;
+    background: #101418;
+    border-bottom: 2px solid #35d07f;
+  }
+  .panel ol {
+    margin: 0;
+    padding: 0.8rem 1rem 0.9rem 2.1rem;
+    background: rgba(16, 20, 24, 0.35);
+  }
+  .panel li { margin-bottom: 0.35rem; }
+  .panel li:last-child { margin-bottom: 0; }
+
+  .controles {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0 1rem;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0));
+  }
+  .boton {
+    width: 30px;
+    height: 30px;
+    flex: none;
+    border-radius: 50%;
+    background: #35d07f;
+    color: #06131c;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+  }
+  .barra {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.28);
+    overflow: hidden;
+  }
+  /* La animación demuestra que la interfaz SIGUE repintándose mientras mpv
+     decodifica. Un fotograma congelado del HTML también "se vería". */
+  .barra i {
+    display: block;
+    height: 100%;
+    width: 30%;
+    border-radius: 2px;
+    background: #35d07f;
+    animation: avanza 3.5s linear infinite;
+  }
+  @keyframes avanza {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(333%); }
+  }
+  .latido {
+    width: 10px;
+    height: 10px;
+    flex: none;
+    border-radius: 50%;
+    background: #35d07f;
+    animation: parpadea 1s ease-in-out infinite;
+  }
+  @keyframes parpadea {
+    50% { opacity: 0.15; }
+  }
+
+  /* Aviso de salida, al estilo de Android: el primer "atrás" avisa y el
+     segundo cierra. */
+  .aviso-salida {
+    position: fixed;
+    left: 50%;
+    bottom: 84px;
+    transform: translateX(-50%);
+    padding: 0.7rem 1.2rem;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.85);
+    font-size: 15px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+  }
+  .aviso-salida.visible { opacity: 1; }
 </style>
-<div class="aviso">
-  Interfaz en ventana superpuesta. Si ves el vídeo detrás de este recuadro, la
-  arquitectura funciona.
+
+<div class="marca ne">1 · arriba izquierda</div>
+<div class="marca se">3 · abajo izquierda</div>
+<div class="marca so">4 · abajo derecha</div>
+
+<button class="cerrar" id="cerrar" aria-label="Cerrar la aplicación">&#10005;</button>
+
+<div class="panel">
+  <h1>Prueba de orden Z · interfaz sobre vídeo</h1>
+  <ol>
+    <li>¿Se ven las <b>esquinas</b> numeradas y esta barra inferior?</li>
+    <li>¿Se ve <b>el vídeo a través</b> de este bloque translúcido?</li>
+    <li>Para salir: el botón <b>✕</b>, o <b>atrás</b> (Esc) dos veces.</li>
+  </ol>
 </div>
+
+<div class="controles">
+  <div class="boton">&#9654;</div>
+  <div class="barra"><i></i></div>
+  <div class="latido"></div>
+</div>
+
+<div class="aviso-salida" id="aviso">Pulsa atrás otra vez para salir</div>
+
+<script>
+  const aviso = document.getElementById('aviso');
+  const cerrar = document.getElementById('cerrar');
+
+  // Margen en el que un segundo "atrás" cierra la app. Android da dos
+  // segundos; aquí algo más, que con un mando se tarda en apuntar.
+  const MARGEN_MS = 3000;
+  let esperandoConfirmacion = false;
+  let temporizador = null;
+
+  /**
+   * Cuando exista navegación de verdad —grupo, ficha, temporada—, "atrás" debe
+   * retroceder un paso y ofrecer la salida solo en la pantalla inicial.
+   * Mientras no la haya, siempre estamos en la raíz.
+   */
+  function hayDondeVolver() {
+    return false;
+  }
+
+  function atras() {
+    if (hayDondeVolver()) return;
+
+    if (esperandoConfirmacion) {
+      clearTimeout(temporizador);
+      window.app.cerrar();
+      return;
+    }
+
+    esperandoConfirmacion = true;
+    aviso.classList.add('visible');
+    temporizador = setTimeout(() => {
+      esperandoConfirmacion = false;
+      aviso.classList.remove('visible');
+    }, MARGEN_MS);
+  }
+
+  // Escape es el "atrás" del teclado; BrowserBack y GoBack los mandan los
+  // mandos de televisor y algunos teclados multimedia. Backspace se incluye
+  // porque es el atrás de muchos lanzadores de TV.
+  const TECLAS_ATRAS = new Set(['Escape', 'Backspace', 'BrowserBack', 'GoBack']);
+
+  window.addEventListener('keydown', (evento) => {
+    if (!TECLAS_ATRAS.has(evento.key)) return;
+    evento.preventDefault();
+    atras();
+  });
+
+  cerrar.addEventListener('click', () => window.app.cerrar());
+</script>

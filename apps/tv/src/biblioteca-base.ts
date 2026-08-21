@@ -1,0 +1,360 @@
+/**
+ * El puerto `Biblioteca` servido desde la base del aparato.
+ *
+ * Las consultas son las mismas que en el escritorio, contra el mismo esquema.
+ * La diferencia está en las series: sus temporadas no se importan —serían
+ * 6.598 peticiones—, así que la primera vez que se abre una se piden al panel
+ * y se guardan aquí. La segunda visita ya sale de la base.
+ */
+
+import type { DB } from '@op-engineering/op-sqlite';
+
+import type { Season } from '@m3u/core';
+import { fold } from '@m3u/core';
+import type {
+  Ambito,
+  Biblioteca,
+  CanalFicha,
+  EpisodioFicha,
+  GrupoFicha,
+  Pagina,
+  PeliculaFicha,
+  Resultado,
+  SerieFicha,
+  TemporadaFicha,
+  Variante,
+} from '@m3u/ui';
+
+import { panelIdsDe } from './basedatos';
+
+type Fila = Record<string, unknown>;
+
+function filas(db: DB, sql: string, params: unknown[] = []): Fila[] {
+  return (db.executeSync(sql, params).rows ?? []) as Fila[];
+}
+
+export interface OpcionesBase {
+  /** Trae del panel las temporadas de una serie que aún no están guardadas. */
+  /** El título va para poder quitarlo del nombre de cada episodio. */
+  traerTemporadas: (panelIds: number[], tituloSerie: string) => Promise<Season[]>;
+  /** Falso si no hubo FTS5: entonces se busca con LIKE. */
+  conBusquedaRapida: boolean;
+}
+
+/**
+ * El `ORDER BY` de cada criterio, con el prefijo de la tabla si hace falta.
+ *
+ * Lo que no tiene el dato va al final salvo ordenando por título: no tener
+ * nota no es tenerla mala, ni no saber cuándo entró es ser lo más viejo.
+ */
+function ordenDe(orden: Pagina['orden'], prefijo = ''): string {
+  if (orden === 'valoracion') {
+    return `${prefijo}rating IS NULL, ${prefijo}rating DESC, ${prefijo}sort_title`;
+  }
+  if (orden === 'reciente') {
+    return `${prefijo}added IS NULL, ${prefijo}added DESC, ${prefijo}sort_title`;
+  }
+  return `${prefijo}sort_title`;
+}
+
+/** Fichas sueltas por identificador, para el grupo de favoritos. */
+function porId(db: DB, tabla: string, columnas: string, ids: string[]): Fila[] {
+  if (ids.length === 0) return [];
+  const huecos = ids.map(() => '?').join(', ');
+  return filas(db, `SELECT ${columnas} FROM ${tabla} WHERE id IN (${huecos})`, ids);
+}
+
+/** SQL devuelve un `IN` en el orden que quiere; el perfil los quiere por fecha. */
+function enElOrdenPedido<T extends { id: string }>(ids: string[], fichas: T[]): T[] {
+  const porClave = new Map(fichas.map((ficha) => [ficha.id, ficha]));
+  return ids.map((id) => porClave.get(id)).filter((ficha): ficha is T => ficha !== undefined);
+}
+
+export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
+  /** Guarda las temporadas recién traídas para no volver a pedirlas. */
+  const guardarTemporadas = (serieId: string, temporadas: Season[]): void => {
+    db.executeSync('BEGIN IMMEDIATE');
+    try {
+      for (const temporada of temporadas) {
+        for (const episodio of temporada.episodes) {
+          const resultado = db.executeSync(
+            `INSERT OR IGNORE INTO episode
+               (series_id, season, episode, title, logo, plot, rating, year, seconds)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              serieId,
+              episodio.season,
+              episodio.episode,
+              episodio.title,
+              episodio.logo,
+              episodio.plot,
+              episodio.rating,
+              episodio.year,
+              episodio.seconds,
+            ],
+          );
+          const id = resultado.insertId;
+          if (id === undefined || id === null) continue;
+          for (const variante of episodio.variants) {
+            db.executeSync(
+              'INSERT OR IGNORE INTO variant (owner_kind, owner_id, url, quality, rank) VALUES (?, ?, ?, ?, ?)',
+              ['episode', String(id), variante.url, variante.quality, variante.rank],
+            );
+          }
+        }
+      }
+      db.executeSync('COMMIT');
+    } catch (error) {
+      db.executeSync('ROLLBACK');
+      throw error;
+    }
+  };
+
+  /** Se asegura de que la serie tenga sus episodios, pidiéndolos si no están. */
+  const asegurarEpisodios = async (serieId: string): Promise<void> => {
+    const hay = filas(db, 'SELECT 1 FROM episode WHERE series_id = ? LIMIT 1', [serieId]);
+    if (hay.length > 0) return;
+
+    const panelIds = panelIdsDe(db, serieId);
+    if (panelIds.length === 0) return;
+
+    const titulo = (filas(db, 'SELECT title FROM series WHERE id = ?', [serieId])[0]?.title as string) ?? '';
+    const temporadas = await opciones.traerTemporadas(panelIds, titulo);
+    if (temporadas.length > 0) guardarTemporadas(serieId, temporadas);
+  };
+
+  return {
+    async grupos(): Promise<GrupoFicha[]> {
+      return filas(
+        db,
+        `SELECT g.name AS name, COUNT(c.id) AS canales
+           FROM channel_group g
+           LEFT JOIN channel c ON c.group_name = g.name
+          GROUP BY g.name
+          ORDER BY g.position`,
+      ).map((fila) => ({ nombre: fila.name as string, canales: Number(fila.canales) }));
+    },
+
+    async canalesDeGrupo(grupo: string): Promise<CanalFicha[]> {
+      return filas(db, 'SELECT id, name, group_name, logo FROM channel WHERE group_name = ? ORDER BY sort_name', [
+        grupo,
+      ]).map((fila) => ({
+        id: fila.id as string,
+        nombre: fila.name as string,
+        grupo: fila.group_name as string,
+        logo: (fila.logo as string) ?? null,
+      }));
+    },
+
+    async canales(pagina: Pagina): Promise<CanalFicha[]> {
+      return filas(db, 'SELECT id, name, group_name, logo FROM channel ORDER BY sort_name LIMIT ? OFFSET ?', [
+        pagina.limite,
+        pagina.desde,
+      ]).map((fila) => ({
+        id: fila.id as string,
+        nombre: fila.name as string,
+        grupo: fila.group_name as string,
+        logo: (fila.logo as string) ?? null,
+      }));
+    },
+
+    async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
+      const consulta = pagina.grupo
+        ? `SELECT m.id, m.title, m.year, m.rating, m.logo
+             FROM movie m
+             JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
+            WHERE g.group_name = ?
+            ORDER BY ${ordenDe(pagina.orden, 'm.')}
+            LIMIT ? OFFSET ?`
+        : `SELECT id, title, year, rating, logo FROM movie
+            ORDER BY ${ordenDe(pagina.orden)}
+            LIMIT ? OFFSET ?`;
+      const params = pagina.grupo
+        ? [pagina.grupo, pagina.limite, pagina.desde]
+        : [pagina.limite, pagina.desde];
+
+      return filas(db, consulta, params).map((fila) => ({
+        id: fila.id as string,
+        titulo: fila.title as string,
+        anio: (fila.year as number) ?? null,
+        valoracion: (fila.rating as number) ?? null,
+        logo: (fila.logo as string) ?? null,
+      }));
+    },
+
+    async series(pagina: Pagina): Promise<SerieFicha[]> {
+      const consulta = pagina.grupo
+        ? `SELECT s.id, s.title, s.year, s.rating, s.logo
+             FROM series s
+             JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
+            WHERE g.group_name = ?
+            ORDER BY ${ordenDe(pagina.orden, 's.')}
+            LIMIT ? OFFSET ?`
+        : `SELECT id, title, year, rating, logo FROM series
+            ORDER BY ${ordenDe(pagina.orden)}
+            LIMIT ? OFFSET ?`;
+      const params = pagina.grupo
+        ? [pagina.grupo, pagina.limite, pagina.desde]
+        : [pagina.limite, pagina.desde];
+
+      return filas(db, consulta, params).map((fila) => ({
+        id: fila.id as string,
+        titulo: fila.title as string,
+        anio: (fila.year as number) ?? null,
+        valoracion: (fila.rating as number) ?? null,
+        logo: (fila.logo as string) ?? null,
+      }));
+    },
+
+    async temporadas(serieId: string): Promise<TemporadaFicha[]> {
+      await asegurarEpisodios(serieId);
+      return filas(
+        db,
+        'SELECT season, COUNT(*) AS episodios FROM episode WHERE series_id = ? GROUP BY season ORDER BY season',
+        [serieId],
+      ).map((fila) => ({ numero: Number(fila.season), episodios: Number(fila.episodios) }));
+    },
+
+    async episodios(serieId: string, temporada: number): Promise<EpisodioFicha[]> {
+      await asegurarEpisodios(serieId);
+      return filas(
+        db,
+        `SELECT id, season, episode, title, logo, plot, rating, year, seconds
+           FROM episode WHERE series_id = ? AND season = ? ORDER BY episode`,
+        [serieId, temporada],
+      ).map((fila) => ({
+        id: Number(fila.id),
+        temporada: Number(fila.season),
+        numero: Number(fila.episode),
+        titulo: (fila.title as string) ?? null,
+        imagen: (fila.logo as string) ?? null,
+        resumen: (fila.plot as string) ?? null,
+        valoracion: (fila.rating as number) ?? null,
+        anio: (fila.year as number) ?? null,
+        segundos: (fila.seconds as number) ?? null,
+      }));
+    },
+
+    async peliculasPorId(ids: string[]): Promise<PeliculaFicha[]> {
+      return enElOrdenPedido(
+        ids,
+        porId(db, 'movie', 'id, title, year, rating, logo', ids).map((fila) => ({
+          id: fila.id as string,
+          titulo: fila.title as string,
+          anio: (fila.year as number) ?? null,
+          valoracion: (fila.rating as number) ?? null,
+          logo: (fila.logo as string) ?? null,
+        })),
+      );
+    },
+
+    async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
+      return enElOrdenPedido(
+        ids,
+        porId(db, 'series', 'id, title, year, rating, logo', ids).map((fila) => ({
+          id: fila.id as string,
+          titulo: fila.title as string,
+          anio: (fila.year as number) ?? null,
+          valoracion: (fila.rating as number) ?? null,
+          logo: (fila.logo as string) ?? null,
+        })),
+      );
+    },
+
+    async canalesPorId(ids: string[]): Promise<CanalFicha[]> {
+      return enElOrdenPedido(
+        ids,
+        porId(db, 'channel', 'id, name, group_name, logo', ids).map((fila) => ({
+          id: fila.id as string,
+          nombre: fila.name as string,
+          grupo: fila.group_name as string,
+          logo: (fila.logo as string) ?? null,
+        })),
+      );
+    },
+
+    async categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
+      return filas(
+        db,
+        `SELECT group_name AS nombre, COUNT(*) AS fichas
+           FROM item_group WHERE kind = ?
+          GROUP BY group_name
+          ORDER BY group_name`,
+        [tipo === 'pelicula' ? 'movie' : 'series'],
+      ).map((fila) => ({ nombre: fila.nombre as string, canales: Number(fila.fichas) }));
+    },
+
+    async buscar(texto: string, ambito?: Ambito): Promise<Resultado[]> {
+      const limpio = fold(texto);
+      if (!limpio) return [];
+
+      const aResultado = (fila: Fila): Resultado => ({
+        tipo: fila.kind === 'channel' ? 'canal' : fila.kind === 'movie' ? 'pelicula' : 'serie',
+        id: fila.ref as string,
+        titulo: fila.title as string,
+      });
+
+      // El índice de texto no sabe de categorías: se acota después.
+      const enGrupo = ambito?.grupo
+        ? new Set(
+            filas(db, 'SELECT item_id FROM item_group WHERE group_name = ?', [ambito.grupo]).map(
+              (fila) => fila.item_id as string,
+            ),
+          )
+        : null;
+      const acotar = (resultados: Resultado[]): Resultado[] =>
+        resultados.filter(
+          (resultado) =>
+            (!ambito?.tipo || resultado.tipo === ambito.tipo) && (!enGrupo || enGrupo.has(resultado.id)),
+        );
+
+      if (opciones.conBusquedaRapida) {
+        // Palabra a palabra y entrecomillado: FTS5 se atraganta con la
+        // puntuación que escribe el usuario.
+        const consulta = limpio
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((palabra, indice, todas) => (indice === todas.length - 1 ? `"${palabra}"*` : `"${palabra}"`))
+          .join(' ');
+        try {
+          return acotar(
+            filas(db, 'SELECT title, kind, ref FROM search WHERE search MATCH ? ORDER BY rank LIMIT 200', [
+              consulta,
+            ]).map(aResultado),
+          );
+        } catch (error) {
+          console.warn('[base] la búsqueda rápida falló, se prueba con LIKE', error);
+        }
+      }
+
+      const patron = `%${limpio}%`;
+      return acotar(
+        [
+          ...filas(db, "SELECT name AS title, 'channel' AS kind, id AS ref FROM channel WHERE sort_name LIKE ? LIMIT 50", [patron]),
+          ...filas(db, "SELECT title, 'movie' AS kind, id AS ref FROM movie WHERE sort_title LIKE ? LIMIT 50", [patron]),
+          ...filas(db, "SELECT title, 'series' AS kind, id AS ref FROM series WHERE sort_title LIKE ? LIMIT 50", [patron]),
+        ].map(aResultado),
+      );
+    },
+
+    async totales() {
+      const cuenta = (tabla: string): number =>
+        Number((filas(db, `SELECT COUNT(*) AS n FROM ${tabla}`)[0]?.n as number) ?? 0);
+      return {
+        canales: cuenta('channel'),
+        peliculas: cuenta('movie'),
+        series: cuenta('series'),
+        episodios: cuenta('episode'),
+      };
+    },
+
+    async variantes(clase, id): Promise<Variante[]> {
+      const dueno = clase === 'canal' ? 'channel' : clase === 'pelicula' ? 'movie' : 'episode';
+      return filas(
+        db,
+        'SELECT url, quality FROM variant WHERE owner_kind = ? AND owner_id = ? ORDER BY rank DESC',
+        [dueno, id],
+      ).map((fila) => ({ url: fila.url as string, calidad: (fila.quality as string) ?? null }));
+    },
+  };
+}

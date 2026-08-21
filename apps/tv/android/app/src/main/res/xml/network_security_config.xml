@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Se permite tráfico sin cifrar a propósito.
+
+  Los paneles Xtream de estos proveedores sirven por HTTP: el de referencia
+  anuncia `server_protocol: http` y `https_port: 0`, así que no hay alternativa
+  con TLS. Sin esto, la compilación de release bloquea las peticiones y la app
+  no puede ni descargar la lista ni reproducir nada.
+
+  El coste hay que tenerlo presente: usuario y contraseña viajan en claro en
+  cada petición, porque van dentro de la propia URL. Quien comparta red puede
+  leerlos. Si algún día el proveedor ofrece HTTPS, esto debería restringirse a
+  los dominios que lo necesiten con <domain-config>.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

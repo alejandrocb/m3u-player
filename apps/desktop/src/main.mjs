@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, Menu, app, ipcMain } from 'electron';
 
 import { MpvPlayer, findMpv } from './mpv.mjs';
 
@@ -23,13 +23,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
 
 function parseArgs(argv) {
-  const options = { url: null, autoExit: 0, software: false };
+  const options = { url: null, autoExit: 0, software: false, ventana: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--auto-exit') options.autoExit = Number(argv[++i] ?? 0);
     // Salida de vídeo por software: evita el plano de superposición de
     // hardware, que tapa la interfaz saltándose el orden Z.
     else if (arg === '--sw') options.software = true;
+    // El destino son tablets, televisores y móviles: la app va a pantalla
+    // completa siempre. En desarrollo estorba, y para eso está `--ventana`.
+    else if (arg === '--ventana') options.ventana = true;
     else if (!arg.startsWith('-')) options.url = arg;
   }
   return options;
@@ -50,66 +53,68 @@ function redact(url) {
 }
 
 const options = parseArgs(process.argv.slice(app.isPackaged ? 1 : 2));
-const url = options.url ?? testUrl();
+
+// `M3U_URL` antes que el argumento: la línea de comandos de un proceso la puede
+// leer cualquiera desde el Administrador de tareas, y estas URLs llevan el
+// usuario y la contraseña del panel dentro.
+const url = process.env.M3U_URL ?? options.url ?? testUrl();
 
 let player = null;
 
 app.whenReady().then(async () => {
-  // Ventana anfitriona: solo aloja a mpv. No lleva interfaz porque Chromium
-  // pinta una superficie opaca sobre toda la ventana y taparía el vídeo.
+  // Una sola ventana: aloja a mpv y a la interfaz a la vez.
+  //
+  // Dentro de la ventana, mpv crea una ventana hija (clase "mpv") y Chromium
+  // otra (clase "Intermediate D3D Window"). Medido en Electron 43 + mpv 0.41,
+  // **Chromium queda por encima**, así que la interfaz se dibuja sobre el
+  // vídeo sin hacer nada especial. Lo único imprescindible es que la ventana
+  // no pinte un fondo opaco, o taparía el vídeo con él: de ahí `transparent`
+  // y el fondo con alfa cero.
+  //
+  // Antes esto se resolvía con dos ventanas —una anfitriona y una superpuesta
+  // marcada como siempre-encima—, partiendo de que era mpv quien se subía.
+  // Con estas versiones es al revés, y la segunda ventana solo servía para
+  // tapar el vídeo de negro.
+  //
+  // El precio de `transparent` en Windows: Electron marca la ventana como no
+  // redimensionable y le quita WS_THICKFRAME, así que **el usuario no puede
+  // arrastrar los bordes**. Medido: `setResizable(true)` no lo revierte y
+  // `setSize` se ignora, pero `setBounds`, `maximize` y la pantalla completa
+  // sí funcionan. Cuando llegue la interfaz habrá que dar marco propio y
+  // redimensionar con `setBounds`, o aceptar tamaño fijo más maximizar.
+  // Sin menú: en un televisor o una tablet no hay a quién servirle un "File,
+  // Edit, View", y en pantalla completa solo roba sitio.
+  Menu.setApplicationMenu(null);
+
   const window_ = new BrowserWindow({
     width: 1280,
     height: 720,
-    backgroundColor: '#000000',
-    title: 'Prueba mpv',
-    webPreferences: { nodeIntegration: false, contextIsolation: true },
-  });
-
-  // La interfaz va en una ventana transparente por encima. Es la única forma
-  // de tener HTML sobre el vídeo, y la que permitirá poner controles y fichas
-  // encima de la reproducción.
-  const overlay = new BrowserWindow({
-    parent: window_,
-    frame: false,
+    // Pantalla completa de partida, que es como se va a usar. Con la ventana
+    // sin marco no queda botón de cerrar del sistema: lo pone la interfaz.
+    fullscreen: !options.ventana,
     transparent: true,
-    resizable: false,
-    movable: false,
-    hasShadow: false,
-    skipTaskbar: true,
-    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    backgroundColor: '#00000000',
+    title: 'Prueba mpv',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: join(here, 'preload.cjs'),
+    },
   });
-  await overlay.loadFile(join(here, 'index.html'));
 
-  // Cuando mpv empieza a decodificar sube su ventana hija por encima de todo y
-  // taparía la interfaz. La solución es marcar la superposición como
-  // siempre-encima: una ventana de nivel superior gana a la ventana hija de
-  // otra ventana.
-  //
-  // Pero "siempre encima" a secas la deja flotando sobre las demás
-  // aplicaciones, así que se activa solo mientras la app tiene el foco.
-  const raiseOverlay = () => {
-    if (!overlay.isDestroyed()) overlay.setAlwaysOnTop(true, 'pop-up-menu');
-  };
-  const releaseOverlay = () => {
-    if (!overlay.isDestroyed()) overlay.setAlwaysOnTop(false);
-  };
+  // El <title> del HTML se impondría al de la ventana; el nombre lo decide la
+  // app, no el documento.
+  window_.on('page-title-updated', (event) => event.preventDefault());
 
-  window_.on('focus', raiseOverlay);
-  window_.on('blur', releaseOverlay);
-  window_.on('minimize', releaseOverlay);
-  window_.on('restore', raiseOverlay);
-  if (window_.isFocused()) raiseOverlay();
+  // Salir es cosa de la interfaz: el botón de cerrar y el "atrás" repetido.
+  ipcMain.on('app:cerrar', () => app.quit());
 
-  // La superposición sigue a la ventana anfitriona en tamaño y posición.
-  const syncOverlay = () => overlay.setBounds(window_.getContentBounds());
-  syncOverlay();
-  window_.on('resize', syncOverlay);
-  window_.on('move', syncOverlay);
-  window_.on('closed', () => overlay.destroy());
+  await window_.loadFile(join(here, 'index.html'));
 
   // El HWND de la ventana, que es lo que mpv necesita para empotrarse.
   const handleBuffer = window_.getNativeWindowHandle();
-  const handle = process.platform === 'win32' ? handleBuffer.readBigUInt64LE() : handleBuffer.readBigUInt64LE();
+  const handle = handleBuffer.readBigUInt64LE();
 
   console.log(`\n== Prueba de reproducción ==`);
   console.log(`  mpv:      ${findMpv()}`);

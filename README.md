@@ -17,8 +17,19 @@ Todo se ejecuta en local: las credenciales del panel no salen de la máquina.
 | Árbitro de conexión (`max_connections`) | pendiente |
 | Almacenamiento en SQLite (`node:sqlite`) | listo, medido con la lista real |
 | Búsqueda global (FTS5) | lista |
-| Reproductor (Electron 43 + mpv) | reproduce; orden Z pendiente de confirmar |
-| Interfaz | pendiente |
+| Reproductor (Electron 43 + mpv) | reproduce, con la interfaz encima del vídeo |
+| Pantalla completa y salida (botón / atrás ×2) | listas |
+| Navegación y foco para mando (`packages/ui`) | listos, con tests |
+| Barra de grupos en las tres secciones y en la serie | lista, con tests |
+| Favoritos por perfil, con pulsación larga | listos, con tests |
+| Parrilla del directo (EPG por canal) | lista, con tests |
+| Orden por título, valoración o novedades | listo, con tests |
+| Presentador y puerto de datos, con adaptador SQLite | listos, con tests |
+| Alta de listas y sesión persistente | listas, con tests |
+| Catálogo por `player_api.php`, sin descargar el M3U | listo, con tests |
+| Biblioteca guardada en el aparato, con refresco a los 3 días | lista |
+| App para Android, con reproductor (ExoPlayer) | navega y reproduce |
+| Interfaz de escritorio (la vista) | pendiente |
 | Descarga a disco | pendiente |
 
 ## Comprobado contra el panel real
@@ -28,9 +39,28 @@ Todo se ejecuta en local: las credenciales del panel no salen de la máquina.
 - **La fusión por calidad absorbe 35.000 duplicados**: las películas bajan de
   23.179 entradas a 17.968 fichas, y los episodios de 194.820 a 164.967.
 - `player_api.php` responde y `get_series_info` devuelve las temporadas hechas.
-- **`max_connections: 1`**. Reproducir y descargar se excluyen mutuamente, y un
-  mpv zombi deja la cuenta bloqueada. De ahí el árbitro de conexión.
+- **La ficha del episodio llega en esa misma respuesta.** Medido sobre las
+  categorías de ficción: de 270 episodios, imagen en el 85-100 %, sinopsis en
+  algo más de la mitad, nota en dos de cada tres, fecha en todos y duración en
+  casi todos. `duration_secs` llega a cero a menudo y hay que leer `duration`
+  ("00:57:00").
+- **La fecha de alta está en `added`**, salvo en series, que solo dan
+  `last_modified`. Es lo que ordena por novedades.
+- **El EPG existe y es utilizable**: `get_short_epg` son 3,4 KB por canal
+  —seis programas con título, sinopsis y horas— frente a los 186 KB de
+  `get_simple_data_table`. Cobertura medida: GENERALISTAS 21/21, MOVISTAR
+  15/15, SERIES 52/53, NOTICIAS 8/11; en cambio A3Player 0/12 y ARABES 0/10.
+  Los títulos van en base64 y **los tiempos en UTC**.
+- **`max_connections` varía según la cuenta**: 1 en la primera lista y 3 en una
+  segunda del mismo proveedor. Con una sola ranura, reproducir y descargar se
+  excluyen, y un mpv zombi deja la cuenta bloqueada. El árbitro tiene que leer
+  ese número del handshake en vez de suponerlo.
 - mpv se empotra en la ventana de Electron y decodifica por hardware (d3d11va).
+  Probado con una película del panel: MKV con H.264 y **AC-3 de 6 canales**, que
+  es justo lo que Chromium no reproduce. La interfaz se dibuja encima del vídeo.
+- **`active_cons` del handshake no es fiable.** Marcaba 0 con una película
+  sonando y oscilaba entre 0 y 1 con la app cerrada y sin procesos vivos. El
+  árbitro de conexión no puede usarlo como semáforo: le toca reconocer el 403.
 - Electron 43 trae Node 24.18 y Chrome 150, y `node:sqlite` con FTS5 funciona
   dentro del proceso principal: la app no necesita módulos nativos.
 - **El panel tarda ~30 segundos en liberar la conexión** tras cerrar el
@@ -52,7 +82,9 @@ packages/core/     TypeScript puro, sin Node ni Electron: reutilizable en móvil
   src/m3u/           parser y constructor de biblioteca
   src/xtream/        cliente de player_api.php
 packages/storage/  persistencia en SQLite (node:sqlite, sin módulos nativos)
+packages/ui/       navegación, foco y puerto de datos: sin plataforma, para TV
 apps/desktop/      Electron + mpv
+apps/tv/           React Native (react-native-tvos) para Android TV
 tools/probe/       diagnóstico y medición sobre una lista real
 samples/           lista de ejemplo para pruebas
 ```
@@ -98,6 +130,64 @@ npm test
 npm run typecheck
 ```
 
+## App de Android TV
+
+`apps/tv` es la app de verdad: **Electron no se ejecuta en un televisor**, así
+que `apps/desktop` queda como banco de pruebas del reproductor y prototipo
+visual. Lo que se comparte entre las dos es `packages/core` y `packages/ui`.
+
+Necesita JDK 17, el SDK de Android con la plataforma 36 y `build-tools` 36.0.0.
+La ruta del SDK va en `apps/tv/android/local.properties`, que no se sube.
+
+Arrancar Metro y, con un aparato conectado, compilar e instalar:
+
+```bash
+npm start --workspace m3utv
+```
+
+```bash
+npm run android --workspace m3utv
+```
+
+Empaquetar el bundle sin necesidad de SDK, útil para comprobar que las
+importaciones del monorepo resuelven:
+
+```bash
+cd apps/tv && npx react-native bundle --platform android --dev true --entry-file index.js --bundle-output /tmp/bundle.js --assets-dest /tmp/assets
+```
+
+### Trabajar contra el aparato sin cable
+
+Con el aparato enchufado por USB una sola vez, se le dice que escuche por red y
+a partir de ahí se trabaja por wifi:
+
+```bash
+adb tcpip 5555
+```
+
+```bash
+adb connect <ip-del-aparato>:5555
+```
+
+La IP sale de `adb shell ip -f inet addr show wlan0`. Después:
+
+```bash
+adb reverse tcp:8081 tcp:8081
+```
+
+**Esa redirección es lo que conecta la app con Metro**, y se pierde cada vez
+que cambia el transporte: al quitar el cable, al reconectar por wifi o al
+reiniciar `adb`. Si la app arranca con la pantalla roja de "no se pudo conectar
+al servidor de desarrollo", casi siempre es eso y no el código.
+
+El modo TCP tampoco sobrevive a reiniciar el aparato: hay que volver a
+enchufarlo y repetir `adb tcpip`. Para que aguante reinicios está la
+depuración inalámbrica con código de emparejamiento (`adb pair`), que es de
+Android 11 en adelante.
+
+Cuando ya no se está iterando, el APK de release no necesita nada de esto: el
+JavaScript va dentro y funciona sin Metro ni portátil.
+
 ## Decisiones tomadas
 
 - **Xtream primero, M3U como plan B.** Si `player_api.php` responde, las series
@@ -133,12 +223,51 @@ plano y con WAL activado se puede leer la biblioteca anterior mientras tanto.
 
 ## Orden Z del vídeo
 
-Chromium y mpv se disputan quién se dibuja encima dentro de la misma ventana:
-mientras mpv no ha empezado a decodificar se ve el HTML, y en cuanto arranca el
-vídeo mpv sube su ventana hija por encima y tapa la interfaz.
+Dentro de la ventana conviven dos ventanas hijas: la de mpv (clase `mpv`) y la
+superficie de Chromium (clase `Intermediate D3D Window`). Quién se dibuja
+encima decide si se ve el vídeo o la interfaz.
 
-Por eso la app usa **dos ventanas**: la anfitriona solo aloja a mpv, y la
-interfaz vive en una ventana transparente superpuesta. Esa superposición se
-marca como siempre-encima —una ventana de nivel superior gana a la ventana hija
-de otra—, pero **solo mientras la app tiene el foco**, porque si no se queda
-flotando sobre el resto de aplicaciones del escritorio.
+**Medido en Electron 43.4.1 con mpv 0.41: gana Chromium.** Enumerando las hijas
+en orden Z, la superficie de Chromium sale por encima de la de mpv:
+
+```
+Z0 (arriba)  'Intermediate D3D Window'   visible  1264x681
+Z1 (debajo)  'mpv'                       visible  1264x681
+```
+
+Eso hace que la interfaz se dibuje sobre el vídeo sin trucos. La única
+condición es que la ventana **no pinte un fondo opaco**, porque ese fondo tapa
+el vídeo: por eso la ventana se crea con `transparent: true` y alfa cero, y el
+HTML lleva `background: transparent`.
+
+Antes se daba por hecho lo contrario —que mpv subía su ventana hija al empezar
+a decodificar— y se usaban dos ventanas, una anfitriona para el vídeo y otra
+superpuesta para la interfaz, marcada como siempre-encima. Con estas versiones
+eso mostraba **una pantalla negra**: mpv reproducía correctamente (socket de
+control respondiendo, `vo-configured: true`, tiempo avanzando), pero el fondo
+opaco de la anfitriona lo tapaba. Se comprobó igual en D3D11 y en `--sw`.
+
+Comprobado con una película real del panel (MKV, H.264 y AC-3 5.1) decodificando
+por `d3d11va`: el vídeo se ve debajo de la interfaz y a través de los bloques
+translúcidos. El plano de superposición de hardware no llega a aparecer.
+
+Al verificarlo, ojo con las capturas de pantalla: el vídeo acelerado puede salir
+negro en la captura y verse perfectamente en el monitor. Conviene contrastar
+preguntando a mpv por su socket (`vo-configured`, `time-pos`, `width`) y
+enumerando las ventanas hijas en orden Z.
+
+### El precio: la ventana no se redimensiona a mano
+
+`transparent: true` en Windows hace que Electron marque la ventana como no
+redimensionable. Medido:
+
+| Operación | Resultado |
+|---|---|
+| Arrastrar los bordes | **no** (la ventana no tiene `WS_THICKFRAME`) |
+| `setResizable(true)` | no lo revierte, `isResizable()` sigue en `false` |
+| `setSize()` | se ignora |
+| `setBounds()` | funciona |
+| `maximize()` / pantalla completa | funcionan |
+
+Así que la interfaz tendrá que traer marco propio y redimensionar con
+`setBounds`, o conformarse con tamaño fijo más maximizar.

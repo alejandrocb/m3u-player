@@ -1,0 +1,9 @@
+// Rutas apuntando a la raíz del monorepo: npm iza los `node_modules` de los
+// workspaces, así que el plugin de Gradle de React Native no está en
+// apps/tv/node_modules sino en la raíz del repo, tres niveles más arriba.
+pluginManagement { includeBuild("../../../node_modules/@react-native/gradle-plugin") }
+plugins { id("com.facebook.react.settings") }
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'm3utv'
+include ':app'
+includeBuild('../../../node_modules/@react-native/gradle-plugin')
