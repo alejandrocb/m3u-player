@@ -48,6 +48,7 @@ export function Parrilla({
   canal,
   programacion,
   conVideo,
+  enfocada,
   onCaja,
   onAbrir,
   respectoA,
@@ -57,6 +58,8 @@ export function Parrilla({
   programacion: Programacion;
   /** true cuando el reproductor está puesto encima del hueco. */
   conVideo?: boolean;
+  /** El mando está sobre el vídeo: se marca, que con mando no hay puntero. */
+  enfocada?: boolean;
   /** Avisa de dónde está el hueco para que el vídeo se coloque ahí. */
   onCaja?: (caja: Caja) => void;
   /**
@@ -157,7 +160,12 @@ export function Parrilla({
         cuando la hay, el reproductor se coloca justo encima y este contenido
         queda detrás sin estorbar.
       */}
-      <Pressable ref={hueco} style={estilos.marco} onPress={onAbrir} onLayout={medir}>
+      <Pressable
+        ref={hueco}
+        style={[estilos.marco, enfocada && estilos.marcoEnfocado]}
+        onPress={onAbrir}
+        onLayout={medir}
+      >
         {conVideo ? null : canal.logo ? (
           <Image source={{ uri: canal.logo }} style={estilos.logo} resizeMode="contain" />
         ) : (
@@ -224,6 +232,10 @@ const estilos = StyleSheet.create({
   },
   centrada: {
     justifyContent: 'center',
+  },
+  marcoEnfocado: {
+    borderColor: VERDE,
+    borderWidth: 3,
   },
   marco: {
     alignItems: 'center',

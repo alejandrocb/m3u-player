@@ -227,6 +227,13 @@ function BibliotecaVista({
   const [aPantallaCompleta, setAPantallaCompleta] = useState(true);
   /** Dónde ha quedado el hueco del vídeo dentro de la columna. */
   const [cajaVista, setCajaVista] = useState<Caja | null>(null);
+  /** El mando está sobre la vista previa, no sobre la lista de canales. */
+  const [focoEnVideo, setFocoEnVideo] = useState(false);
+  /** El mando está en la cabecera —buscar, ajustes, perfil— y no en la rejilla. */
+  const [enCabecera, setEnCabecera] = useState(false);
+  const [focoCabecera, setFocoCabecera] = useState(0);
+  /** Cuál de las opciones del panel de ajustes tiene el mando encima. */
+  const [focoAjustes, setFocoAjustes] = useState(0);
   const [avisoSalida, setAvisoSalida] = useState(false);
 
   const presentador = useRef<Presentador | null>(null);
@@ -341,15 +348,30 @@ function BibliotecaVista({
     if (!estado) return;
     if (estado.formato === 'canales') {
       if (!reproduciendo && aPantallaCompleta) setAPantallaCompleta(false);
-    } else if (reproduciendo && !aPantallaCompleta) {
-      setReproduciendo(null);
-      setAPantallaCompleta(true);
+    } else {
+      if (focoEnVideo) setFocoEnVideo(false);
+      if (reproduciendo && !aPantallaCompleta) {
+        setReproduciendo(null);
+        setAPantallaCompleta(true);
+      }
     }
-  }, [estado, reproduciendo, aPantallaCompleta]);
+  }, [estado, reproduciendo, aPantallaCompleta, focoEnVideo]);
+
+  // Cambiar de pantalla devuelve el mando al contenido: la cabecera de la
+  // pantalla nueva puede tener otros botones, o ninguno.
+  useEffect(() => {
+    setEnCabecera(false);
+  }, [estado?.titulo]);
 
   const atras = useCallback((): boolean => {
     const instancia = presentador.current;
     if (!instancia) return false;
+
+    // El panel de ajustes se cierra antes que nada: es lo que está encima.
+    if (verAjustes) {
+      setVerAjustes(false);
+      return true;
+    }
 
     // Desde el vídeo entero se vuelve a la vista previa, que es de donde se
     // vino: cerrarlo del todo obligaría a esperar a que el panel suelte la
@@ -386,7 +408,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -455,7 +477,65 @@ function BibliotecaVista({
       case 'down':
       case 'left':
       case 'right': {
-        if (reproduciendo) return;
+        // Con el panel de ajustes abierto, el mando es suyo: es lo que hay
+        // encima de todo y lo demás queda detrás.
+        if (verAjustes) {
+          if (evento.eventType === 'left') {
+            setFocoAjustes((actual) => Math.max(0, actual - 1));
+          } else if (evento.eventType === 'right') {
+            setFocoAjustes((actual) => Math.min(opcionesAjustes.length - 1, actual + 1));
+          } else if (evento.eventType === 'up') {
+            // Arriba y abajo saltan entre las dos filas: columnas y orden.
+            setFocoAjustes((actual) => (actual >= COLUMNAS_POSIBLES.length ? 0 : actual));
+          } else if (evento.eventType === 'down') {
+            setFocoAjustes((actual) =>
+              actual < COLUMNAS_POSIBLES.length ? COLUMNAS_POSIBLES.length : actual,
+            );
+          }
+          return;
+        }
+
+        // La cabecera: se entra subiendo desde la primera fila y se sale
+        // bajando. Sin esto, en un televisor no hay forma de llegar a buscar
+        // ni a los ajustes, porque no hay dedo que los toque.
+        if (enCabecera) {
+          if (evento.eventType === 'left') {
+            setFocoCabecera((actual) => Math.max(0, actual - 1));
+          } else if (evento.eventType === 'right') {
+            setFocoCabecera((actual) => Math.min(botonesCabecera.length - 1, actual + 1));
+          } else if (evento.eventType === 'down') {
+            setEnCabecera(false);
+          }
+          return;
+        }
+        if (
+          evento.eventType === 'up' &&
+          botonesCabecera.length > 0 &&
+          !estado?.lateral?.dentro &&
+          (estado?.foco ?? 0) < (estado?.columnas ?? 1)
+        ) {
+          setFocoCabecera((actual) => Math.min(actual, botonesCabecera.length - 1));
+          setEnCabecera(true);
+          return;
+        }
+
+        // Con el vídeo entero, las teclas son suyas. Con la vista previa no:
+        // ahí el mando sigue gobernando la lista de canales, que es lo que se
+        // está mirando —antes esto cortaba el mando entero en el directo, y
+        // la pantalla se quedaba muerta—.
+        if (reproduciendo && aPantallaCompleta) return;
+
+        // La derecha salta de la lista al vídeo, y la izquierda vuelve: es el
+        // camino que en una tablet hace el dedo tocando la vista previa.
+        if (focoEnVideo) {
+          if (evento.eventType === 'left') setFocoEnVideo(false);
+          return;
+        }
+        if (evento.eventType === 'right' && esDirecto.current && reproduciendo && !estado?.lateral?.dentro) {
+          setFocoEnVideo(true);
+          return;
+        }
+
         const direccion = {
           up: 'arriba',
           down: 'abajo',
@@ -476,6 +556,19 @@ function BibliotecaVista({
       }
 
       case 'select':
+        if (verAjustes) {
+          opcionesAjustes[focoAjustes]?.();
+          return;
+        }
+        if (enCabecera) {
+          botonesCabecera[focoCabecera]?.onPress();
+          return;
+        }
+        // Aceptar sobre la vista previa la abre entera.
+        if (focoEnVideo) {
+          setAPantallaCompleta(true);
+          return;
+        }
         aceptar();
         break;
 
@@ -487,11 +580,157 @@ function BibliotecaVista({
     }
   });
 
+  // Los hooks van todos antes del primer `return`: tenerlos detrás hacía
+  // que React contara un número distinto en cada pintado y la aplicación
+  // se cerraba nada más entrar en la biblioteca.
+  /**
+   * Las opciones del panel de ajustes, seguidas: primero las columnas y
+   * detrás los criterios de orden.
+   *
+   * Van como una sola lista porque el mando las recorre así, aunque en
+   * pantalla estén en dos filas con su rótulo.
+   */
+  const cambiarColumnas = useCallback(
+    async (cuantas: number) => {
+      await perfiles.guardarAjuste(perfil.id, 'columnas', String(cuantas));
+      setAjustes((previos) => ({ ...previos, columnas: cuantas }));
+      setVerAjustes(false);
+    },
+    [perfiles, perfil],
+  );
+
+  const cambiarOrden = useCallback(
+    async (clave: Ajustes['orden']) => {
+      await perfiles.guardarAjuste(perfil.id, 'orden', clave);
+      setAjustes((previos) => ({ ...previos, orden: clave }));
+      setVerAjustes(false);
+      // Se reordena la pantalla en la que estamos: recrear el presentador
+      // devolvería al inicio, y lo que uno quiere es ver esta misma
+      // categoría ordenada de otra manera.
+      presentador.current?.ordenarPor(clave).then(setEstado);
+    },
+    [perfiles, perfil],
+  );
+
+  const ORDENES: Array<[Ajustes['orden'], string]> = [
+    ['titulo', 'Título'],
+    ['valoracion', 'Valoración'],
+    ['reciente', 'Novedades'],
+  ];
+
   if (!estado) return <Espera texto="Cargando la biblioteca…" />;
 
   esDirecto.current = estado.formato === 'canales';
 
   const enInicio = presentador.current?.pantalla.tipo === 'inicio';
+
+
+  const opcionesAjustes: Array<() => void> = [
+    ...COLUMNAS_POSIBLES.map((cuantas) => () => void cambiarColumnas(cuantas)),
+    ...ORDENES.map(([clave]) => () => void cambiarOrden(clave)),
+  ];
+
+  /**
+   * Los botones de la cabecera, en el orden en que los recorre el mando.
+   *
+   * Se arman como datos y no como JSX suelto porque con un mando hay que
+   * poder señalar cuál está enfocado y ejecutarlo desde el manejador de
+   * teclas: en la tele no hay dedo que los alcance.
+   */
+  const botonesCabecera: Array<{ texto: string; onPress: () => void }> = [
+    ...(enInicio || estado.lateral ? [{ texto: 'Buscar', onPress: abrirBuscador }] : []),
+    ...(enInicio ? [{ texto: 'Actualizar', onPress: onActualizar }] : []),
+    ...(estado.lateral ? [{ texto: '⚙', onPress: () => setVerAjustes((abierto) => !abierto) }] : []),
+    ...(enInicio ? [{ texto: perfil.nombre, onPress: onCambiarPerfil }] : []),
+    ...(enInicio ? [{ texto: 'Cerrar sesión', onPress: onCerrarSesion }] : []),
+  ];
+
+  /** La barra de categorías, temporadas o grupos. Solo en las pantallas que la tienen. */
+  const barraLateral = estado.lateral ? (
+    <View style={[estilos.barra, estado.lateral.dentro && estilos.barraEnfocada]}>
+      <FlatList
+        data={estado.lateral.opciones}
+        keyExtractor={(opcion) => (opcion.favoritos ? 'favoritos' : (opcion.grupo ?? 'todas'))}
+        extraData={estado.lateral}
+        renderItem={({ item, index }) => {
+          // El grupo de favoritos no tiene nombre de categoría, así que se
+          // compara por su marca y no por `grupo`, que es null.
+          const activa = item.favoritos
+            ? estado.lateral!.enFavoritos
+            : !estado.lateral!.enFavoritos && item.grupo === estado.lateral!.activa;
+          const enfocada = estado.lateral!.dentro && index === estado.lateral!.foco;
+          return (
+            <Pressable
+              style={[estilos.categoria, activa && estilos.categoriaActiva, enfocada && estilos.categoriaEnfocada]}
+              onPress={() =>
+                presentador.current
+                  ?.elegirCategoria(item.grupo, { favoritos: item.favoritos })
+                  .then(setEstado)
+              }
+            >
+              <Text style={[estilos.categoriaTexto, activa && estilos.textoEnfocado]} numberOfLines={2}>
+                {item.favoritos ? '♥  Favoritos' : item.nombre}
+              </Text>
+              {item.cuantos !== null ? (
+                <Text style={estilos.categoriaCuantos}>{numero(item.cuantos)}</Text>
+              ) : null}
+            </Pressable>
+          );
+        }}
+      />
+    </View>
+  ) : null;
+
+  /**
+   * La rejilla —o la lista— con el contenido de la pantalla.
+   *
+   * Va envuelta en una vista con `flex`. Un `ScrollView` puesto directamente
+   * dentro de un contenedor en fila no siempre recibe el ancho: en la tele se
+   * quedaba en cuarenta píxeles y las fichas salían como tiras verticales,
+   * con el título partido letra a letra. El envoltorio le fija el reparto.
+   */
+  const rejilla = (
+    <View style={estilos.zonaLista}>
+    <FlatList
+      ref={lista}
+      data={estado.elementos}
+      // Cambiar el número de columnas obliga a rehacer la lista entera.
+      key={`columnas-${estado.columnas}`}
+      numColumns={estado.columnas}
+      keyExtractor={(elemento) => elemento.id}
+      columnWrapperStyle={estado.columnas > 1 ? estilos.fila : undefined}
+      contentContainerStyle={estilos.contenido}
+      // Con miles de fichas, solo se monta lo que se ve: es lo que hace que
+      // el desplazamiento vaya fino y que las imágenes se pidan por tandas.
+      initialNumToRender={12}
+      windowSize={5}
+      // `removeClippedSubviews` iba aquí: en Android 8 dejaba las filas con
+      // altura cero —la lista se veía como una raya— y en la tele no había
+      // biblioteca que valiera. Es un fallo conocido de esa optimización en
+      // versiones antiguas, y sin ella la lista sigue yendo fina.
+      onEndReachedThreshold={0.6}
+      onEndReached={() => presentador.current?.cargarMas().then(setEstado)}
+      ListFooterComponent={
+        estado.hayMas ? <ActivityIndicator style={estilos.pie} color={VERDE} /> : null
+      }
+      style={estilos.listaPrincipal}
+      renderItem={({ item, index }) => (
+        <Ficha
+          elemento={item}
+          enfocado={index === estado.foco && !estado.lateral?.dentro}
+          formato={estado.formato}
+          columnas={estado.columnas}
+          // A partir de seis por fila la carátula es estrecha y el texto de
+          // siempre no cabe: las pastillas y el título se encogen con ella.
+          apretada={estado.columnas >= 6}
+          onPress={() => tocar(index)}
+          onLongPress={() => mantener(index)}
+        />
+        )}
+      />
+    </View>
+  );
+
 
   return (
     // Dos capas: la de dentro lleva los márgenes de la interfaz y la de fuera
@@ -513,31 +752,20 @@ function BibliotecaVista({
             </Text>
           ) : null}
         </View>
-        {enInicio || estado.lateral ? (
+        {botonesCabecera.length > 0 ? (
           <View style={estilos.botonera}>
-            <Pressable style={estilos.botonCabecera} onPress={abrirBuscador}>
-              <Text style={estilos.cerrarSesionTexto}>Buscar</Text>
-            </Pressable>
-            {enInicio ? (
-              <Pressable style={estilos.botonCabecera} onPress={onActualizar}>
-                <Text style={estilos.cerrarSesionTexto}>Actualizar</Text>
+            {botonesCabecera.map((boton, indice) => (
+              <Pressable
+                key={boton.texto}
+                style={[
+                  estilos.botonCabecera,
+                  enCabecera && focoCabecera === indice && estilos.botonCabeceraEnfocado,
+                ]}
+                onPress={boton.onPress}
+              >
+                <Text style={estilos.cerrarSesionTexto}>{boton.texto}</Text>
               </Pressable>
-            ) : null}
-            {estado.lateral ? (
-              <Pressable style={estilos.botonCabecera} onPress={() => setVerAjustes((abierto) => !abierto)}>
-                <Text style={estilos.cerrarSesionTexto}>⚙</Text>
-              </Pressable>
-            ) : null}
-            {enInicio ? (
-              <Pressable style={estilos.botonCabecera} onPress={onCambiarPerfil}>
-                <Text style={estilos.cerrarSesionTexto}>{perfil.nombre}</Text>
-              </Pressable>
-            ) : null}
-            {enInicio ? (
-              <Pressable style={estilos.botonCabecera} onPress={onCerrarSesion}>
-                <Text style={estilos.cerrarSesionTexto}>Cerrar sesión</Text>
-              </Pressable>
-            ) : null}
+            ))}
           </View>
         ) : null}
       </View>
@@ -546,15 +774,15 @@ function BibliotecaVista({
         <View style={estilos.ajustes}>
           <Text style={estilos.ajustesTitulo}>Carátulas por fila</Text>
           <View style={estilos.ajustesFila}>
-            {COLUMNAS_POSIBLES.map((cuantas) => (
+            {COLUMNAS_POSIBLES.map((cuantas, indice) => (
               <Pressable
                 key={cuantas}
-                style={[estilos.opcion, ajustes.columnas === cuantas && estilos.opcionActiva]}
-                onPress={async () => {
-                  await perfiles.guardarAjuste(perfil.id, 'columnas', String(cuantas));
-                  setAjustes({ ...ajustes, columnas: cuantas });
-                  setVerAjustes(false);
-                }}
+                style={[
+                  estilos.opcion,
+                  ajustes.columnas === cuantas && estilos.opcionActiva,
+                  focoAjustes === indice && estilos.opcionEnfocada,
+                ]}
+                onPress={() => void cambiarColumnas(cuantas)}
               >
                 <Text
                   style={[estilos.opcionTexto, ajustes.columnas === cuantas && estilos.opcionTextoActiva]}
@@ -566,25 +794,15 @@ function BibliotecaVista({
           </View>
           <Text style={[estilos.ajustesTitulo, estilos.ajustesSeparado]}>Ordenar por</Text>
           <View style={estilos.ajustesFila}>
-            {(
-              [
-                ['titulo', 'Título'],
-                ['valoracion', 'Valoración'],
-                ['reciente', 'Novedades'],
-              ] as const
-            ).map(([clave, nombre]) => (
+            {ORDENES.map(([clave, nombre], indice) => (
               <Pressable
                 key={clave}
-                style={[estilos.opcion, ajustes.orden === clave && estilos.opcionActiva]}
-                onPress={async () => {
-                  await perfiles.guardarAjuste(perfil.id, 'orden', clave);
-                  setAjustes({ ...ajustes, orden: clave });
-                  setVerAjustes(false);
-                  // Se reordena la pantalla en la que estamos: recrear el
-                  // presentador devolvería al inicio, y lo que uno quiere es
-                  // ver esta misma categoría ordenada de otra manera.
-                  presentador.current?.ordenarPor(clave).then(setEstado);
-                }}
+                style={[
+                  estilos.opcion,
+                  ajustes.orden === clave && estilos.opcionActiva,
+                  focoAjustes === COLUMNAS_POSIBLES.length + indice && estilos.opcionEnfocada,
+                ]}
+                onPress={() => void cambiarOrden(clave)}
               >
                 <Text style={[estilos.opcionTexto, ajustes.orden === clave && estilos.opcionTextoActiva]}>
                   {nombre}
@@ -610,92 +828,37 @@ function BibliotecaVista({
       ) : null}
 
       <View style={estilos.cuerpo}>
-        {/* En el directo, la barra y la lista se reparten una mitad y la
-            parrilla se queda la otra: es donde va el vídeo. */}
-        <View style={[estilos.columnaIzquierda, estado.formato === 'canales' && estilos.mitad]}>
-        {estado.lateral ? (
-          <View style={[estilos.barra, estado.lateral.dentro && estilos.barraEnfocada]}>
-            <FlatList
-              data={estado.lateral.opciones}
-              keyExtractor={(opcion) => (opcion.favoritos ? 'favoritos' : (opcion.grupo ?? 'todas'))}
-              extraData={estado.lateral}
-              renderItem={({ item, index }) => {
-                // El grupo de favoritos no tiene nombre de categoría, así que
-                // se compara por su marca y no por `grupo`, que es null.
-                const activa = item.favoritos
-                  ? estado.lateral!.enFavoritos
-                  : !estado.lateral!.enFavoritos && item.grupo === estado.lateral!.activa;
-                const enfocada = estado.lateral!.dentro && index === estado.lateral!.foco;
-                return (
-                  <Pressable
-                    style={[estilos.categoria, activa && estilos.categoriaActiva, enfocada && estilos.categoriaEnfocada]}
-                    onPress={() =>
-                      presentador.current
-                        ?.elegirCategoria(item.grupo, { favoritos: item.favoritos })
-                        .then(setEstado)
-                    }
-                  >
-                    <Text style={[estilos.categoriaTexto, activa && estilos.textoEnfocado]} numberOfLines={2}>
-                      {item.favoritos ? '♥  Favoritos' : item.nombre}
-                    </Text>
-                    {item.cuantos !== null ? (
-                      <Text style={estilos.categoriaCuantos}>{numero(item.cuantos)}</Text>
-                    ) : null}
-                  </Pressable>
-                );
-              }}
-            />
+        {/*
+          En el directo la pantalla se parte por la mitad: la barra y la lista
+          a un lado, la parrilla al otro. En el resto de pantallas la lista
+          cuelga directamente del cuerpo, sin envoltorio: metido siempre, ese
+          contenedor de más le comía el ancho a la lista —se quedaba en unos
+          cuarenta píxeles y las fichas salían como tiras verticales—.
+        */}
+        {estado.formato === 'canales' ? (
+          <View style={[estilos.columnaIzquierda, estilos.mitad]}>
+            {barraLateral}
+            {rejilla}
           </View>
-        ) : null}
-
-      <FlatList
-        ref={lista}
-        data={estado.elementos}
-        // Cambiar el número de columnas obliga a rehacer la lista entera.
-        key={`columnas-${estado.columnas}`}
-        numColumns={estado.columnas}
-        keyExtractor={(elemento) => elemento.id}
-        columnWrapperStyle={estado.columnas > 1 ? estilos.fila : undefined}
-        contentContainerStyle={estilos.contenido}
-        // Con miles de fichas, solo se monta lo que se ve: es lo que hace que
-        // el desplazamiento vaya fino y que las imágenes se pidan por tandas.
-        initialNumToRender={12}
-        windowSize={5}
-        removeClippedSubviews
-        onEndReachedThreshold={0.6}
-        onEndReached={() => presentador.current?.cargarMas().then(setEstado)}
-        ListFooterComponent={
-          estado.hayMas ? <ActivityIndicator style={estilos.pie} color={VERDE} /> : null
-        }
-        style={estilos.listaPrincipal}
-        renderItem={({ item, index }) => (
-          <Ficha
-            elemento={item}
-            enfocado={index === estado.foco && !estado.lateral?.dentro}
-            formato={estado.formato}
-            columnas={estado.columnas}
-            // A partir de seis por fila la carátula es estrecha y el texto de
-            // siempre no cabe: las pastillas y el título se encogen con ella.
-            apretada={estado.columnas >= 6}
-            onPress={() => tocar(index)}
-            onLongPress={() => mantener(index)}
-          />
+        ) : (
+          <>
+            {barraLateral}
+            {rejilla}
+          </>
         )}
-      />
 
-      </View>
-
-      {/* La programación del canal en el que está el foco. */}
-      {estado.formato === 'canales' ? (
-        <Parrilla
-          canal={estado.elementos[estado.foco] ?? null}
-          programacion={programacion}
-          conVideo={Boolean(reproduciendo) && !aPantallaCompleta}
-          onCaja={setCajaVista}
-          respectoA={raiz}
-          onAbrir={() => reproduciendo && setAPantallaCompleta(true)}
-        />
-      ) : null}
+        {/* La programación del canal en el que está el foco. */}
+        {estado.formato === 'canales' ? (
+          <Parrilla
+            canal={estado.elementos[estado.foco] ?? null}
+            programacion={programacion}
+            conVideo={Boolean(reproduciendo) && !aPantallaCompleta}
+            enfocada={focoEnVideo}
+            onCaja={setCajaVista}
+            respectoA={raiz}
+            onAbrir={() => reproduciendo && setAPantallaCompleta(true)}
+          />
+        ) : null}
       </View>
       </View>
 
@@ -711,6 +874,7 @@ function BibliotecaVista({
           onCambiar={setReproduciendo}
           programacion={programacion}
           caja={aPantallaCompleta ? null : cajaVista}
+          resaltado={focoEnVideo}
           onAbrir={() => setAPantallaCompleta(true)}
         />
       ) : null}
@@ -1027,6 +1191,11 @@ const estilos = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  // Con mando, el botón enfocado de la cabecera tiene que distinguirse.
+  botonCabeceraEnfocado: {
+    backgroundColor: 'rgba(53,208,127,0.22)',
+    borderColor: VERDE,
+  },
   botonCabecera: {
     borderColor: 'rgba(255,255,255,0.25)',
     borderRadius: 8,
@@ -1053,6 +1222,15 @@ const estilos = StyleSheet.create({
     flex: 1,
   },
   listaPrincipal: {
+    // Alto explícito y no `flex: 1`: en Android 8 el reparto no llegaba a la
+    // vista nativa del scroll y la lista se quedaba en dos píxeles de alto,
+    // con las filas bien medidas pero sin pintar. El envoltorio ya acota el
+    // espacio, así que aquí basta con ocuparlo entero.
+    height: '100%',
+  },
+  // El envoltorio de la lista: es quien recibe el ancho del reparto.
+  // El envoltorio de la lista: es quien recibe el reparto del contenedor.
+  zonaLista: {
     flex: 1,
   },
   barra: {
@@ -1112,10 +1290,16 @@ const estilos = StyleSheet.create({
   opcion: {
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'transparent',
     borderRadius: 8,
+    borderWidth: 2,
     justifyContent: 'center',
     paddingHorizontal: 20,
     paddingVertical: 12,
+  },
+  // El mando necesita ver dónde está, aparte de cuál es la opción en uso.
+  opcionEnfocada: {
+    borderColor: '#fff',
   },
   opcionActiva: {
     backgroundColor: VERDE,

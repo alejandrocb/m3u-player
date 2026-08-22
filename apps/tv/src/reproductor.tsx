@@ -100,6 +100,13 @@ interface Props {
    * panel tarda medio minuto en volver a darla.
    */
   caja?: Caja | null;
+  /**
+   * El mando está sobre la vista previa.
+   *
+   * El resalte lo dibuja el reproductor y no la columna: el vídeo va por
+   * encima del hueco y taparía cualquier marco que pintase la columna debajo.
+   */
+  resaltado?: boolean;
   /** Pulsar sobre la vista previa la abre entera. */
   onAbrir?: () => void;
 }
@@ -159,6 +166,7 @@ export function Reproductor({
   onCambiar,
   programacion,
   caja,
+  resaltado,
   onAbrir,
 }: Props) {
   /** En pequeño, dentro de la columna: sin controles y sin rótulos. */
@@ -356,7 +364,11 @@ export function Reproductor({
     <View
       style={
         caja
-          ? [estilos.capaCompacta, { left: caja.x, top: caja.y, width: caja.width, height: caja.height }]
+          ? [
+              estilos.capaCompacta,
+              { left: caja.x, top: caja.y, width: caja.width, height: caja.height },
+              resaltado && estilos.capaCompactaEnfocada,
+            ]
           : estilos.capa
       }
     >
@@ -749,10 +761,15 @@ const estilos = StyleSheet.create({
   capaCompacta: {
     alignItems: 'center',
     backgroundColor: '#000',
+    borderColor: 'transparent',
     borderRadius: 10,
+    borderWidth: 3,
     justifyContent: 'center',
     overflow: 'hidden',
     position: 'absolute',
+  },
+  capaCompactaEnfocada: {
+    borderColor: VERDE,
   },
   controles: {
     bottom: 0,

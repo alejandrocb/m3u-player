@@ -28,6 +28,10 @@ export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
 
   const cuentas = gestor.cuentas;
 
+
+  // El formulario es otra pantalla, pero el hook de arriba tiene que
+  // haberse llamado igual: React exige el mismo número de hooks en cada
+  // pintado, y tenerlo detrás de este `return` cerraba la aplicación.
   if (modo.tipo !== 'lista') {
     return (
       <Formulario
@@ -48,6 +52,7 @@ export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
     );
   }
 
+
   return (
     <ScrollView style={estilos.pantalla} contentContainerStyle={estilos.contenido}>
       <Text style={estilos.titulo}>Tus listas</Text>
@@ -59,12 +64,19 @@ export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
         </Text>
       ) : null}
 
-      {cuentas.map((cuenta) => {
+      {cuentas.map((cuenta, posicion) => {
         const desplegada = abierta === cuenta.id;
         return (
           <View key={cuenta.id}>
             <Pressable
-              style={[estilos.ficha, desplegada && estilos.fichaAbierta]}
+              // La primera lista se lleva el foco al abrir la pantalla: sin
+              // un elemento enfocado, el mando no tiene por dónde empezar.
+              hasTVPreferredFocus={posicion === 0}
+              style={({ focused, pressed }) => [
+                estilos.ficha,
+                desplegada && estilos.fichaAbierta,
+                (focused || pressed) && estilos.fichaEnfocada,
+              ]}
               onPress={() => setAbierta(desplegada ? null : cuenta.id)}
             >
               <Text style={estilos.nombre}>{cuenta.nombre}</Text>
@@ -94,7 +106,12 @@ export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
         );
       })}
 
-      <Boton texto="+  Añadir lista" onPress={() => setModo({ tipo: 'alta' })} />
+      <Boton
+        texto="+  Añadir lista"
+        // Sin ninguna lista todavía, este es el único sitio donde ir.
+        primero={cuentas.length === 0}
+        onPress={() => setModo({ tipo: 'alta' })}
+      />
     </ScrollView>
   );
 }
@@ -113,24 +130,36 @@ function Formulario({
   const [nombre, setNombre] = useState(cuenta?.nombre ?? '');
   const [url, setUrl] = useState(cuenta?.url ?? '');
 
+  /**
+   * Cuál de los campos tiene el cursor dentro, si es que hay alguno.
+   *
+   * Solo sirve para marcarlo: el recorrido entre campos y botones lo lleva el
+   * foco del sistema, que es quien sabe dónde está cada cosa en pantalla.
+   */
+  const [editando, setEditando] = useState<number | null>(null);
+
   return (
     <ScrollView style={estilos.pantalla} contentContainerStyle={estilos.contenido}>
       <Text style={estilos.titulo}>{titulo}</Text>
 
       <Text style={estilos.etiqueta}>Nombre</Text>
       <TextInput
-        style={estilos.campo}
+        style={[estilos.campo, editando === 0 && estilos.campoEnfocado]}
         value={nombre}
         onChangeText={setNombre}
+        onFocus={() => setEditando(0)}
+        onBlur={() => setEditando(null)}
         placeholder="Salón, casa de mis padres..."
         placeholderTextColor="#5d6f7d"
       />
 
       <Text style={estilos.etiqueta}>Dirección de la lista</Text>
       <TextInput
-        style={estilos.campo}
+        style={[estilos.campo, editando === 1 && estilos.campoEnfocado]}
         value={url}
         onChangeText={setUrl}
+        onFocus={() => setEditando(1)}
+        onBlur={() => setEditando(null)}
         placeholder="http://servidor:8080/get.php?username=...&password=...&type=m3u_plus"
         placeholderTextColor="#5d6f7d"
         autoCapitalize="none"
@@ -153,14 +182,18 @@ function Boton({
   onPress,
   principal,
   peligro,
+  primero,
 }: {
   texto: string;
   onPress: () => void;
   principal?: boolean;
   peligro?: boolean;
+  /** Se lleva el foco al abrir la pantalla, si no hay nada antes que él. */
+  primero?: boolean;
 }) {
   return (
     <Pressable
+      hasTVPreferredFocus={primero}
       style={({ focused, pressed }) => [
         estilos.boton,
         principal && estilos.botonPrincipal,
@@ -201,6 +234,12 @@ const estilos = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 3,
     padding: 18,
+  },
+  campoEnfocado: {
+    borderColor: '#fff',
+  },
+  fichaEnfocada: {
+    borderColor: '#fff',
   },
   fichaAbierta: {
     backgroundColor: 'rgba(53,208,127,0.18)',
@@ -254,7 +293,9 @@ const estilos = StyleSheet.create({
   },
   campo: {
     backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'transparent',
     borderRadius: 8,
+    borderWidth: 2,
     color: '#fff',
     fontSize: 18,
     padding: 16,

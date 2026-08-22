@@ -6,7 +6,7 @@
  * lo que uno deje a medias no aparece en el "seguir viendo" de los demás.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { AlmacenPerfiles, Perfil } from '@m3u/ui';
@@ -27,6 +27,33 @@ export function PantallaPerfiles({ almacen, onElegir }: Props) {
 
   useEffect(recargar, [almacen]);
 
+  // Ojo con el orden: **todos los hooks van antes del primer `return`**.
+  // Tenerlos detrás del "Un momento…" hacía que React viera un número
+  // distinto de hooks entre un pintado y otro, y la aplicación se cerraba
+  // nada más abrirse en cuanto los perfiles terminaban de cargar.
+  const lista = perfiles ?? [];
+
+  // La primera vez no hay ninguno: se pide uno directamente en vez de enseñar
+  // una pantalla vacía.
+  const enFormulario = creando || lista.length === 0;
+
+  const crear = useCallback(async () => {
+    const creado = await almacen.crear(nombre);
+    setNombre('');
+    setCreando(false);
+    onElegir(creado);
+  }, [almacen, nombre, onElegir]);
+
+  const borrarUltimo = useCallback(async () => {
+    // Se borra el último añadido: sin menú de gestión todavía.
+    const ultimo = lista[lista.length - 1];
+    if (!ultimo) return;
+    await almacen.borrar(ultimo.id);
+    recargar();
+    // `recargar` se rehace en cada pintado y no aporta como dependencia.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [almacen, lista]);
+
   if (!perfiles) {
     return (
       <View style={[estilos.pantalla, estilos.centrado]}>
@@ -34,10 +61,6 @@ export function PantallaPerfiles({ almacen, onElegir }: Props) {
       </View>
     );
   }
-
-  // La primera vez no hay ninguno: se pide uno directamente en vez de enseñar
-  // una pantalla vacía.
-  const enFormulario = creando || perfiles.length === 0;
 
   return (
     <ScrollView style={estilos.pantalla} contentContainerStyle={estilos.contenido}>
@@ -55,18 +78,24 @@ export function PantallaPerfiles({ almacen, onElegir }: Props) {
           />
           <View style={estilos.fila}>
             <Pressable
-              style={[estilos.boton, estilos.botonPrincipal]}
-              onPress={async () => {
-                const creado = await almacen.crear(nombre);
-                setNombre('');
-                setCreando(false);
-                onElegir(creado);
-              }}
+              hasTVPreferredFocus
+              style={({ focused, pressed }) => [
+                estilos.boton,
+                estilos.botonPrincipal,
+                (focused || pressed) && estilos.botonEnfocado,
+              ]}
+              onPress={crear}
             >
               <Text style={estilos.botonTextoPrincipal}>Crear y entrar</Text>
             </Pressable>
-            {perfiles.length > 0 ? (
-              <Pressable style={estilos.boton} onPress={() => setCreando(false)}>
+            {lista.length > 0 ? (
+              <Pressable
+                style={({ focused, pressed }) => [
+                  estilos.boton,
+                  (focused || pressed) && estilos.botonEnfocado,
+                ]}
+                onPress={() => setCreando(false)}
+              >
                 <Text style={estilos.botonTexto}>Cancelar</Text>
               </Pressable>
             ) : null}
@@ -75,9 +104,13 @@ export function PantallaPerfiles({ almacen, onElegir }: Props) {
       ) : (
         <>
           <View style={estilos.fila}>
-            {perfiles.map((perfil) => (
+            {lista.map((perfil, indice) => (
               <Pressable
                 key={perfil.id}
+                // El sistema le da el foco al abrir la pantalla: sin un
+                // elemento enfocado de verdad, el OK del mando no llega a
+                // ninguna parte.
+                hasTVPreferredFocus={indice === 0}
                 style={({ focused, pressed }) => [
                   estilos.perfil,
                   (focused || pressed) && estilos.perfilEnfocado,
@@ -96,20 +129,24 @@ export function PantallaPerfiles({ almacen, onElegir }: Props) {
           </View>
 
           <View style={estilos.fila}>
-            <Pressable style={estilos.boton} onPress={() => setCreando(true)}>
+            <Pressable
+              style={({ focused, pressed }) => [
+                estilos.boton,
+                (focused || pressed) && estilos.botonEnfocado,
+              ]}
+              onPress={() => setCreando(true)}
+            >
               <Text style={estilos.botonTexto}>+  Añadir perfil</Text>
             </Pressable>
-            {perfiles.length > 1 ? (
+            {lista.length > 1 ? (
               <Pressable
-                style={estilos.boton}
-                onPress={async () => {
-                  // Se borra el último añadido: sin menú de gestión todavía.
-                  const ultimo = perfiles[perfiles.length - 1]!;
-                  await almacen.borrar(ultimo.id);
-                  recargar();
-                }}
+                style={({ focused, pressed }) => [
+                  estilos.boton,
+                  (focused || pressed) && estilos.botonEnfocado,
+                ]}
+                onPress={borrarUltimo}
               >
-                <Text style={estilos.botonTexto}>Borrar «{perfiles[perfiles.length - 1]!.nombre}»</Text>
+                <Text style={estilos.botonTexto}>Borrar «{lista[lista.length - 1]!.nombre}»</Text>
               </Pressable>
             ) : null}
           </View>
@@ -182,6 +219,12 @@ const estilos = StyleSheet.create({
   },
   botonPrincipal: {
     backgroundColor: '#35d07f',
+  },
+  // Con mando no hay puntero: el enfocado tiene que cantar desde el sofá.
+  botonEnfocado: {
+    borderColor: '#fff',
+    borderWidth: 2,
+    transform: [{ scale: 1.04 }],
   },
   botonTexto: {
     color: '#dfe7ee',
