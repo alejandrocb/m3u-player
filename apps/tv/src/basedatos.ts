@@ -19,6 +19,7 @@ import {
   COLUMNAS_MIGRADAS,
   CONTENT_TABLES,
   INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_SQL,
   SCHEMA_FTS_SQL,
   SCHEMA_PERFILES_SQL,
   SCHEMA_SQL,
@@ -63,6 +64,9 @@ export function abrirBase(): { db: DB; conBusquedaRapida: boolean } {
 
   // Estos índices necesitan las columnas de arriba: por eso van los últimos.
   for (const indice of INDICES_TRAS_MIGRAR_SQL) db.executeSync(indice);
+
+  // Y las filas de antes de que existiera la sincronización necesitan fecha.
+  for (const relleno of RELLENOS_SQL) db.executeSync(relleno);
 
   return { db, conBusquedaRapida };
 }

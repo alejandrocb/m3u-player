@@ -17,11 +17,13 @@ interface Props {
   onConectar: (cuenta: Cuenta) => void;
   /** Para repintar cuando el gestor cambia por dentro. */
   onCambio: () => void;
+  /** Conectar el aparato con el servidor de casa, que reparte las listas. */
+  onEmparejar: () => void;
 }
 
 type Modo = { tipo: 'lista' } | { tipo: 'alta' } | { tipo: 'edicion'; cuenta: Cuenta };
 
-export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
+export function PantallaListas({ gestor, onConectar, onCambio, onEmparejar }: Props) {
   const [modo, setModo] = useState<Modo>({ tipo: 'lista' });
   const [abierta, setAbierta] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +114,16 @@ export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
         primero={cuentas.length === 0}
         onPress={() => setModo({ tipo: 'alta' })}
       />
+
+      {/*
+        La vía corta, y la que se usa en los aparatos de la familia: en vez de
+        escribir la dirección del panel con el mando, el aparato enseña un
+        código y recibe las listas de su casa ya puestas.
+      */}
+      <Boton texto="⇄  Conectar con el servidor de casa" onPress={onEmparejar} />
+      <Text style={estilos.aviso}>
+        Comparte el "seguir viendo" y los favoritos con los demás aparatos, y trae sus listas.
+      </Text>
     </ScrollView>
   );
 }

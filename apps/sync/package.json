@@ -1,0 +1,14 @@
+{
+  "name": "@m3u/sync",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node src/index.ts"
+  },
+  "dependencies": {
+    "@m3u/storage": "*",
+    "@m3u/ui": "*"
+  }
+}

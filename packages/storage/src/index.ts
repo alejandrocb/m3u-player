@@ -12,3 +12,4 @@ export type {
 } from './store.ts';
 export { SCHEMA_VERSION } from './schema.ts';
 export * from './adaptador.ts';
+export * from './sincronizar.ts';

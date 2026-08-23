@@ -41,6 +41,7 @@ import type {
 import {
   AJUSTES_POR_DEFECTO,
   COLUMNAS_POSIBLES,
+  ClienteSync,
   GestorCuentas,
   Presentador,
   cantidad,
@@ -49,8 +50,10 @@ import {
 } from '@m3u/ui';
 
 import { almacenDeCuentas } from './src/almacen';
+import { almacenDeSync } from './src/almacen-sync';
 import { cargarCatalogo } from './src/carga';
 import type { Avance, Medicion } from './src/carga';
+import { PantallaEmparejar } from './src/pantalla-emparejar';
 import { PantallaListas } from './src/listas';
 import { PantallaPerfiles } from './src/pantalla-perfiles';
 import { Parrilla } from './src/parrilla';
@@ -69,9 +72,22 @@ const MARGEN_SALIDA_MS = 3000;
  */
 const ESPERA_VISTA_PREVIA_MS = 1000;
 
+/** Cada cuánto se sincroniza mientras la biblioteca está abierta. */
+const CADA_SINCRONIZACION_MS = 2 * 60 * 1000;
+
+/**
+ * Lo que se espera a la sincronización antes de entrar.
+ *
+ * Sincronizar es un lujo, no un requisito: si el servidor tarda o no está, se
+ * entra igual con lo que hay en el aparato y ya subirá luego. Bloquear el
+ * arranque por esto sería cambiar un fallo raro por una app que no abre.
+ */
+const ESPERA_SINCRONIZAR_MS = 4000;
+
 type Fase =
   | { tipo: 'abriendo' }
   | { tipo: 'listas'; error?: string }
+  | { tipo: 'emparejar' }
   | { tipo: 'conectando'; nombre: string; avance: Avance }
   | { tipo: 'perfiles'; cuenta: Cuenta; medicion: Medicion }
   | { tipo: 'biblioteca'; cuenta: Cuenta; medicion: Medicion; perfil: Perfil };
@@ -91,6 +107,42 @@ function Raiz() {
   const biblioteca = useRef<Biblioteca | null>(null);
   const perfiles = useRef<AlmacenPerfiles | null>(null);
   const programacion = useRef<Programacion | null>(null);
+  /**
+   * El cliente de sincronización, uno para toda la vida de la app.
+   *
+   * Se crea antes de haber conectado con ninguna lista, porque emparejar es lo
+   * primero que se hace en un aparato nuevo y todavía no hay almacén de
+   * perfiles. Por eso lo lee de `perfiles.current` en cada llamada en vez de
+   * quedárselo: cuando toque sincronizar de verdad, ya estará.
+   */
+  const sync = useRef<ClienteSync>(
+    new ClienteSync({
+      almacen: almacenDeSync,
+      perfiles: {
+        cambiosDesde: async (marca) => (await perfiles.current?.cambiosDesde(marca)) ?? [],
+        aplicarCambios: async (cambios) => {
+          await perfiles.current?.aplicarCambios(cambios);
+        },
+      },
+      buscar: (url, opciones) => fetch(url, opciones),
+    }),
+  );
+
+  /**
+   * Sincroniza si el aparato está emparejado, y se traga los fallos.
+   *
+   * Que no haya red, que el servidor esté caído o que el token ya no valga no
+   * puede notarse en la interfaz: la app funciona igual sin sincronizar, con
+   * lo que tiene guardado.
+   */
+  const sincronizar = useCallback(async () => {
+    try {
+      const hecho = await sync.current.sincronizar();
+      if (hecho) console.log(`[sync] ${hecho.subidos} subidos, ${hecho.bajados} bajados`);
+    } catch (fallo) {
+      console.warn('[sync] no se pudo sincronizar', fallo);
+    }
+  }, []);
 
   const conectar = useCallback(async (elegida: Cuenta, forzar = false) => {
     setFase({
@@ -113,6 +165,16 @@ function Raiz() {
       perfiles.current = almacen;
       programacion.current = parrilla;
       await gestor.current?.conectar(elegida.id);
+
+      // Con el almacén ya abierto se sincroniza, antes de enseñar los
+      // perfiles y con un tope de paciencia, para que el "seguir viendo" que
+      // se ve sea el bueno: es el caso de dejar algo a medias en la tele y
+      // abrir la tablet.
+      await Promise.race([
+        sincronizar(),
+        new Promise<void>((sigue) => setTimeout(() => sigue(), ESPERA_SINCRONIZAR_MS)),
+      ]);
+
       // Antes de la biblioteca, quién está viendo: cada perfil tiene su
       // historial y sus favoritos.
       setFase({ tipo: 'perfiles', cuenta: elegida, medicion });
@@ -120,7 +182,7 @@ function Raiz() {
       biblioteca.current = null;
       setFase({ tipo: 'listas', error: fallo instanceof Error ? fallo.message : String(fallo) });
     }
-  }, []);
+  }, [sincronizar]);
 
   useEffect(() => {
     (async () => {
@@ -132,9 +194,37 @@ function Raiz() {
     })();
   }, [conectar]);
 
+  // Mientras se está viendo la biblioteca, se sincroniza de vez en cuando. No
+  // hace falta más: lo que se anota mientras se reproduce sube en la siguiente
+  // vuelta, y quien tenga que verlo es otro aparato que no está en marcha.
+  useEffect(() => {
+    if (fase.tipo !== 'biblioteca') return;
+    const reloj = setInterval(() => void sincronizar(), CADA_SINCRONIZACION_MS);
+    return () => clearInterval(reloj);
+  }, [fase.tipo, sincronizar]);
+
   const cerrarSesion = useCallback(async () => {
     await gestor.current?.cerrarSesion();
     biblioteca.current = null;
+    setFase({ tipo: 'listas' });
+  }, []);
+
+  /**
+   * Recién emparejado: se dan de alta las listas que reparte la casa.
+   *
+   * Se añaden a las que ya hubiera en vez de reemplazarlas. Quitar de un
+   * aparato una lista que alguien puso a mano, sin avisar, sería justo lo que
+   * no se espera de conectar con el servidor.
+   */
+  const traerListas = useCallback(async (listas: Array<{ nombre: string; url: string }>) => {
+    const actual = gestor.current;
+    if (!actual) return;
+
+    for (const lista of listas) {
+      if (actual.cuentas.some((cuenta) => cuenta.url === lista.url)) continue;
+      await actual.anadir({ nombre: lista.nombre, url: lista.url });
+    }
+    setVersion((n) => n + 1);
     setFase({ tipo: 'listas' });
   }, []);
 
@@ -155,6 +245,16 @@ function Raiz() {
     );
   }
 
+  if (fase.tipo === 'emparejar') {
+    return (
+      <PantallaEmparejar
+        cliente={sync.current}
+        onListo={(_grupo, listas) => void traerListas(listas)}
+        onCancelar={() => setFase({ tipo: 'listas' })}
+      />
+    );
+  }
+
   if (fase.tipo === 'listas') {
     return (
       <View style={estilos.pantalla}>
@@ -165,6 +265,7 @@ function Raiz() {
             gestor={gestor.current}
             onConectar={conectar}
             onCambio={() => setVersion((n) => n + 1)}
+            onEmparejar={() => setFase({ tipo: 'emparejar' })}
           />
         ) : null}
       </View>

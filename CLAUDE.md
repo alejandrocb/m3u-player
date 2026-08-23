@@ -50,6 +50,10 @@ plataforma vive fuera.
 - **`packages/storage`** — persistencia en SQLite con `node:sqlite` (viene
   dentro de Node y de Electron 43; **no hay módulos nativos que compilar**, y no
   debe introducirse ninguno). Búsqueda global con FTS5.
+- **`apps/sync`** — el servidor del VPS: emparejamiento por código, grupos por
+  casa y el `POST /api/sync`. Sin dependencias, en un contenedor detrás de
+  Caddy. Cada grupo tiene su SQLite **con el mismo esquema que los aparatos**,
+  para poder usar el mismo código de fusión a los dos lados.
 - **`packages/ui`** — el comportamiento de la interfaz sin pintarla: pila de
   navegación, foco en rejilla y el puerto de datos que la vista consume. Sin
   dependencias de plataforma, como el core: **el destino es Android TV y
@@ -171,6 +175,53 @@ de parsear nada. Así que ahí:
 
 La importación completa tarda ~50 s contra el panel, casi todo en las 66
 peticiones, que van en fila. Paralelizarlas es la optimización pendiente.
+
+### Compartir el historial entre aparatos: nada se borra de verdad
+
+Dejar una película a medias en la tele y seguirla en la tablet exige compartir
+las cuatro tablas de perfil (`profile`, `progress`, `favorite`,
+`profile_setting`). Sale casi gratis porque **los identificadores salen del
+contenido**: `lola-pater-2017` es la misma película en los dos aparatos, así
+que sincronizar es mandar filas y no traducir nada.
+
+Las reglas, que hay que respetar al tocar cualquier escritura de perfil:
+
+- **Gana el cambio más reciente**, fila a fila. No se fusionan contenidos: el
+  minuto por el que ibas es el último que se anotó, no la media de dos. La
+  regla vive en `fusionar` (`packages/ui/src/sincronizacion.ts`) porque el
+  servidor tiene que aplicar **exactamente la misma**; si decidiera distinto,
+  cada aparato acabaría con una versión creyendo que están de acuerdo.
+- **Ningún `DELETE`.** Una baja marca `deleted = 1` y deja la fila de lápida.
+  Borrarla no deja nada que contar, y el otro aparato la volvería a subir:
+  quitas algo de favoritos y al día siguiente ha vuelto.
+- **Toda escritura sella `updated` y `origin`.** La fecha decide quién gana y
+  el aparato desempata los empates al milisegundo, que es lo que garantiza que
+  los dos lleguen a la misma conclusión decidiendo por separado.
+- Las lecturas filtran `deleted = 0`. Es fácil olvidarlo al añadir una
+  consulta y el síntoma es contenido fantasma.
+- No hay registro de cambios aparte: las propias tablas lo son, y se pide "lo
+  posterior a esta fecha". El SQL genérico está en
+  `packages/storage/src/sincronizar.ts`, contra `SINCRONIZADAS` del esquema:
+  añadir una tabla al reparto es una línea allí.
+
+**Hay dos marcas de agua, y no son intercambiables.** La de subida va en la
+fecha del cambio (`updated`, el reloj del aparato) y la de bajada en el sello
+de recepción del servidor (`recibido`, el reloj del VPS). Confundirlas se traga
+cambios enteros: si la tele anota algo el martes y no se conecta hasta el
+lunes, la tablet —cuya marca ya va por el domingo— nunca vería ese cambio si
+las novedades se pidieran por su fecha. `recibido` es la única columna que el
+servidor tiene de más, y la pone `sellarRecepcion` sobre lo que de verdad se
+escribió.
+
+El emparejamiento es por código corto: el aparato enseña `K7M2-P4XR` y tú lo
+apruebas en la web. **El código no vale para llevarse el token**; para eso hay
+un secreto largo que el aparato guarda y nunca muestra. Si fuera el mismo, quien
+adivinara el código de la pantalla entraría en el grupo. El token se entrega una
+sola vez y de él solo queda la huella.
+
+Lo que esta regla **no** arregla es un reloj mal puesto: un aparato adelantado
+gana siempre. Es la contrapartida de fechar en el origen, y el servidor
+debería desconfiar de lo que llegue muy por delante de su hora.
 
 ### El invariante del dominio: fusionar variantes de calidad
 
@@ -378,6 +429,18 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
 - **`.probe-cache/` contiene la lista real con las credenciales del panel en
   cada URL**, y `.probe-cache/test-url.txt` también. Está en `.gitignore`. Al
   imprimir cualquier URL, redáctala como hacen `probe` y `main.mjs`.
+- **La dirección del servidor de sincronización no va en el repositorio**, que
+  es público. Metro resuelve el módulo inventado `servidor-sync` a
+  `apps/tv/servidor.local.js` si existe y a `servidor.ejemplo.js` si no, con un
+  `resolveRequest` en `metro.config.js`. Al clonar en un equipo nuevo hay que
+  crear el local (`cp apps/tv/servidor.ejemplo.js apps/tv/servidor.local.js`) o
+  la app pedirá la dirección a mano al emparejar.
+- **La MAC no sirve para identificar un aparato en Android.**
+  `getMacAddress()` devuelve `02:00:00:00:00:00` desde Android 6, leerla de
+  `/sys/class/net/` está cerrado desde Android 10, y encima el sistema la
+  aleatoriza por red. El identificador se lo inventa el propio aparato
+  (`idDeAparato`, en la tabla `meta`) y sobrevive a reinicios y
+  actualizaciones, no a borrar los datos.
 
 ## Estado y siguiente paso
 
@@ -387,3 +450,9 @@ El README lleva la tabla de estado y las cifras medidas contra la lista real
 Pendiente: el árbitro de conexión, la interfaz y la descarga a disco. Del
 reproductor solo queda decidir qué hacer con el redimensionado de la ventana
 transparente.
+
+Compartir el historial entre aparatos está terminado de punta a punta: el
+modelo, el servidor (`apps/sync`, ver su README), el cliente (`ClienteSync`) y
+la pantalla de emparejamiento. Falta **probarlo contra el VPS de verdad** y
+decidir cada cuánto conviene sincronizar —ahora son dos minutos mientras la
+biblioteca está abierta, más una vez al conectar—.

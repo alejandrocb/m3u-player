@@ -152,13 +152,22 @@ export const CONTENT_TABLES = [
  *
  * Las claves apuntan al contenido (`movie:lola-pater-2017`), no a números de
  * fila, para que el progreso sobreviva a las reimportaciones.
+ *
+ * Esa misma propiedad es la que hace posible **compartir el historial entre
+ * aparatos**: `lola-pater-2017` es la misma película en la tele y en la
+ * tablet sin ponerse de acuerdo, así que sincronizar es mandar filas y no
+ * traducir identificadores. Por eso las cuatro tablas llevan las tres
+ * columnas de sincronización, que se explican en `SINCRONIZADAS`.
  */
 export const SCHEMA_PERFILES_SQL = `
 CREATE TABLE IF NOT EXISTS profile (
   id      TEXT PRIMARY KEY,
   name    TEXT NOT NULL,
   color   TEXT NOT NULL,
-  created TEXT NOT NULL
+  created TEXT NOT NULL,
+  updated TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  origin  TEXT
 );
 
 -- Dónde se quedó cada perfil en cada cosa que ha visto.
@@ -171,6 +180,8 @@ CREATE TABLE IF NOT EXISTS progress (
   duration   REAL NOT NULL,
   title      TEXT NOT NULL,
   updated    TEXT NOT NULL,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  origin     TEXT,
   PRIMARY KEY (profile_id, kind, item_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS progress_by_recent ON progress (profile_id, updated DESC);
@@ -180,7 +191,13 @@ CREATE TABLE IF NOT EXISTS favorite (
   kind       TEXT NOT NULL,
   item_id    TEXT NOT NULL,
   title      TEXT NOT NULL,
+  -- Cuándo se marcó, que es por donde se ordenan, y cuándo se tocó por última
+  -- vez, que es lo que decide quién gana al sincronizar. No son lo mismo:
+  -- desmarcar cambia el segundo y deja el primero quieto.
   created    TEXT NOT NULL,
+  updated    TEXT NOT NULL,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  origin     TEXT,
   PRIMARY KEY (profile_id, kind, item_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS favorite_by_recent ON favorite (profile_id, created DESC);
@@ -191,9 +208,33 @@ CREATE TABLE IF NOT EXISTS profile_setting (
   profile_id TEXT NOT NULL,
   key        TEXT NOT NULL,
   value      TEXT NOT NULL,
+  updated    TEXT NOT NULL,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  origin     TEXT,
   PRIMARY KEY (profile_id, key)
 ) WITHOUT ROWID;
 `;
+
+/**
+ * Las tablas que viajan entre aparatos, con su clave.
+ *
+ * Sincronizar es "dame las filas con `updated` posterior a la última vez que
+ * hablamos", así que no hace falta un registro de cambios aparte: las propias
+ * tablas lo son. A cambio, **nada se borra de verdad**: un `DELETE` no deja
+ * rastro que mandar, y el otro aparato volvería a subir la fila tan campante
+ * —quitas una película de favoritos y al día siguiente ha vuelto—. Se marca
+ * `deleted` y la fila se queda como lápida.
+ *
+ * `origin` es qué aparato hizo el último cambio. Sirve para desempatar cuando
+ * dos coinciden al milisegundo, que es lo que garantiza que los dos lleguen a
+ * la misma conclusión en vez de quedarse cada uno con lo suyo.
+ */
+export const SINCRONIZADAS: Array<{ tabla: string; clave: string[]; campos: string[] }> = [
+  { tabla: 'profile', clave: ['id'], campos: ['name', 'color', 'created'] },
+  { tabla: 'progress', clave: ['profile_id', 'kind', 'item_id'], campos: ['seconds', 'duration', 'title'] },
+  { tabla: 'favorite', clave: ['profile_id', 'kind', 'item_id'], campos: ['title', 'created'] },
+  { tabla: 'profile_setting', clave: ['profile_id', 'key'], campos: ['value'] },
+];
 
 /**
  * Índices que dependen de columnas añadidas después.
@@ -208,6 +249,11 @@ export const INDICES_TRAS_MIGRAR_SQL = [
   'CREATE INDEX IF NOT EXISTS series_by_rating ON series (rating DESC, sort_title)',
   'CREATE INDEX IF NOT EXISTS movie_by_added ON movie (added DESC, sort_title)',
   'CREATE INDEX IF NOT EXISTS series_by_added ON series (added DESC, sort_title)',
+  // Por aquí entra la sincronización: "lo cambiado desde tal fecha".
+  'CREATE INDEX IF NOT EXISTS profile_by_updated ON profile (updated)',
+  'CREATE INDEX IF NOT EXISTS progress_by_updated ON progress (updated)',
+  'CREATE INDEX IF NOT EXISTS favorite_by_updated ON favorite (updated)',
+  'CREATE INDEX IF NOT EXISTS setting_by_updated ON profile_setting (updated)',
 ];
 
 /**
@@ -226,4 +272,43 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'episode', columna: 'rating', tipo: 'REAL' },
   { tabla: 'episode', columna: 'year', tipo: 'INTEGER' },
   { tabla: 'episode', columna: 'seconds', tipo: 'INTEGER' },
+  // Sincronización. `updated` va sin NOT NULL a propósito: SQLite no admite
+  // añadir una columna obligatoria sin valor por defecto, y el que tocaría
+  // —la fecha de ahora— haría que todo lo viejo pareciera recién cambiado y
+  // ganara la primera fusión. Se rellenan justo después, en RELLENOS_SQL.
+  { tabla: 'profile', columna: 'updated', tipo: 'TEXT' },
+  { tabla: 'profile', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
+  { tabla: 'profile', columna: 'origin', tipo: 'TEXT' },
+  { tabla: 'progress', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
+  { tabla: 'progress', columna: 'origin', tipo: 'TEXT' },
+  { tabla: 'favorite', columna: 'updated', tipo: 'TEXT' },
+  { tabla: 'favorite', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
+  { tabla: 'favorite', columna: 'origin', tipo: 'TEXT' },
+  { tabla: 'profile_setting', columna: 'updated', tipo: 'TEXT' },
+  { tabla: 'profile_setting', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
+  { tabla: 'profile_setting', columna: 'origin', tipo: 'TEXT' },
+];
+
+/**
+ * Fecha de las filas que existían antes de que hubiera sincronización.
+ *
+ * Muy antigua a propósito: son datos sin fecha de cambio conocida, y lo que
+ * no se puede fechar tiene que perder contra cualquier cosa que sí. Al revés
+ * —sellarlas con la fecha de hoy— un aparato que estrena la actualización
+ * pisaría lo que el otro llevaba días guardando.
+ */
+export const ANTES_DE_SINCRONIZAR = '1970-01-01T00:00:00.000Z';
+
+/**
+ * Lo que hay que rellenar después de añadir las columnas.
+ *
+ * Se ejecuta siempre: son idempotentes —solo tocan lo que está a NULL— y en
+ * una base nueva no encuentran nada que hacer.
+ */
+export const RELLENOS_SQL = [
+  // Estas dos sí tienen fecha propia de la que tirar, que es mejor que la de
+  // relleno: si el perfil se creó en marzo, marzo es su último cambio.
+  'UPDATE profile SET updated = created WHERE updated IS NULL',
+  'UPDATE favorite SET updated = created WHERE updated IS NULL',
+  `UPDATE profile_setting SET updated = '${ANTES_DE_SINCRONIZAR}' WHERE updated IS NULL`,
 ];

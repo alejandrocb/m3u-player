@@ -18,6 +18,8 @@ import {
   CONTENT_TABLES,
   COLUMNAS_MIGRADAS,
   INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_SQL,
+  SCHEMA_PERFILES_SQL,
   SCHEMA_FTS_SQL,
   SCHEMA_SQL,
   SCHEMA_VERSION,
@@ -120,12 +122,17 @@ export class LibraryStore {
     // La búsqueda va aparte porque FTS5 es opcional en SQLite. La compilación
     // que trae Node lo incluye, así que aquí siempre debería crearse.
     db.exec(SCHEMA_FTS_SQL);
+    // Perfiles, historial y favoritos. Aquí todavía no hay interfaz que los
+    // use, pero las tablas se crean igual: son las que se sincronizan entre
+    // aparatos, y las migraciones de abajo dan por hecho que existen.
+    db.exec(SCHEMA_PERFILES_SQL);
     // Columnas añadidas después de la primera versión: `CREATE TABLE IF NOT
     // EXISTS` no toca una tabla que ya existe. La lista vive en el esquema,
     // que es lo que comparten escritorio y Android.
     for (const { tabla, columna, tipo } of COLUMNAS_MIGRADAS) ensureColumn(db, tabla, columna, tipo);
     // Estos índices necesitan las columnas de arriba: van los últimos.
     for (const indice of INDICES_TRAS_MIGRAR_SQL) db.exec(indice);
+    for (const relleno of RELLENOS_SQL) db.exec(relleno);
 
     const store = new LibraryStore(db);
     store.#setMeta('schema_version', String(SCHEMA_VERSION));

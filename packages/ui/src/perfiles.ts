@@ -15,6 +15,7 @@
  */
 
 import type { Orden } from './puerto.ts';
+import type { Cambio } from './sincronizacion.ts';
 
 /** Qué se puede tener a medias o marcado como favorito. */
 export type ClaseMedio = 'canal' | 'pelicula' | 'episodio' | 'serie';
@@ -79,6 +80,18 @@ export interface AlmacenPerfiles {
   marcarFavorito(perfilId: string, favorito: Favorito): Promise<void>;
   desmarcarFavorito(perfilId: string, clase: ClaseMedio, itemId: string): Promise<void>;
   esFavorito(perfilId: string, clase: ClaseMedio, itemId: string): Promise<boolean>;
+
+  /**
+   * Lo cambiado desde la última vez que se habló con el servidor, lápidas
+   * incluidas. No hace falta un registro de cambios aparte: las propias filas
+   * llevan la fecha de su último cambio.
+   */
+  cambiosDesde(marca: string): Promise<Cambio[]>;
+  /**
+   * Mete lo que llega de otro aparato, descartando lo que pierda contra lo de
+   * aquí. Aplica `fusionar`, así que recibir un cambio no es aplicarlo.
+   */
+  aplicarCambios(cambios: Cambio[]): Promise<void>;
 }
 
 /**
