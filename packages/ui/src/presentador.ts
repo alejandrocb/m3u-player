@@ -255,11 +255,25 @@ export class Presentador {
     if (lateral?.dentro) {
       if (direccion === 'derecha') {
         lateral.dentro = false;
-      } else if (direccion === 'arriba') {
-        lateral.foco = Math.max(0, lateral.foco - 1);
-      } else if (direccion === 'abajo') {
-        lateral.foco = Math.min(lateral.opciones.length - 1, lateral.foco + 1);
+        return this.estado();
       }
+      if (direccion !== 'arriba' && direccion !== 'abajo') return this.estado();
+
+      const antes = lateral.foco;
+      lateral.foco =
+        direccion === 'arriba'
+          ? Math.max(0, lateral.foco - 1)
+          : Math.min(lateral.opciones.length - 1, lateral.foco + 1);
+      if (lateral.foco === antes) return this.estado();
+
+      /*
+        Posarse en un grupo ya enseña lo que tiene dentro, sin pulsar aceptar.
+        Es como se recorre la lista de canales de cualquier televisor: uno baja
+        por las categorías y va viendo qué hay en cada una. Aceptar queda para
+        entrar en la rejilla, no para "aplicar" el grupo.
+      */
+      const opcion = lateral.opciones[lateral.foco];
+      if (opcion) await this.#aplicarCategoria(opcion, { conservarBarra: true });
       return this.estado();
     }
 
@@ -366,6 +380,24 @@ export class Presentador {
    * "atrás" tiene que salir de la sección, no ir deshaciendo las categorías que
    * hayas ido mirando.
    */
+  /**
+   * Cambia lo que se está viendo a la categoría dada.
+   *
+   * `conservarBarra` deja el foco donde estaba: al recorrer los grupos con el
+   * mando, el contenido cambia debajo pero uno sigue en la barra.
+   */
+  async #aplicarCategoria(
+    opcion: OpcionLateral,
+    { conservarBarra = false } = {},
+  ): Promise<EstadoPantalla> {
+    const estado = await this.elegirCategoria(opcion.grupo, { favoritos: opcion.favoritos });
+    if (conservarBarra && this.#lateral) {
+      this.#lateral.dentro = true;
+      return { ...estado, lateral: this.#lateral };
+    }
+    return estado;
+  }
+
   async elegirCategoria(grupo: string | null, opciones: { favoritos?: boolean } = {}): Promise<EstadoPantalla> {
     const pantalla = this.#navegador.actual;
 

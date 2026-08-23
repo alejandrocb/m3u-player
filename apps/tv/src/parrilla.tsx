@@ -224,8 +224,8 @@ const VERDE = '#35d07f';
 
 const estilos = StyleSheet.create({
   columna: {
-    // La mitad de la pantalla: aquí va el vídeo, y con menos sitio la vista
-    // previa se queda en un sello y la sinopsis no cabe.
+    // Poco menos de la mitad: le sobra para el vídeo y el programa, y lo que
+    // cede se lo lleva la lista de canales, que lo necesita más.
     flex: 1,
     paddingLeft: 18,
     gap: 10,

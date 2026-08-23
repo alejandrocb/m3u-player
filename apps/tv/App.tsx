@@ -33,6 +33,7 @@ import type {
   Elemento,
   EstadoPantalla,
   Formato,
+  OpcionLateral,
   Perfil,
   Programacion,
   Reproducible,
@@ -243,6 +244,8 @@ function BibliotecaVista({
   /** Contra este contenedor se mide el hueco del vídeo. */
   const raiz = useRef<View | null>(null);
   const lista = useRef<FlatList<Elemento> | null>(null);
+  /** La lista de categorías: se desplaza sola para seguir a su foco. */
+  const barra = useRef<FlatList<OpcionLateral> | null>(null);
   const [ajustes, setAjustes] = useState<Ajustes>(AJUSTES_POR_DEFECTO);
   const [verAjustes, setVerAjustes] = useState(false);
   const [texto, setTexto] = useState('');
@@ -422,7 +425,13 @@ function BibliotecaVista({
 
     // En el directo, aceptar sobre el canal que ya se está previsualizando lo
     // abre entero: el primer toque lo enseña en pequeño, el segundo lo agranda.
-    const enfocado = instancia.estado().elementos[instancia.estado().foco];
+    //
+    // Solo cuenta si el foco está de verdad en ese canal. Con el foco en la
+    // barra de categorías, la vista previa sigue siendo la del canal de al
+    // lado, y aceptar allí abría el vídeo a pantalla completa en vez de
+    // elegir el grupo.
+    const actual = instancia.estado();
+    const enfocado = actual.lateral?.dentro ? undefined : actual.elementos[actual.foco];
     const yaEnVista =
       reproduciendo &&
       !aPantallaCompleta &&
@@ -544,7 +553,20 @@ function BibliotecaVista({
         }[evento.eventType] as 'arriba' | 'abajo' | 'izquierda' | 'derecha';
         instancia.mover(direccion).then((nuevo) => {
           setEstado(nuevo);
-          // Con mando, el foco puede irse fuera de lo visible: la lista lo sigue.
+
+          // Cada lista sigue a su propio foco, y solo a él. Antes la del
+          // centro se desplazaba también mientras uno recorría las
+          // categorías: se movía media pantalla sin que cambiara nada de lo
+          // señalado, y no había forma de saber dónde estaba el foco.
+          if (nuevo.lateral?.dentro) {
+            barra.current?.scrollToIndex({
+              index: nuevo.lateral.foco,
+              viewPosition: 0.5,
+              animated: true,
+            });
+            return;
+          }
+
           const fila = Math.floor(nuevo.foco / Math.max(nuevo.columnas, 1));
           lista.current?.scrollToIndex({
             index: nuevo.columnas > 1 ? fila : nuevo.foco,
@@ -640,7 +662,19 @@ function BibliotecaVista({
   const botonesCabecera: Array<{ texto: string; onPress: () => void }> = [
     ...(enInicio || estado.lateral ? [{ texto: 'Buscar', onPress: abrirBuscador }] : []),
     ...(enInicio ? [{ texto: 'Actualizar', onPress: onActualizar }] : []),
-    ...(estado.lateral ? [{ texto: '⚙', onPress: () => setVerAjustes((abierto) => !abierto) }] : []),
+    ...(estado.lateral
+      ? [
+          {
+            texto: '⚙',
+            onPress: () => {
+              // El foco entra en la opción que ya está en uso, no en la
+              // primera: es de donde uno querrá moverse.
+              setFocoAjustes(Math.max(0, COLUMNAS_POSIBLES.indexOf(ajustes.columnas as never)));
+              setVerAjustes(true);
+            },
+          },
+        ]
+      : []),
     ...(enInicio ? [{ texto: perfil.nombre, onPress: onCambiarPerfil }] : []),
     ...(enInicio ? [{ texto: 'Cerrar sesión', onPress: onCerrarSesion }] : []),
   ];
@@ -649,6 +683,7 @@ function BibliotecaVista({
   const barraLateral = estado.lateral ? (
     <View style={[estilos.barra, estado.lateral.dentro && estilos.barraEnfocada]}>
       <FlatList
+        ref={barra}
         data={estado.lateral.opciones}
         keyExtractor={(opcion) => (opcion.favoritos ? 'favoritos' : (opcion.grupo ?? 'todas'))}
         extraData={estado.lateral}
@@ -717,7 +752,12 @@ function BibliotecaVista({
       renderItem={({ item, index }) => (
         <Ficha
           elemento={item}
-          enfocado={index === estado.foco && !estado.lateral?.dentro}
+          // El foco es uno solo: si está arriba —en la cabecera o en los
+          // ajustes—, la ficha deja de estar marcada. Con dos resaltes a la
+          // vez no se sabe dónde se va a quedar la próxima pulsación.
+          enfocado={
+            index === estado.foco && !estado.lateral?.dentro && !enCabecera && !verAjustes
+          }
           formato={estado.formato}
           columnas={estado.columnas}
           // A partir de seis por fila la carátula es estrecha y el texto de
@@ -738,7 +778,20 @@ function BibliotecaVista({
     // coloca con coordenadas de pantalla —las que mide la parrilla para su
     // hueco— y desde un contenedor con relleno saldría desplazado justo esos
     // 32 píxeles, montándose sobre los botones de la cabecera.
-    <View style={estilos.raiz} ref={raiz}>
+    <View
+      style={estilos.raiz}
+      ref={raiz}
+      /*
+        Aquí se queda el foco del sistema, y en ningún otro sitio de esta
+        pantalla. Android solo entrega las teclas si algo está enfocado, pero
+        si además lo estuviera cada ficha o cada botón, la pulsación de OK
+        contaría dos veces: una por el botón y otra por el manejador de
+        teclas. Eso abría una película al entrar en la sección y hacía que
+        los ajustes se cerrasen en el mismo golpe en que se abrían.
+      */
+      focusable
+      hasTVPreferredFocus
+    >
     <View style={[estilos.pantalla, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
       <View style={estilos.cabecera}>
         <View style={estilos.tituloBloque}>
@@ -757,6 +810,14 @@ function BibliotecaVista({
             {botonesCabecera.map((boton, indice) => (
               <Pressable
                 key={boton.texto}
+                /*
+                  El foco del sistema no entra aquí a propósito: en esta
+                  pantalla el recorrido lo lleva la aplicación, y si Android
+                  además entregase el OK al botón, cada pulsación contaría dos
+                  veces. Eso hacía que los ajustes se abrieran y se cerraran
+                  en el mismo golpe.
+                */
+                focusable={false}
                 style={[
                   estilos.botonCabecera,
                   enCabecera && focoCabecera === indice && estilos.botonCabeceraEnfocado,
@@ -777,6 +838,7 @@ function BibliotecaVista({
             {COLUMNAS_POSIBLES.map((cuantas, indice) => (
               <Pressable
                 key={cuantas}
+                focusable={false}
                 style={[
                   estilos.opcion,
                   ajustes.columnas === cuantas && estilos.opcionActiva,
@@ -797,6 +859,7 @@ function BibliotecaVista({
             {ORDENES.map(([clave, nombre], indice) => (
               <Pressable
                 key={clave}
+                focusable={false}
                 style={[
                   estilos.opcion,
                   ajustes.orden === clave && estilos.opcionActiva,
@@ -928,6 +991,7 @@ function Ficha({
     const textoPastilla = apretada ? estilos.pastillaTextoApretado : null;
     return (
       <Pressable
+        focusable={false}
         style={[estilos.caratula, anchoMaximo, enfocado && estilos.fichaEnfocada]}
         onPress={onPress}
         onLongPress={onLongPress}
@@ -1005,6 +1069,7 @@ function Ficha({
   if (formato === 'episodios') {
     return (
       <Pressable
+        focusable={false}
         style={[estilos.episodio, enfocado && estilos.fichaEnfocada]}
         onPress={onPress}
         onLongPress={onLongPress}
@@ -1048,6 +1113,7 @@ function Ficha({
 
   return (
     <Pressable
+      focusable={false}
       style={[estilos.ficha, enfocado && estilos.fichaEnfocada]}
       onPress={onPress}
       onLongPress={onLongPress}
@@ -1217,9 +1283,16 @@ const estilos = StyleSheet.create({
     flexDirection: 'row',
     gap: 16,
   },
-  // Las dos mitades de la pantalla del directo.
+  /**
+   * El reparto del directo.
+   *
+   * A partes iguales no salía: de la mitad izquierda, la barra de categorías
+   * se llevaba 260 puntos y a la lista de canales le quedaban unos 170, con
+   * los nombres cortados. La parrilla cede algo de sitio —le sobra para el
+   * vídeo y el programa— y la lista respira.
+   */
   mitad: {
-    flex: 1,
+    flex: 1.5,
   },
   listaPrincipal: {
     // Alto explícito y no `flex: 1`: en Android 8 el reparto no llegaba a la
@@ -1237,9 +1310,10 @@ const estilos = StyleSheet.create({
     borderColor: 'transparent',
     borderRadius: 10,
     borderWidth: 2,
-    // Ancho fijo: las categorías son nombres cortos y la rejilla se queda con
-    // el resto, que es lo que hay que ver.
-    width: 260,
+    // Ancho fijo, y ajustado: lo que quite aquí se lo come la lista de al
+    // lado. Los nombres largos se parten en dos líneas, que para una
+    // categoría es aceptable; un canal con el nombre cortado, no.
+    width: 200,
   },
   barraEnfocada: {
     borderColor: 'rgba(53,208,127,0.5)',

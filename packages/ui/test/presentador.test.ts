@@ -568,3 +568,32 @@ test('los favoritos se piden por clase, no por ficha', async () => {
   // Siete películas en pantalla, una sola consulta.
   assert.equal(favoritos.llamadas, 1);
 });
+
+test('recorrer los grupos con el mando ya enseña lo que tienen dentro', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.mover('abajo'); // Películas
+  await presentador.aceptar();
+
+  // Entrar en la barra y bajar a la primera categoría del proveedor: sin
+  // perfil no hay grupo de favoritos, así que va justo detrás de "todas".
+  await presentador.mover('izquierda');
+  const estado = await presentador.mover('abajo');
+
+  assert.equal(estado.titulo, 'Estrenos', 'el contenido cambia sin aceptar');
+  assert.equal(estado.lateral?.dentro, true, 'y el foco se queda en la barra');
+  assert.equal(estado.lateral?.activa, 'Estrenos');
+});
+
+test('en el borde de la barra no se recarga nada', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.mover('abajo');
+  await presentador.aceptar();
+  await presentador.mover('izquierda');
+
+  // Arriba del todo ya: la pantalla se queda como está.
+  const estado = await presentador.mover('arriba');
+  assert.equal(estado.lateral?.foco, 0);
+  assert.equal(estado.titulo, 'Películas');
+});
