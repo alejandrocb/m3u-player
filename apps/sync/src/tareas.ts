@@ -16,7 +16,7 @@
  */
 
 import type { Panel } from './panel.ts';
-import { prepararPortadas } from './portadas.ts';
+import { VERSION, prepararPortadas } from './portadas.ts';
 
 /** Cada cuánto se rehace lo preparado. */
 const CADA_HORAS = 24;
@@ -38,21 +38,43 @@ function sinCredenciales(url: string): string {
 export async function prepararLoQueToque(panel: Panel, ahora = new Date()): Promise<number> {
   let hechas = 0;
 
-  for (const lista of panel.listasTodas()) {
-    const guardado = panel.portadasDe(lista.id);
-    const horas = guardado ? (ahora.getTime() - Date.parse(guardado.generado)) / 3_600_000 : Infinity;
-    if (Number.isFinite(horas) && horas < CADA_HORAS) continue;
+  /*
+    Agrupadas por URL, no por lista: la misma lista puede estar dada de alta en
+    dos casas —lo normal si la contratas una vez y la repartes—, y el catálogo
+    que hay detrás es el mismo. Prepararla dos veces sería pagar el doble de
+    peticiones al panel para el mismo resultado.
+  */
+  const listas = panel.listasTodas();
+  const porUrl = new Map<string, typeof listas>();
+  for (const lista of listas) {
+    const mismas = porUrl.get(lista.url);
+    if (mismas) mismas.push(lista);
+    else porUrl.set(lista.url, [lista]);
+  }
 
+  for (const [url, mismas] of porUrl) {
+    // Basta con que a una le toque: se guarda para todas.
+    const toca = mismas.some((lista) => {
+      const guardado = panel.portadasDe(lista.id);
+      if (!guardado) return true;
+      const datos = guardado.datos as { version?: number } | null;
+      if (datos?.version !== VERSION) return true;
+      const horas = (ahora.getTime() - Date.parse(guardado.generado)) / 3_600_000;
+      return !Number.isFinite(horas) || horas >= CADA_HORAS;
+    });
+    if (!toca) continue;
+
+    const nombre = mismas.map((lista) => lista.nombre).join(', ');
     try {
-      const preparado = await prepararPortadas(lista.url);
-      panel.guardarPortadas(lista.id, preparado);
+      const preparado = await prepararPortadas(url);
+      for (const lista of mismas) panel.guardarPortadas(lista.id, preparado);
       hechas += 1;
       console.log(
-        `[portadas] ${lista.nombre}: ${preparado.portadas.length} preparadas, ${preparado.generos.length} géneros`,
+        `[portadas] ${nombre}: ${preparado.portadas.length} preparadas, ${preparado.generos.length} géneros`,
       );
     } catch (fallo) {
       // La URL nunca al registro: lleva las credenciales del panel dentro.
-      console.error(`[portadas] ${lista.nombre} (${sinCredenciales(lista.url)}) falló:`, fallo);
+      console.error(`[portadas] ${nombre} (${sinCredenciales(url)}) falló:`, fallo);
     }
   }
 

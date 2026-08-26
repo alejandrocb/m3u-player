@@ -20,7 +20,7 @@
  * aparato busca en su base por ese identificador y encuentra la ficha.
  */
 
-import { parseName, slug } from '@m3u/core';
+import { fold, parseName, slug } from '@m3u/core';
 import { XtreamClient, credentialsFromUrl } from '@m3u/core/xtream';
 import type { XtreamSeries, XtreamVodStream } from '@m3u/core/xtream';
 
@@ -58,12 +58,30 @@ export interface Genero {
 }
 
 export interface Preparado {
+  /**
+   * Con qué versión de este preparador se hizo.
+   *
+   * Al cambiarla, el trabajo diario rehace lo guardado aunque sea de hace un
+   * rato: si no, un cambio aquí no se notaría hasta el día siguiente y
+   * depurarlo sería insoportable.
+   */
+  version: number;
   portadas: Portada[];
   generos: Genero[];
 }
 
-/** De cuántas películas se averigua el género. Una petición por cada una. */
-const CON_GENERO = 40;
+export const VERSION = 2;
+
+/**
+ * De cuántas películas se averigua el género, por cada criterio.
+ *
+ * Son peticiones al panel, una por película, así que el número es un
+ * compromiso. Sesenta y no veinte porque **el catálogo del aparato puede
+ * llevar hasta tres días guardado**: lo que aquí es "lo más reciente" ya es
+ * más nuevo que nada de lo que él tiene, y con el corte justo no coincidía
+ * ninguna.
+ */
+const CON_GENERO = 60;
 
 /** Cuántas se preparan de cada clase. La aplicación turna entre ellas. */
 const CUANTAS = 6;
@@ -140,7 +158,7 @@ export async function prepararPortadas(url: string, opciones: OpcionesPortadas =
   */
   const generos = await averiguarGeneros(cliente, peliculas, dePeliculas);
 
-  return { portadas: [...dePeliculas, ...deSeries], generos };
+  return { version: VERSION, portadas: [...dePeliculas, ...deSeries], generos };
 }
 
 /**
@@ -168,11 +186,24 @@ async function averiguarGeneros(
       panelId: stream.stream_id,
       entrada: Number(stream.added) || 0,
       valoracion: nota(stream.rating) ?? 0,
+      // La clave con la que ordena el aparato cuando hay empate.
+      clave: fold(titulo),
     };
   });
 
-  const recientes = [...fichas].sort((a, b) => b.entrada - a.entrada).slice(0, CON_GENERO);
-  const valoradas = [...fichas].sort((a, b) => b.valoracion - a.valoracion).slice(0, CON_GENERO);
+  /*
+    Ordenado **igual que lo ordena el aparato**, desempate incluido
+    (`added DESC, sort_title` y `rating DESC, sort_title`). No es un detalle:
+    hay cientos de películas con un 10 pelado, y sin el mismo desempate cada
+    lado se queda con un puñado distinto de ellas. El aparato acaba pidiendo
+    géneros que nadie ha averiguado.
+  */
+  const recientes = [...fichas]
+    .sort((a, b) => b.entrada - a.entrada || a.clave.localeCompare(b.clave))
+    .slice(0, CON_GENERO);
+  const valoradas = [...fichas]
+    .sort((a, b) => b.valoracion - a.valoracion || a.clave.localeCompare(b.clave))
+    .slice(0, CON_GENERO);
 
   for (const ficha of [...recientes, ...valoradas]) {
     if (generos.has(ficha.id)) continue;
