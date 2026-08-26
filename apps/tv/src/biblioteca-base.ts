@@ -10,7 +10,7 @@
 import type { DB } from '@op-engineering/op-sqlite';
 
 import type { Season } from '@m3u/core';
-import { fold } from '@m3u/core';
+import { fold, filtroRecomendadaSQL, ordenRecomendadaSQL } from '@m3u/core';
 import type {
   Ambito,
   Biblioteca,
@@ -59,6 +59,7 @@ export interface OpcionesBase {
  * nota no es tenerla mala, ni no saber cuándo entró es ser lo más viejo.
  */
 function ordenDe(orden: Pagina['orden'], prefijo = ''): string {
+  if (orden === 'recomendada') return ordenRecomendadaSQL(prefijo);
   if (orden === 'valoracion') {
     return `${prefijo}rating IS NULL, ${prefijo}rating DESC, ${prefijo}sort_title`;
   }
@@ -96,6 +97,17 @@ function panelIdsDePelicula(db: DB, id: string): number[] {
     if (Number.isInteger(numero) && numero > 0 && !ids.includes(numero)) ids.push(numero);
   }
   return ids;
+}
+
+/**
+ * La condición que acompaña al orden, si es que lleva alguna.
+ *
+ * Solo `recomendada` filtra: descarta lo que no merece recomendarse. Los
+ * demás órdenes devuelven el catálogo entero, así que aquí no hay nada que
+ * poner y la consulta se queda como estaba.
+ */
+function filtroDe(orden: Pagina['orden'], prefijo = ''): string | null {
+  return orden === 'recomendada' ? filtroRecomendadaSQL(prefijo) : null;
 }
 
 /** SQL devuelve un `IN` en el orden que quiere; el perfil los quiere por fecha. */
@@ -257,14 +269,16 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
+      const filtro = filtroDe(pagina.orden, 'm.');
       const consulta = pagina.grupo
         ? `SELECT m.id, m.title, m.year, m.rating, m.logo, m.genre
              FROM movie m
              JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
-            WHERE g.group_name = ?
+            WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 'm.')}
             LIMIT ? OFFSET ?`
         : `SELECT id, title, year, rating, logo, genre FROM movie
+            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
       const params = pagina.grupo
@@ -282,14 +296,16 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async series(pagina: Pagina): Promise<SerieFicha[]> {
+      const filtro = filtroDe(pagina.orden, 's.');
       const consulta = pagina.grupo
         ? `SELECT s.id, s.title, s.year, s.rating, s.logo, s.genre
              FROM series s
              JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
-            WHERE g.group_name = ?
+            WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 's.')}
             LIMIT ? OFFSET ?`
         : `SELECT id, title, year, rating, logo, genre FROM series
+            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
       const params = pagina.grupo

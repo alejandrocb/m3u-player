@@ -10,6 +10,7 @@
  */
 
 import type { Episode, Library, Season, Series } from '@m3u/core';
+import { esRecomendable } from '@m3u/core';
 
 import type {
   Ambito,
@@ -53,10 +54,21 @@ export interface OpcionesMemoria {
  * no es lo mismo que tenerla mala, ni no saber cuándo entró es ser lo más
  * viejo.
  */
-function ordenar<T extends { title: string; rating: number | null; added: number | null }>(
+function ordenar<T extends { title: string; year?: number | null; rating: number | null; added: number | null }>(
   fichas: T[],
   orden?: Orden,
 ): T[] {
+  // `recomendada` filtra además de ordenar: es la única que descarta fichas.
+  if (orden === 'recomendada') {
+    return fichas
+      .filter((ficha) => esRecomendable(ficha.title, ficha.rating))
+      .sort(
+        (a, b) =>
+          (b.year ?? -1) - (a.year ?? -1) ||
+          (b.added ?? -1) - (a.added ?? -1) ||
+          (b.rating ?? -1) - (a.rating ?? -1),
+      );
+  }
   if (orden === 'valoracion') return [...fichas].sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
   if (orden === 'reciente') return [...fichas].sort((a, b) => (b.added ?? -1) - (a.added ?? -1));
   return fichas;

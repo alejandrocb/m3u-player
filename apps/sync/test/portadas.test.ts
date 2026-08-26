@@ -63,6 +63,11 @@ function panelFalso(): typeof globalThis.fetch {
         { stream_id: 4, name: `La buena (${ANIO}) 720p`, rating: '8.4', year: String(ANIO), stream_icon: 'x' },
         { stream_id: 2, name: `La del cartel (${ANIO})`, rating: '9.1', year: String(ANIO), stream_icon: 'x' },
         { stream_id: 3, name: 'Una vieja (1998)', rating: '9.9', year: '1998', stream_icon: 'x' },
+        // Un diez de los que reparte el proveedor y una copia de pase de
+        // prensa: las dos con fondo bueno, para que lo que las descarte sea
+        // el criterio y no la falta de imagen.
+        { stream_id: 5, name: `La del diez (${ANIO})`, rating: '10', year: String(ANIO), stream_icon: 'x' },
+        { stream_id: 6, name: `La muestra (${ANIO}) SCREENING`, rating: '8.8', year: String(ANIO), stream_icon: 'x' },
       ]);
     }
     if (accion === 'get_series') {
@@ -76,7 +81,8 @@ function panelFalso(): typeof globalThis.fetch {
       if (id === '2') return respuesta({ info: { backdrop_path: ['http://panel/cartel.png'], plot: 'Con cartel.' } });
       // La primera calidad trae imagen pero no sinopsis; la segunda, al revés.
       if (id === '1') return respuesta({ info: { backdrop_path: ['http://panel/fondo.png'], genre: 'Drama' } });
-      return respuesta({ info: { plot: 'Con fondo.', cast: 'Fulana', genre: 'Drama' } });
+      if (id === '4') return respuesta({ info: { plot: 'Con fondo.', cast: 'Fulana', genre: 'Drama' } });
+      return respuesta({ info: { backdrop_path: ['http://panel/fondo.png'], plot: 'Otra.', genre: 'Drama' } });
     }
     if (accion === 'get_series_info') {
       return respuesta({ info: { backdrop_path: ['http://panel/fondo.png'], plot: 'Una serie.' } });
@@ -97,6 +103,19 @@ test('solo se sugiere lo que trae imagen apaisada', async () => {
   );
 });
 
+test('ni los dieces ni las copias de pase de prensa se sugieren', async () => {
+  // El proveedor reparte dieces a mansalva, así que un 10 no significa que
+  // sea buena; y una "SCREENING" es una grabación previa al estreno.
+  const { portadas } = await prepararPortadas('http://panel/get.php?username=u&password=p', {
+    fetch: panelFalso(),
+  });
+
+  assert.ok(
+    !portadas.some((portada) => portada.titulo.includes('diez') || /screening/i.test(portada.titulo)),
+    'las dos se quedan fuera aunque tengan imagen apaisada',
+  );
+});
+
 test('el identificador es el mismo que calcula el aparato', async () => {
   const { portadas, generos } = await prepararPortadas('http://panel/get.php?username=u&password=p', {
     fetch: panelFalso(),
@@ -108,14 +127,15 @@ test('el identificador es el mismo que calcula el aparato', async () => {
   assert.equal(pelicula?.genero, 'Drama');
   assert.equal(portadas.find((portada) => portada.clase === 'serie')?.id, `la-serie-${ANIO}`);
 
-  // Y de las que van a salir en los carruseles se averigua el género, que el
-  // catálogo de películas no trae.
+  /*
+    Y de las que van a salir en los carruseles se averigua el género, que el
+    catálogo de películas no trae. Aquí entran también el diez y la copia de
+    pase de prensa: no presiden el inicio, pero salen en "recién llegadas"
+    como cualquier otra y allí también quieren su género.
+  */
   assert.deepEqual(
-    generos.sort((a, b) => a.id.localeCompare(b.id)),
-    [
-      { id: `la-buena-${ANIO}`, genero: 'Drama' },
-      { id: 'una-vieja-1998', genero: 'Drama' },
-    ],
+    generos.map((genero) => genero.id).sort(),
+    [`la-buena-${ANIO}`, `la-del-diez-${ANIO}`, `la-muestra-screening-${ANIO}`, 'una-vieja-1998'],
   );
 });
 

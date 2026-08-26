@@ -176,6 +176,25 @@ de parsear nada. Así que ahí:
 La importación completa tarda ~50 s contra el panel, casi todo en las 66
 peticiones, que van en fila. Paralelizarlas es la optimización pendiente.
 
+### Qué se recomienda: la nota sirve para descartar, no para ordenar
+
+En la lista real **la valoración está inflada**: hay cientos de películas con
+un 10 pelado, que no significa que sean buenas sino que no las ha valorado
+nadie. Así que el criterio de la portada y de la fila "Recomendadas" ordena
+por **año, luego por lo último que ha entrado, y luego por nota**, y usa la
+nota para filtrar: fuera lo que baje de 7 y fuera lo que llegue a 10.
+
+También quedan fuera las que llevan **"Screening"** en el título: son
+grabaciones de pase de prensa, previas al estreno, y se ven mal. Siguen en el
+catálogo —el sesgo del clasificador es no ocultar nada—, solo que no presiden
+el inicio.
+
+El criterio vive en `packages/core/src/recomendar.ts` porque lo aplican los
+dos lados: el aparato, cuando saca sus sugerencias por su cuenta, y el
+servidor de la casa, que las prepara una vez al día. Si cada uno usara el
+suyo, la portada cambiaría según quién la hubiera calculado. En SQL entra por
+`Orden = 'recomendada'`, que es **el único orden que además filtra**.
+
 ### La portada del inicio: apaisada o no sale
 
 La carátula del proveedor es un cartel 2:3 y la portada es un rectángulo
@@ -441,6 +460,14 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   degradado. Los degradados se montan con plantilla (`FONDO_RGB`) porque
   `experimental_backgroundImage` es texto CSS y ahí hacen falta las
   componentes sueltas.
+- **Una regex escrita desde un heredoc puede llegar rota y en silencio.**
+  `store.ts` tenía `/\b(rating|sort_title)\b/` con **retrocesos de verdad**
+  (0x08) en vez de `\b`: el heredoc se comió las barras invertidas al
+  escribir el fichero. La regex no casaba nunca, así que el prefijo de tabla
+  no se ponía y la consulta con `JOIN` quedaba ambigua. No lo cazó nadie
+  porque el escritorio es un prototipo y esa ruta no se prueba. Los ficheros
+  con barras invertidas se escriben con la herramienta de escritura, no
+  redirigiendo un heredoc.
 - **Regex construidas con plantillas**: dentro de `` ` ` ``, `\b` es un carácter
   de retroceso y `\s` se queda en `s`. Usa `String.raw`. Costó dos bugs
   silenciosos en `normalize.ts`.

@@ -136,7 +136,16 @@ export interface Pagina {
   orden?: Orden;
 }
 
-export type Orden = 'titulo' | 'valoracion' | 'reciente';
+/**
+ * Cómo se ordena una página del catálogo.
+ *
+ * `recomendada` no es solo un orden: **también filtra**. Deja fuera lo que no
+ * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte
+ * el proveedor a mansalva, o copias de pase de prensa— y ordena lo que queda
+ * por año, por lo último que entró y por nota. El criterio vive en
+ * `@m3u/core` porque el servidor de la casa usa exactamente el mismo.
+ */
+export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada';
 
 /** Dónde buscar: en todo, o solo dentro de una sección y su categoría. */
 export interface Ambito {

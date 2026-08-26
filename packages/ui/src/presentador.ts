@@ -18,6 +18,7 @@ import type { PortadaRemota } from './cliente-sync.ts';
 import type { Biblioteca, FichaLarga, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
+import { esRecomendable } from '@m3u/core';
 
 /** Qué reproducir cuando el usuario acepta sobre una ficha. */
 export interface Reproducible {
@@ -222,37 +223,42 @@ export function primerosDelReparto(reparto: string | null): string | null {
   return nombres.slice(0, REPARTO_VISIBLE).join(' · ');
 }
 
-/** Nota mínima para que una película merezca ser el destacado. */
-const NOTA_DESTACADO = 7;
-
 /**
- * Elige la película que preside el inicio.
+ * Elige las que presiden el inicio.
  *
- * De lo último que ha entrado en el catálogo, la mejor valorada que además
- * sea reciente. Las tres condiciones importan: lo viejo no es novedad, lo mal
- * valorado no luce, y sin cartel no hay nada que enseñar.
+ * El criterio es el de `@m3u/core`: reciente, con nota creíble y sin ser una
+ * copia de pase de prensa. Aquí se le añade lo único que depende de la
+ * interfaz —que tenga cartel, porque sin imagen no hay nada que enseñar— y el
+ * año, que en la portada sí se exige: lo viejo no es novedad.
  *
- * Si nada cumple, se devuelve `null` y el inicio arranca sin destacado en vez
- * de presidirlo con lo primero que haya, que es peor que no tener.
+ * **Se ordena por año y se respeta el orden de entrada**, que es el de lo
+ * último añadido: quien llama pide la página por `reciente`. `sort` de
+ * JavaScript conserva el orden de los empates, así que dentro del mismo año
+ * manda lo que entró antes en el catálogo. La nota ya ha hecho su trabajo al
+ * filtrar; ordenar por ella pondría arriba los dieces del proveedor.
+ *
+ * Si nada cumple, se devuelve la lista vacía y el inicio arranca sin portada
+ * en vez de presidirlo con lo primero que haya, que es peor que no tener.
  */
-export function destacarVarias<T extends { anio: number | null; valoracion: number | null; logo: string | null }>(
-  candidatas: T[],
-  cuantas: number,
-  ahora = new Date(),
-): T[] {
+export function destacarVarias<
+  T extends { titulo: string; anio: number | null; valoracion: number | null; logo: string | null },
+>(candidatas: T[], cuantas: number, ahora = new Date()): T[] {
   const desde = ahora.getFullYear() - 1;
   const buenas = candidatas.filter(
-    (ficha) => ficha.logo && ficha.anio !== null && ficha.anio >= desde && (ficha.valoracion ?? 0) >= NOTA_DESTACADO,
+    (ficha) =>
+      ficha.logo &&
+      ficha.anio !== null &&
+      ficha.anio >= desde &&
+      esRecomendable(ficha.titulo, ficha.valoracion),
   );
 
-  return [...buenas].sort((a, b) => (b.valoracion ?? 0) - (a.valoracion ?? 0)).slice(0, cuantas);
+  return [...buenas].sort((a, b) => (b.anio ?? 0) - (a.anio ?? 0)).slice(0, cuantas);
 }
 
 /** La mejor de todas, para cuando solo hace falta una. */
-export function destacar<T extends { anio: number | null; valoracion: number | null; logo: string | null }>(
-  candidatas: T[],
-  ahora = new Date(),
-): T | null {
+export function destacar<
+  T extends { titulo: string; anio: number | null; valoracion: number | null; logo: string | null },
+>(candidatas: T[], ahora = new Date()): T | null {
   return destacarVarias(candidatas, 1, ahora)[0] ?? null;
 }
 
@@ -628,9 +634,9 @@ export class Presentador {
 
     const [novedades, valoradas, series, seriesValoradas, continuar] = await Promise.all([
       conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'reciente' }) : [],
-      conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'valoracion' }) : [],
+      conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'recomendada' }) : [],
       conSeries ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'reciente' }) : [],
-      modo === 'series' ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'valoracion' }) : [],
+      modo === 'series' ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'recomendada' }) : [],
       this.#filaContinuar(modo),
     ]);
 
@@ -719,7 +725,12 @@ export class Presentador {
 
     await anadir(modo === 'peliculas' ? 'Novedades' : 'Películas recién llegadas', novedades, 'pelicula');
     await anadir(modo === 'series' ? 'Novedades' : 'Series recién llegadas', series, 'serie');
-    await anadir('Mejor valoradas', modo === 'series' ? seriesValoradas : valoradas, modo === 'series' ? 'serie' : 'pelicula');
+    /*
+      "Recomendadas" y no "mejor valoradas": el proveedor reparte dieces a
+      mansalva, así que la nota sirve para descartar y no para ordenar. Lo que
+      manda aquí es el año y lo último que ha entrado.
+    */
+    await anadir('Recomendadas', modo === 'series' ? seriesValoradas : valoradas, modo === 'series' ? 'serie' : 'pelicula');
 
     // El foco vuelve donde estaba, recortado por si las filas han cambiado.
     // Vale para dos casos: volver de una sección, y una sincronización que

@@ -12,7 +12,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 import type { Library, Variant } from '@m3u/core';
-import { fold } from '@m3u/core';
+import { filtroRecomendadaSQL, fold, ordenRecomendadaSQL } from '@m3u/core';
 
 import {
   CONTENT_TABLES,
@@ -112,7 +112,7 @@ export interface PageOptions {
    * `rating` pone arriba lo mejor valorado y `added` lo último que entró en
    * el catálogo; por defecto va por título.
    */
-  sort?: 'title' | 'rating' | 'added';
+  sort?: 'title' | 'rating' | 'added' | 'recomendada';
 }
 
 export class LibraryStore {
@@ -331,19 +331,20 @@ export class LibraryStore {
     // Lo que no tiene el dato, al final: `NULL` no es un cero ni una fecha
     // antiquísima.
     const orden = ordenDe(sort);
+    const filtro = filtroDe(sort);
     const rows = group
       ? (this.#db
           .prepare(
             `SELECT m.id, m.title, m.year, m.rating, m.added, m.logo, m.tags
                FROM movie m
                JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
-              WHERE g.group_name = ?
-              ORDER BY ${orden.replace(/(rating|sort_title)/g, 'm.$1')} LIMIT ? OFFSET ?`,
+              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 'm.$1')}` : ''}
+              ORDER BY ${orden.replace(/\b(rating|sort_title|year|added)\b/g, 'm.$1')} LIMIT ? OFFSET ?`,
           )
           .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
           .prepare(
-            `SELECT id, title, year, rating, added, logo, tags FROM movie ORDER BY ${orden} LIMIT ? OFFSET ?`,
+            `SELECT id, title, year, rating, added, logo, tags FROM movie ${filtro ? `WHERE ${filtro}` : ''} ORDER BY ${orden} LIMIT ? OFFSET ?`,
           )
           .all(limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toMovie);
@@ -352,18 +353,19 @@ export class LibraryStore {
   series(options: PageOptions = {}): SeriesRow[] {
     const { limit = 100, offset = 0, group, sort } = options;
     const orden = ordenDe(sort);
+    const filtro = filtroDe(sort);
     const rows = group
       ? (this.#db
           .prepare(
             `SELECT s.id, s.title, s.year, s.rating, s.added, s.logo
                FROM series s
                JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
-              WHERE g.group_name = ?
-              ORDER BY ${orden.replace(/(rating|sort_title)/g, 's.$1')} LIMIT ? OFFSET ?`,
+              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 's.$1')}` : ''}
+              ORDER BY ${orden.replace(/\b(rating|sort_title|year|added)\b/g, 's.$1')} LIMIT ? OFFSET ?`,
           )
           .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
-          .prepare(`SELECT id, title, year, rating, added, logo FROM series ORDER BY ${orden} LIMIT ? OFFSET ?`)
+          .prepare(`SELECT id, title, year, rating, added, logo FROM series ${filtro ? `WHERE ${filtro}` : ''} ORDER BY ${orden} LIMIT ? OFFSET ?`)
           .all(limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toSeries);
   }
@@ -555,9 +557,19 @@ function enElOrdenPedido<T extends { id: string }>(ids: string[], filas: T[]): T
 }
 
 function ordenDe(sort: PageOptions['sort']): string {
+  if (sort === 'recomendada') return ordenRecomendadaSQL();
   if (sort === 'rating') return 'rating IS NULL, rating DESC, sort_title';
   if (sort === 'added') return 'added IS NULL, added DESC, sort_title';
   return 'sort_title';
+}
+
+/**
+ * `recomendada` es el único orden que además **filtra**: deja fuera lo que no
+ * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte el
+ * proveedor, o copia de pase de prensa—. Los demás devuelven todo.
+ */
+function filtroDe(sort: PageOptions['sort']): string | null {
+  return sort === 'recomendada' ? filtroRecomendadaSQL() : null;
 }
 
 function toChannel(row: Record<string, unknown>): ChannelRow {

@@ -20,7 +20,7 @@
  * aparato busca en su base por ese identificador y encuentra la ficha.
  */
 
-import { fold, parseName, slug } from '@m3u/core';
+import { esRecomendable, fold, parseName, slug } from '@m3u/core';
 import { XtreamClient, credentialsFromUrl } from '@m3u/core/xtream';
 import type { XtreamSeries, XtreamVodStream } from '@m3u/core/xtream';
 
@@ -70,7 +70,7 @@ export interface Preparado {
   generos: Genero[];
 }
 
-export const VERSION = 3;
+export const VERSION = 4;
 
 /**
  * De cuántas películas se averigua el género, por cada criterio.
@@ -88,9 +88,6 @@ const CUANTAS = 6;
 
 /** Por cuántas se pregunta para sacar esas seis. */
 const CANDIDATAS = 20;
-
-/** Nota mínima para merecer la portada. La misma que usa el aparato. */
-const NOTA = 7;
 
 export interface OpcionesPortadas {
   fetch?: typeof globalThis.fetch;
@@ -186,6 +183,8 @@ async function averiguarGeneros(
     return {
       id: slug(`${titulo}-${anio ?? ''}`),
       panelId: stream.stream_id,
+      titulo,
+      anio,
       entrada: Number(stream.added) || 0,
       valoracion: nota(stream.rating) ?? 0,
       // La clave con la que ordena el aparato cuando hay empate.
@@ -203,11 +202,20 @@ async function averiguarGeneros(
   const recientes = [...fichas]
     .sort((a, b) => b.entrada - a.entrada || a.clave.localeCompare(b.clave))
     .slice(0, CON_GENERO);
-  const valoradas = [...fichas]
-    .sort((a, b) => b.valoracion - a.valoracion || a.clave.localeCompare(b.clave))
+  // Y las de la fila de recomendadas, con el mismo criterio que el aparato:
+  // filtradas por `esRecomendable` y ordenadas por año, entrada y nota.
+  const recomendadas = fichas
+    .filter((ficha) => esRecomendable(ficha.titulo, ficha.valoracion))
+    .sort(
+      (a, b) =>
+        (b.anio ?? 0) - (a.anio ?? 0) ||
+        b.entrada - a.entrada ||
+        b.valoracion - a.valoracion ||
+        a.clave.localeCompare(b.clave),
+    )
     .slice(0, CON_GENERO);
 
-  for (const ficha of [...recientes, ...valoradas]) {
+  for (const ficha of [...recientes, ...recomendadas]) {
     if (generos.has(ficha.id)) continue;
     // Se marca antes de preguntar: si el panel no da género, tampoco hay que
     // volver a preguntar por ella al llegarnos por la otra lista.
@@ -237,6 +245,21 @@ interface Candidata {
   titulo: string;
   anio: number | null;
   valoracion: number | null;
+  /** Cuándo entró en el catálogo, en segundos de época. */
+  entrada: number;
+}
+
+/**
+ * El orden de lo recomendado: año, luego lo último que entró, luego la nota.
+ *
+ * El mismo que usa el aparato en su SQL. La nota va la última porque en esta
+ * lista está inflada: sirve para descartar —eso lo hace `esRecomendable`— y no
+ * para ordenar.
+ */
+function porOrden(a: Candidata, b: Candidata): number {
+  return (
+    (b.anio ?? 0) - (a.anio ?? 0) || b.entrada - a.entrada || (b.valoracion ?? 0) - (a.valoracion ?? 0)
+  );
 }
 
 /** Cuántas variantes se prueban antes de darse por satisfecho. */
@@ -296,7 +319,7 @@ function candidatasDePelicula(streams: XtreamVodStream[], desde: number): Candid
     if (anio === null || anio < desde) continue;
 
     const valoracion = nota(stream.rating);
-    if ((valoracion ?? 0) < NOTA) continue;
+    if (!esRecomendable(titulo, valoracion)) continue;
 
     const id = slug(`${titulo}-${anio}`);
     const ya = porTitulo.get(id);
@@ -304,12 +327,18 @@ function candidatasDePelicula(streams: XtreamVodStream[], desde: number): Candid
       if (!ya.panelIds.includes(stream.stream_id)) ya.panelIds.push(stream.stream_id);
       continue;
     }
-    porTitulo.set(id, { clase: 'pelicula', id, panelIds: [stream.stream_id], titulo, anio, valoracion });
+    porTitulo.set(id, {
+      clase: 'pelicula',
+      id,
+      panelIds: [stream.stream_id],
+      titulo,
+      anio,
+      valoracion,
+      entrada: Number(stream.added) || 0,
+    });
   }
 
-  return [...porTitulo.values()]
-    .sort((a, b) => (b.valoracion ?? 0) - (a.valoracion ?? 0))
-    .slice(0, CANDIDATAS);
+  return [...porTitulo.values()].sort(porOrden).slice(0, CANDIDATAS);
 }
 
 function candidatasDeSerie(fichas: XtreamSeries[], desde: number): Candidata[] {
@@ -324,7 +353,7 @@ function candidatasDeSerie(fichas: XtreamSeries[], desde: number): Candidata[] {
     if (anio === null || anio < desde) continue;
 
     const valoracion = nota(ficha.rating);
-    if ((valoracion ?? 0) < NOTA) continue;
+    if (!esRecomendable(titulo, valoracion)) continue;
 
     const id = slug(`${titulo}-${anio}`);
     const ya = porTitulo.get(id);
@@ -332,12 +361,20 @@ function candidatasDeSerie(fichas: XtreamSeries[], desde: number): Candidata[] {
       if (!ya.panelIds.includes(ficha.series_id)) ya.panelIds.push(ficha.series_id);
       continue;
     }
-    porTitulo.set(id, { clase: 'serie', id, panelIds: [ficha.series_id], titulo, anio, valoracion });
+    porTitulo.set(id, {
+      clase: 'serie',
+      id,
+      panelIds: [ficha.series_id],
+      titulo,
+      anio,
+      valoracion,
+      // En series no hay `added`: lo que sube es `last_modified`, que además
+      // se mueve cuando le añaden episodios. Para "lo último" viene mejor.
+      entrada: Number(ficha.last_modified) || 0,
+    });
   }
 
-  return [...porTitulo.values()]
-    .sort((a, b) => (b.valoracion ?? 0) - (a.valoracion ?? 0))
-    .slice(0, CANDIDATAS);
+  return [...porTitulo.values()].sort(porOrden).slice(0, CANDIDATAS);
 }
 
 /**

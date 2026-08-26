@@ -183,7 +183,7 @@ test('el inicio trae carruseles de películas y de series', async () => {
 
   assert.deepEqual(
     estado.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
-    ['Películas recién llegadas', 'Series recién llegadas', 'Mejor valoradas'],
+    ['Películas recién llegadas', 'Series recién llegadas', 'Recomendadas'],
   );
   assert.equal(estado.inicio?.modo, 'todo');
 });
@@ -195,13 +195,13 @@ test('la pestaña de películas deja fuera las series, y al revés', async () =>
   const soloPeliculas = await presentador.elegirModo('peliculas');
   assert.deepEqual(
     soloPeliculas.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
-    ['Novedades', 'Mejor valoradas'],
+    ['Novedades', 'Recomendadas'],
   );
 
   const soloSeries = await presentador.elegirModo('series');
   assert.deepEqual(
     soloSeries.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
-    ['Novedades', 'Mejor valoradas'],
+    ['Novedades', 'Recomendadas'],
   );
   assert.equal(soloSeries.inicio?.modo, 'series');
 });
