@@ -87,6 +87,15 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
     async peliculasPorId(ids: string[]): Promise<PeliculaFicha[]> {
       return ids.map((id) => todas.find((pelicula) => pelicula.id === id)).filter((p) => p !== undefined);
     },
+    async detalleDePelicula(id: string) {
+      return id === 'p1'
+        ? {
+            sinopsis: 'Una película de prueba con su sinopsis.',
+            reparto: 'Actriz Primera, Actor Segundo, Actriz Tercera',
+            fondo: 'http://host/fondo.jpg',
+          }
+        : null;
+    },
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return ids.includes('dw') ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null }] : [];
     },
@@ -110,8 +119,15 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
         { nombre: 'Clásicos', canales: 1 },
       ];
     },
-    async buscar(): Promise<Resultado[]> {
-      return [];
+    async buscar(texto: string): Promise<Resultado[]> {
+      if (!texto) return [];
+      // Mezcladas a propósito y en orden de relevancia: es lo que devuelve la
+      // búsqueda de verdad, y el orden hay que conservarlo.
+      return [
+        { tipo: 'serie', id: 'dw', titulo: 'Doctor Who' },
+        { tipo: 'pelicula', id: 'p1', titulo: 'Película 1' },
+        { tipo: 'canal', id: 'c1', titulo: '24 Horas' },
+      ];
     },
     async variantes(): Promise<Variante[]> {
       return [{ url: 'http://host/1.mkv', calidad: 'FHD' }];
@@ -811,4 +827,78 @@ test('recargar conserva el foco', async () => {
   const recargado = await presentador.cargar();
   assert.equal(recargado.inicio?.fila, continuar);
   assert.equal(recargado.inicio?.columna, 1);
+});
+
+test('el buscador enseña carátulas, no líneas de texto', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  const abierto = await presentador.abrirBuscador();
+
+  // Sin texto no se busca nada, pero el formato ya es el de una rejilla.
+  assert.equal(abierto.formato, 'carteles');
+  assert.deepEqual(abierto.elementos, []);
+});
+
+test('los resultados llegan con su ficha del catálogo', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.abrirBuscador();
+  const estado = await presentador.buscar('who');
+
+  assert.equal(estado.elementos.length, 3);
+  // La serie trae carátula, año y nota de su ficha, no solo el título.
+  const serie = estado.elementos[0]!;
+  assert.equal(serie.titulo, 'Doctor Who');
+  assert.equal(serie.anio, 2005);
+  assert.equal(serie.valoracion, 8);
+  assert.equal(serie.detalle, 'Serie');
+});
+
+test('el orden de relevancia de la búsqueda se respeta', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.abrirBuscador();
+  const estado = await presentador.buscar('lo que sea');
+
+  assert.deepEqual(
+    estado.elementos.map((elemento) => elemento.titulo),
+    ['Doctor Who', 'Película 1', '24 Horas'],
+  );
+});
+
+test('aceptar sobre una serie del buscador entra en ella, no en el listado', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.abrirBuscador();
+  await presentador.buscar('who');
+
+  const { estado, reproducir } = await presentador.aceptar();
+  assert.equal(reproducir, null);
+  assert.equal(pantallaDe(presentador), 'serie');
+  // Y entra ya con sus temporadas en la barra y los episodios de la primera.
+  assert.equal(estado.titulo, 'Doctor Who · Temporada 1');
+  assert.deepEqual(
+    estado.lateral?.opciones.map((opcion) => opcion.nombre),
+    ['Temporada 1', 'Temporada 2'],
+  );
+});
+
+test('una película del buscador se reproduce', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.abrirBuscador();
+  await presentador.buscar('lo que sea');
+  presentador.enfocar(1);
+
+  const { reproducir } = await presentador.aceptar();
+  assert.deepEqual(reproducir, { clase: 'pelicula', id: 'p1', titulo: 'Película 1' });
+});
+
+test('un canal del buscador lleva su grupo como detalle', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.abrirBuscador();
+  const estado = await presentador.buscar('lo que sea');
+
+  assert.equal(estado.elementos[2]!.detalle, 'NOTICIAS');
 });

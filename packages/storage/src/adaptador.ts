@@ -14,6 +14,7 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  DetallePelicula,
   EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
@@ -140,6 +141,12 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         numero: episodio.episode,
         titulo: episodio.title,
       }));
+    },
+
+    async detalleDePelicula(): Promise<DetallePelicula | null> {
+      // El escritorio todavía no habla con el panel: cuando tenga su propia
+      // carga, esto irá a `get_vod_info` igual que en Android.
+      return null;
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {

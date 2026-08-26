@@ -53,6 +53,7 @@ import {
   elementosDeFila,
   Presentador,
   cantidad,
+  mediasEstrellas,
   nota,
   numero,
 } from '@m3u/ui';
@@ -93,6 +94,18 @@ const ESPERA_VISTA_PREVIA_MS = 1000;
  * tele.
  */
 const DESPLAZA_EL_DEDO = !Platform.isTV;
+
+/**
+ * El margen lateral de la pantalla, en un sitio del que poder restarlo.
+ *
+ * El destacado va a sangre —tiene que llegar a los bordes— y para eso cancela
+ * este margen con uno negativo. Antes estaba escrito a mano en `estilos` y no
+ * había forma de referirlo.
+ */
+const MARGEN_PANTALLA = 32;
+
+/** Lo que ocupa la cabecera: el destacado se mete por debajo de ella. */
+const MARGEN_CABECERA = 96;
 
 /** Cada cuánto se sincroniza mientras la biblioteca está abierta. */
 const CADA_SINCRONIZACION_MS = 2 * 60 * 1000;
@@ -1366,9 +1379,13 @@ function PantallaInicio({
   const lista = useRef<FlatList<FilaInicio>>(null);
   const { height: alto } = useWindowDimensions();
 
-  // El destacado ocupa cerca de la mitad de la pantalla, con tope: en una tele
-  // grande, media pantalla de cartel es demasiado.
-  const altoDestacado = Math.min(340, Math.round(alto * 0.46));
+  /*
+    El destacado ocupa la mayor parte de la pantalla, y por arriba se mete por
+    debajo de la cabecera. El tope es para que en un televisor de 4K no se
+    coma la fila de "seguir viendo", que tiene que asomar: es lo que invita a
+    bajar.
+  */
+  const altoDestacado = Math.min(520, Math.round(alto * 0.68)) + MARGEN_CABECERA;
 
   useEffect(() => {
     // Con el foco arriba hay que subir del todo: la cabecera va dentro de la
@@ -1443,6 +1460,37 @@ function PantallaInicio({
  * carteles verticales, no arte apaisado: estirarlo a pantalla ancha lo
  * deformaría.
  */
+/**
+ * Las cinco estrellas de la nota, dibujadas.
+ *
+ * La media no es un carácter sino una estrella llena **recortada a la mitad**
+ * sobre una hueca. El carácter que existe para ella no está en la fuente de un
+ * televisor y salía como un cuadrado vacío, que es peor que no ponerla.
+ */
+function Estrellas({ valoracion }: { valoracion: number }) {
+  const medias = mediasEstrellas(valoracion);
+  if (medias === 0) return null;
+
+  return (
+    <View style={estilos.estrellas}>
+      {[0, 1, 2, 3, 4].map((posicion) => {
+        const llenas = medias - posicion * 2;
+        if (llenas >= 2) return <Text key={posicion} style={estilos.estrellaLlena}>★</Text>;
+        if (llenas <= 0) return <Text key={posicion} style={estilos.estrellaHueca}>☆</Text>;
+
+        return (
+          <View key={posicion}>
+            <Text style={estilos.estrellaHueca}>☆</Text>
+            <View style={estilos.estrellaMitad}>
+              <Text style={estilos.estrellaLlena}>★</Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function Destacado({
   elemento,
   alto,
@@ -1460,20 +1508,42 @@ function Destacado({
         <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
       ) : null}
 
-      {/* El degradado: opaco donde va el texto, transparente sobre el cartel. */}
+      {/*
+        Dos degradados: uno de lado, que despeja la izquierda para el texto, y
+        otro de abajo arriba, que funde la imagen con la fila de "seguir
+        viendo" en vez de cortarla en seco.
+      */}
       <View style={estilos.destacadoVelo} pointerEvents="none" />
+      <View style={estilos.destacadoPie} pointerEvents="none" />
 
       <View style={estilos.destacadoTexto}>
         <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
         <Text style={estilos.destacadoNombre} numberOfLines={2}>
           {elemento.titulo}
         </Text>
+
         <View style={estilos.destacadoDatos}>
           {elemento.valoracion !== null ? (
-            <Text style={estilos.destacadoNota}>{nota(elemento.valoracion)}</Text>
+            <>
+              <Estrellas valoracion={elemento.valoracion} />
+              <Text style={estilos.destacadoNota}>{nota(elemento.valoracion)}</Text>
+            </>
           ) : null}
           {elemento.anio !== null ? <Text style={estilos.destacadoAnio}>{elemento.anio}</Text> : null}
         </View>
+
+        {/* Lo que el panel no rellene simplemente no se pinta. */}
+        {elemento.resumen ? (
+          <Text style={estilos.destacadoSinopsis} numberOfLines={3}>
+            {elemento.resumen}
+          </Text>
+        ) : null}
+        {elemento.detalle ? (
+          <Text style={estilos.destacadoReparto} numberOfLines={1}>
+            {elemento.detalle}
+          </Text>
+        ) : null}
+
         <View style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}>
           <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
         </View>
@@ -1849,7 +1919,7 @@ const estilos = StyleSheet.create({
   pantalla: {
     backgroundColor: '#06131c',
     flex: 1,
-    paddingHorizontal: 32,
+    paddingHorizontal: MARGEN_PANTALLA,
   },
   centrado: {
     alignItems: 'center',
@@ -2141,41 +2211,53 @@ const estilos = StyleSheet.create({
   },
 
   destacado: {
-    borderRadius: 12,
+    /*
+      A sangre: la imagen sale por los lados y por arriba, pasando por debajo
+      de la cabecera. Los márgenes negativos cancelan el `paddingHorizontal`
+      de la pantalla y el hueco que deja la cabecera encima.
+
+      No se recorta arriba porque la lista empieza ahí: el destacado es la
+      primera fila y la cabecera flota sobre ella.
+    */
     justifyContent: 'flex-end',
-    marginBottom: 22,
+    marginBottom: 4,
+    marginHorizontal: -MARGEN_PANTALLA,
+    marginTop: -MARGEN_CABECERA,
     overflow: 'hidden',
+    paddingHorizontal: MARGEN_PANTALLA,
   },
   destacadoImagen: {
     height: '100%',
     position: 'absolute',
     right: 0,
-    // El cartel es vertical: ocupa la mitad derecha y el degradado se lo come
-    // hacia la izquierda, que es donde va el texto.
-    width: '62%',
+    // Ancha de verdad: con la imagen apaisada del panel llena casi todo, y el
+    // degradado se encarga de despejar la izquierda.
+    width: '78%',
   },
   destacadoVelo: {
     bottom: 0,
-    /*
-      Un degradado de verdad, sin dependencias: React Native 0.80 y posteriores
-      admiten degradados CSS con `experimental_backgroundImage`.
-
-      Antes esto eran bandas de color superpuestas, porque la alternativa
-      conocida era `react-native-linear-gradient`, que es un módulo nativo. Pero
-      dos rectángulos con opacidades distintas siempre dejan costura: en la
-      tablet se veían como franjas verticales por encima del cartel.
-    */
     experimental_backgroundImage:
-      'linear-gradient(to right, #06131c 0%, #06131c 32%, rgba(6,19,28,0.72) 58%, rgba(6,19,28,0) 100%)',
+      'linear-gradient(to right, #06131c 0%, #06131c 30%, rgba(6,19,28,0.70) 56%, rgba(6,19,28,0) 92%)',
     left: 0,
     position: 'absolute',
     right: 0,
     top: 0,
   },
+  destacadoPie: {
+    // Funde el borde de abajo con el fondo, para que la fila siguiente no
+    // aparezca pegada a un corte recto.
+    bottom: 0,
+    experimental_backgroundImage:
+      'linear-gradient(to bottom, rgba(6,19,28,0) 0%, rgba(6,19,28,0.85) 65%, #06131c 100%)',
+    height: 120,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
   destacadoTexto: {
-    gap: 8,
-    maxWidth: 560,
-    padding: 26,
+    gap: 9,
+    maxWidth: 620,
+    paddingBottom: 30,
   },
   destacadoEtiqueta: {
     color: VERDE,
@@ -2186,21 +2268,52 @@ const estilos = StyleSheet.create({
   },
   destacadoNombre: {
     color: '#fff',
-    fontSize: 34,
+    fontSize: 38,
     fontWeight: '700',
   },
   destacadoDatos: {
+    alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
+  },
+  estrellas: {
+    flexDirection: 'row',
+    gap: 1,
+  },
+  estrellaLlena: {
+    color: '#f0c14a',
+    fontSize: 20,
+  },
+  estrellaHueca: {
+    color: '#6b7681',
+    fontSize: 20,
+  },
+  estrellaMitad: {
+    bottom: 0,
+    left: 0,
+    overflow: 'hidden',
+    position: 'absolute',
+    top: 0,
+    // La mitad justa: lo que asoma es media estrella llena sobre la hueca.
+    width: '50%',
   },
   destacadoNota: {
     color: '#f0c14a',
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
   },
   destacadoAnio: {
     color: '#8fa3b3',
-    fontSize: 17,
+    fontSize: 16,
+  },
+  destacadoSinopsis: {
+    color: '#c6d3dd',
+    fontSize: 16,
+    lineHeight: 23,
+  },
+  destacadoReparto: {
+    color: '#8fa3b3',
+    fontSize: 14,
   },
   destacadoBoton: {
     alignSelf: 'flex-start',
@@ -2208,9 +2321,9 @@ const estilos = StyleSheet.create({
     borderColor: 'transparent',
     borderRadius: 8,
     borderWidth: 3,
-    marginTop: 6,
-    paddingHorizontal: 22,
-    paddingVertical: 11,
+    marginTop: 4,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
   },
   destacadoBotonEnfocado: {
     backgroundColor: VERDE,

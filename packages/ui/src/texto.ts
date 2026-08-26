@@ -72,3 +72,21 @@ export function nota(valoracion: number): string {
   const redondeada = Math.round(valoracion * 10) / 10;
   return Number.isInteger(redondeada) ? String(redondeada) : redondeada.toFixed(1).replace('.', ',');
 }
+
+/**
+ * La nota en medias estrellas: de 0 a 10, sobre cinco estrellas.
+ *
+ * El panel la da sobre diez, que es la escala de las bases de datos de cine,
+ * pero cinco estrellas es lo que la gente lee de un golpe: "cuatro y media"
+ * se entiende sin pensar, "8,7" hay que traducirlo.
+ *
+ * Devuelve el número de mitades y no una cadena de caracteres porque **la
+ * media estrella hay que dibujarla**: el carácter que existe para ella
+ * (U+2BE8) no está en la fuente de un televisor y sale como un cuadrado.
+ * Se redondea al medio punto: un 8,7 son cuatro y media, no cuatro y tres
+ * cuartos, que no tiene dibujo.
+ */
+export function mediasEstrellas(valoracion: number): number {
+  if (!Number.isFinite(valoracion) || valoracion <= 0) return 0;
+  return Math.round(Math.min(5, valoracion / 2) * 2);
+}

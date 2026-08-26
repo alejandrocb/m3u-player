@@ -16,6 +16,7 @@ import type {
   Biblioteca,
   Orden,
   CanalFicha,
+  DetallePelicula,
   EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
@@ -208,6 +209,14 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         });
       }
       return encontrados;
+    },
+
+    async detalleDePelicula(id: string): Promise<DetallePelicula | null> {
+      const pelicula = library.movies.find((una) => una.id === id);
+      if (!pelicula) return null;
+      // Aquí no hay panel al que preguntar y el M3U no trae sinopsis: la
+      // ficha larga solo existe con un panel Xtream detrás.
+      return { sinopsis: null, reparto: null, fondo: null };
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {

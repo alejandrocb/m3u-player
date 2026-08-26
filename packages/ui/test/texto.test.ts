@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cantidad, duracion, nota, numero, reloj } from '../src/texto.ts';
+import { cantidad, duracion, mediasEstrellas, nota, numero, reloj } from '../src/texto.ts';
 
 test('los miles se separan con punto', () => {
   assert.equal(numero(0), '0');
@@ -56,4 +56,30 @@ test('la nota se pinta a la española y sin decimal de más', () => {
   assert.equal(nota(9), '9');
   assert.equal(nota(10), '10');
   assert.equal(nota(8.04), '8');
+});
+
+test('la nota se convierte a medias estrellas sobre cinco', () => {
+  assert.equal(mediasEstrellas(10), 10, 'cinco estrellas');
+  assert.equal(mediasEstrellas(8), 8, 'cuatro');
+  assert.equal(mediasEstrellas(6), 6, 'tres');
+  assert.equal(mediasEstrellas(2), 2, 'una');
+});
+
+test('se redondea al medio punto más cercano', () => {
+  assert.equal(mediasEstrellas(7), 7, 'tres y media');
+  assert.equal(mediasEstrellas(8.7), 9, 'un 8,7 es cuatro y media');
+  assert.equal(mediasEstrellas(9.9), 10);
+  assert.equal(mediasEstrellas(5.4), 5, 'dos y media');
+});
+
+test('sin nota no hay estrellas', () => {
+  // Cinco estrellas huecas parecen "valorada con cero", que no es lo mismo
+  // que "sin valorar".
+  assert.equal(mediasEstrellas(0), 0);
+  assert.equal(mediasEstrellas(Number.NaN), 0);
+  assert.equal(mediasEstrellas(-3), 0);
+});
+
+test('una nota fuera de escala no desborda las cinco', () => {
+  assert.equal(mediasEstrellas(12), 10);
 });

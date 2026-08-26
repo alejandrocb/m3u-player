@@ -453,6 +453,22 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
 - **`node:sqlite` devuelve objetos sin prototipo.** El almacén los convierte a
   objetos normales antes de devolverlos; mantén esa costumbre o `deepEqual`
   fallará en los tests.
+- **`cast` es palabra reservada de SQL.** SQLite deja crear la columna con
+  `ALTER TABLE`, pero `SELECT plot, cast, backdrop` no se puede parsear y la
+  consulta revienta. Costó un buen rato porque el error se lo tragaba un
+  `try/catch` de más arriba y la portada salía sin sinopsis, sin decir nada.
+  La columna se llama `actors`. Al añadir cualquier columna, comprobar que el
+  nombre no es una palabra reservada.
+- **La ficha larga de una película** —sinopsis, reparto e imagen apaisada—
+  **no viene con el catálogo**: `get_vod_streams` da título, cartel, nota y
+  año. Lo demás está en `get_vod_info`, que es una petición por película:
+  inviable para 18.000, pero se pide para la que preside el inicio y se
+  guarda. Medido contra el panel real: sinopsis, reparto y fondo, los tres.
+  El identificador de panel de una película **no se guarda al importar**; sale
+  del último tramo de la URL de su variante (`/movie/usuario/clave/12345.mkv`).
+- **La media estrella (U+2BE8) no está en la fuente de un televisor** y sale
+  como un cuadrado. Se dibuja: una estrella llena recortada al 50 % sobre una
+  hueca. Es el mismo motivo por el que los iconos del reproductor son vistas.
 - **FTS5 se rompe con la puntuación del usuario.** `toMatchQuery` entrecomilla
   palabra a palabra; no pases texto crudo a `MATCH`.
 - **`.probe-cache/` contiene la lista real con las credenciales del panel en

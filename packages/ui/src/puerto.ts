@@ -41,6 +41,20 @@ export interface SerieFicha {
   logo: string | null;
 }
 
+/**
+ * La ficha larga de una película: lo que no cabe en una carátula.
+ *
+ * Todo puede faltar. Cada panel rellena lo que quiere, y la interfaz omite lo
+ * que no venga en vez de dejar huecos con etiquetas vacías.
+ */
+export interface DetallePelicula {
+  sinopsis: string | null;
+  /** Reparto tal y como lo da el panel: nombres separados por comas. */
+  reparto: string | null;
+  /** Imagen apaisada. La de la carátula es vertical y no sirve de fondo. */
+  fondo: string | null;
+}
+
 export interface TemporadaFicha {
   numero: number;
   episodios: number;
@@ -169,6 +183,14 @@ export interface Biblioteca {
    * falta el salto a `series` que aquí ya viene hecho.
    */
   episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]>;
+  /**
+   * La ficha larga de una película, pidiéndola al panel la primera vez.
+   *
+   * Es una petición por película, así que **no se pide en lote**: solo para la
+   * que preside el inicio. Lo que se traiga se guarda, y la siguiente vez sale
+   * de la base. Devuelve `null` si no hay nada que contar.
+   */
+  detalleDePelicula(id: string): Promise<DetallePelicula | null>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".

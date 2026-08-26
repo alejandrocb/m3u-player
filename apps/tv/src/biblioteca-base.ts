@@ -15,6 +15,7 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  DetallePelicula,
   EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
@@ -38,6 +39,13 @@ export interface OpcionesBase {
   /** Trae del panel las temporadas de una serie que aún no están guardadas. */
   /** El título va para poder quitarlo del nombre de cada episodio. */
   traerTemporadas: (panelIds: number[], tituloSerie: string) => Promise<Season[]>;
+  /**
+   * Trae del panel la ficha larga de una película: sinopsis, reparto y fondo.
+   *
+   * Va como opción, igual que las temporadas, porque el almacén no sabe hablar
+   * con el panel: solo guarda lo que le den.
+   */
+  traerDetalle: (panelIds: number[]) => Promise<DetallePelicula | null>;
   /** Falso si no hubo FTS5: entonces se busca con LIKE. */
   conBusquedaRapida: boolean;
 }
@@ -63,6 +71,29 @@ function porId(db: DB, tabla: string, columnas: string, ids: string[]): Fila[] {
   if (ids.length === 0) return [];
   const huecos = ids.map(() => '?').join(', ');
   return filas(db, `SELECT ${columnas} FROM ${tabla} WHERE id IN (${huecos})`, ids);
+}
+
+/**
+ * El identificador de panel de una película, sacado de la URL de su variante.
+ *
+ * Al importar solo se guardan los de las series, que son los que hacían falta
+ * para pedir episodios. Los de las películas no hay que guardarlos: van dentro
+ * de la propia dirección de reproducción —`/movie/usuario/clave/12345.mkv`—,
+ * así que basta con leer el último tramo.
+ *
+ * Se devuelven todos los de sus calidades: el proveedor manda una entrada por
+ * cada una y cualquiera sirve para preguntar por la ficha.
+ */
+function panelIdsDePelicula(db: DB, id: string): number[] {
+  const urls = filas(db, "SELECT url FROM variant WHERE owner_kind = 'movie' AND owner_id = ? ORDER BY rank", [id]);
+
+  const ids: number[] = [];
+  for (const fila of urls) {
+    const ultimo = String(fila.url ?? '').split('/').pop() ?? '';
+    const numero = Number(ultimo.replace(/\.[a-z0-9]+$/i, ''));
+    if (Number.isInteger(numero) && numero > 0 && !ids.includes(numero)) ids.push(numero);
+  }
+  return ids;
 }
 
 /** SQL devuelve un `IN` en el orden que quiere; el perfil los quiere por fecha. */
@@ -285,6 +316,46 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
       const porClave = new Map(encontrados.map((ficha) => [String(ficha.id), ficha]));
       return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
+    },
+
+    async detalleDePelicula(id: string): Promise<DetallePelicula | null> {
+      const guardado = filas(db, 'SELECT plot, actors, backdrop, detalle_pedido FROM movie WHERE id = ?', [id])[0];
+      if (!guardado) return null;
+
+      const deLaBase = (): DetallePelicula => ({
+        sinopsis: (guardado.plot as string) || null,
+        reparto: (guardado.actors as string) || null,
+        fondo: (guardado.backdrop as string) || null,
+      });
+
+      // Ya se preguntó una vez: se devuelve lo que hubiera, aunque fuera nada.
+      // Sin esta marca, una película sin sinopsis se volvería a pedir al panel
+      // en cada arranque, y son 400 ms cada vez.
+      if (guardado.detalle_pedido) return deLaBase();
+
+      const panelIds = panelIdsDePelicula(db, id);
+      if (panelIds.length === 0) return deLaBase();
+
+      let traido: DetallePelicula | null = null;
+      try {
+        traido = await opciones.traerDetalle(panelIds);
+      } catch (error) {
+        // Sin red o con el panel caído, la portada sale sin sinopsis en vez de
+        // no salir. Y no se marca como pedida: se reintentará.
+        console.warn('[base] no se pudo traer la ficha de', id, error);
+        return deLaBase();
+      }
+
+      // Una línea por película y solo la primera vez que se pregunta: sirve
+      // para saber, en una instalación nueva, si el panel rellena estos campos.
+      console.log(
+        `[detalle] ${id}: sinopsis ${traido?.sinopsis ? 'sí' : 'no'}, reparto ${traido?.reparto ? 'sí' : 'no'}, fondo ${traido?.fondo ? 'sí' : 'no'}`,
+      );
+      db.executeSync(
+        'UPDATE movie SET plot = ?, actors = ?, backdrop = ?, detalle_pedido = ? WHERE id = ?',
+        [traido?.sinopsis ?? null, traido?.reparto ?? null, traido?.fondo ?? null, new Date().toISOString(), id],
+      );
+      return traido ?? deLaBase();
     },
 
     async canalesPorId(ids: string[]): Promise<CanalFicha[]> {

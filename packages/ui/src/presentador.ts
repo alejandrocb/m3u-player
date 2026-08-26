@@ -14,7 +14,7 @@ import { cantidad, duracion } from './texto.ts';
 import type { Direccion } from './foco.ts';
 import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
-import type { Biblioteca, Orden } from './puerto.ts';
+import type { Biblioteca, DetallePelicula, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
 
@@ -134,6 +134,27 @@ export function elementosDeFila(fila: FilaInicio): Elemento[] {
 
 /** Cuántas fichas lleva cada carrusel del inicio. */
 const CARRUSEL = 20;
+
+/** Cuántos nombres del reparto caben en una línea sin cansar. */
+const REPARTO_VISIBLE = 3;
+
+/**
+ * Los primeros nombres del reparto, como los da el panel.
+ *
+ * Vienen separados por comas y a veces son doce. En la portada caben tres:
+ * los que encabezan el cartel, que es lo que sirve para reconocer una película.
+ */
+export function primerosDelReparto(reparto: string | null): string | null {
+  if (!reparto) return null;
+
+  const nombres = reparto
+    .split(',')
+    .map((nombre) => nombre.trim())
+    .filter(Boolean);
+  if (nombres.length === 0) return null;
+
+  return nombres.slice(0, REPARTO_VISIBLE).join(' · ');
+}
 
 /** Nota mínima para que una película merezca ser el destacado. */
 const NOTA_DESTACADO = 7;
@@ -279,6 +300,12 @@ export class Presentador {
         return 'canales';
       case 'serie':
         return 'episodios';
+      // El buscador enseña carátulas como cualquier otra rejilla. En lista, un
+      // resultado era una línea de texto: para reconocer una película de un
+      // vistazo hace falta el cartel, y para eso ya está el mismo formato que
+      // usan Películas y Series.
+      case 'buscador':
+        return 'carteles';
       default:
         return 'lista';
     }
@@ -448,16 +475,32 @@ export class Presentador {
 
     const destacada = destacar(novedades);
     if (destacada) {
+      /*
+        La ficha larga es **una petición al panel**, y solo para esta película.
+        Se pide después de tener las filas montadas y sin dejar que un fallo
+        tire la pantalla: la portada sale igual, solo que sin sinopsis.
+      */
+      let detalle: DetallePelicula | null = null;
+      try {
+        detalle = await this.#biblioteca.detalleDePelicula(destacada.id);
+      } catch {
+        detalle = null;
+      }
+
       filas.push({
         tipo: 'destacado',
         elemento: {
           id: `destacado:${destacada.id}`,
           titulo: destacada.titulo,
-          detalle: null,
+          // El reparto va en el detalle, recortado: la portada no es una ficha
+          // técnica y una lista de doce nombres no la lee nadie.
+          detalle: primerosDelReparto(detalle?.reparto ?? null),
           valoracion: destacada.valoracion,
           anio: destacada.anio,
-          resumen: null,
-          logo: destacada.logo,
+          resumen: detalle?.sinopsis ?? null,
+          // La imagen apaisada si el panel la da; si no, el cartel, que es
+          // vertical pero es lo que hay.
+          logo: detalle?.fondo ?? destacada.logo,
           avance: null,
           favorito: false,
           accion: { tipo: 'reproducir', medio: { clase: 'pelicula', id: destacada.id, titulo: destacada.titulo } },
@@ -1115,34 +1158,93 @@ export class Presentador {
         if (!texto) return { titulo: `Buscar${donde}`, elementos: [], hayMas: false };
 
         const resultados = await this.#biblioteca.buscar(texto, pantalla.ambito);
+
+        /*
+          La búsqueda solo devuelve tipo, identificador y título: lo justo para
+          ordenar por relevancia. Las carátulas hay que ir a buscarlas, como en
+          los favoritos y en "seguir viendo", y en las tres consultas a la vez
+          porque son independientes.
+        */
+        const idsDe = (tipo: Resultado['tipo']): string[] =>
+          resultados.filter((resultado) => resultado.tipo === tipo).map((resultado) => resultado.id);
+
+        const [peliculas, series, canales] = await Promise.all([
+          this.#biblioteca.peliculasPorId(idsDe('pelicula')),
+          this.#biblioteca.seriesPorId(idsDe('serie')),
+          this.#biblioteca.canalesPorId(idsDe('canal')),
+        ]);
+        const porPelicula = new Map(peliculas.map((ficha) => [ficha.id, ficha]));
+        const porSerie = new Map(series.map((ficha) => [ficha.id, ficha]));
+        const porCanal = new Map(canales.map((ficha) => [ficha.id, ficha]));
+
         return {
           titulo: `Buscar${donde}`,
           hayMas: false,
-          elementos: resultados.map((resultado) => {
-            // Una serie se abre; un canal o una película se reproducen.
+          // Se recorre `resultados` y no las fichas encontradas para conservar
+          // el orden de relevancia que da la búsqueda.
+          elementos: resultados.flatMap((resultado): Elemento[] => {
             if (resultado.tipo === 'serie') {
-              return ficha(`res:${resultado.id}`, resultado.titulo, 'serie', {
-                tipo: 'serie',
-                serieId: resultado.id,
-                titulo: resultado.titulo,
-              });
+              const ficha = porSerie.get(resultado.id);
+              return [
+                {
+                  id: `res:serie:${resultado.id}`,
+                  titulo: ficha?.titulo ?? resultado.titulo,
+                  detalle: 'Serie',
+                  valoracion: ficha?.valoracion ?? null,
+                  anio: ficha?.anio ?? null,
+                  resumen: null,
+                  logo: ficha?.logo ?? null,
+                  avance: null,
+                  favorito: false,
+                  // Aceptar sobre una serie entra en ella, con sus temporadas
+                  // en la barra: no devuelve al listado de series.
+                  accion: {
+                    tipo: 'entrar',
+                    pantalla: { tipo: 'serie', serieId: resultado.id, titulo: ficha?.titulo ?? resultado.titulo },
+                  },
+                },
+              ];
             }
-            const clase = resultado.tipo === 'canal' ? ('canal' as const) : ('pelicula' as const);
-            return {
-              id: `res:${resultado.id}`,
-              titulo: resultado.titulo,
-              detalle: resultado.tipo === 'canal' ? 'canal' : 'película',
-              valoracion: null,
-              anio: null,
-              resumen: null,
-              logo: null,
-              avance: null,
-              favorito: false,
-              accion: {
-                tipo: 'reproducir' as const,
-                medio: { clase, id: resultado.id, titulo: resultado.titulo },
+
+            if (resultado.tipo === 'canal') {
+              const ficha = porCanal.get(resultado.id);
+              return [
+                {
+                  id: `res:canal:${resultado.id}`,
+                  titulo: ficha?.nombre ?? resultado.titulo,
+                  detalle: ficha?.grupo ?? 'Canal',
+                  valoracion: null,
+                  anio: null,
+                  resumen: null,
+                  logo: ficha?.logo ?? null,
+                  avance: null,
+                  favorito: false,
+                  accion: {
+                    tipo: 'reproducir',
+                    medio: { clase: 'canal', id: resultado.id, titulo: ficha?.nombre ?? resultado.titulo },
+                  },
+                },
+              ];
+            }
+
+            const ficha = porPelicula.get(resultado.id);
+            return [
+              {
+                id: `res:pelicula:${resultado.id}`,
+                titulo: ficha?.titulo ?? resultado.titulo,
+                detalle: null,
+                valoracion: ficha?.valoracion ?? null,
+                anio: ficha?.anio ?? null,
+                resumen: null,
+                logo: ficha?.logo ?? null,
+                avance: null,
+                favorito: false,
+                accion: {
+                  tipo: 'reproducir',
+                  medio: { clase: 'pelicula', id: resultado.id, titulo: ficha?.titulo ?? resultado.titulo },
+                },
               },
-            };
+            ];
           }),
         };
       }

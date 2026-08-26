@@ -17,7 +17,7 @@
 import { buildLibrary, parseM3U } from '@m3u/core';
 import { XtreamClient, construirCatalogo, credentialsFromUrl, temporadasDeSerie } from '@m3u/core/xtream';
 import type { Library } from '@m3u/core';
-import type { AlmacenPerfiles, Biblioteca, Cuenta, Programacion } from '@m3u/ui';
+import type { AlmacenPerfiles, Biblioteca, Cuenta, DetallePelicula, Programacion } from '@m3u/ui';
 
 import { abrirBase, estadoGuardado, guardarCatalogo } from './basedatos';
 import { bibliotecaEnBase } from './biblioteca-base';
@@ -76,6 +76,8 @@ export async function cargarCatalogo(
     // Las temporadas que falten se piden al panel al abrir la serie.
     traerTemporadas: (panelIds, titulo) =>
       cliente ? temporadasDeSerie(cliente, panelIds, titulo) : Promise.resolve([]),
+    // Y la ficha larga de una película, para la que preside el inicio.
+    traerDetalle: (panelIds) => (cliente ? detalleDePelicula(cliente, panelIds) : Promise.resolve(null)),
   });
 
   const guardado = estadoGuardado(db, cuenta.id);
@@ -149,4 +151,27 @@ async function descargarM3U(url: string, avisar: (avance: Avance) => void): Prom
 
   avisar({ seccion: 'Montando la biblioteca', hecho: 1, total: 1 });
   return buildLibrary(parseM3U(texto).entries);
+}
+
+/**
+ * La sinopsis, el reparto y la imagen apaisada de una película.
+ *
+ * El proveedor manda una entrada por calidad, así que una película puede tener
+ * varios identificadores de panel. Se prueban en orden y se para en el primero
+ * que conteste algo: los demás darían lo mismo.
+ */
+async function detalleDePelicula(cliente: XtreamClient, panelIds: number[]): Promise<DetallePelicula | null> {
+  for (const panelId of panelIds) {
+    const respuesta = await cliente.vodInfo(panelId);
+    const info = respuesta.info;
+    if (!info) continue;
+
+    const sinopsis = info.plot?.trim() || null;
+    const reparto = info.cast?.trim() || null;
+    // `backdrop_path` llega como lista aunque traiga una sola imagen.
+    const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
+
+    if (sinopsis || reparto || fondo) return { sinopsis, reparto, fondo };
+  }
+  return null;
 }

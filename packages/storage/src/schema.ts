@@ -269,6 +269,27 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'movie', columna: 'added', tipo: 'INTEGER' },
   { tabla: 'series', columna: 'added', tipo: 'INTEGER' },
   { tabla: 'episode', columna: 'plot', tipo: 'TEXT' },
+  /*
+    La ficha larga de una película. No viene con el catálogo —`get_vod_streams`
+    solo da título, cartel, nota y año—: hay que pedirla con `get_vod_info`,
+    que es una petición por película. Se guarda la primera vez que hace falta
+    y ya no se vuelve a pedir.
+  */
+  { tabla: 'movie', columna: 'plot', tipo: 'TEXT' },
+  /*
+    `actors` y no `cast`: **CAST es palabra reservada de SQL**. La columna se
+    deja crear, pero `SELECT plot, cast, backdrop` no se puede parsear y la
+    consulta revienta. Costó un rato porque el error se lo tragaba el
+    `try/catch` de arriba y la portada salía sin sinopsis, sin decir nada.
+
+    En las bases donde ya se creó `cast` se queda ahí, vacía y sin usar:
+    borrarla obligaría a rehacer la tabla y no molesta.
+  */
+  { tabla: 'movie', columna: 'actors', tipo: 'TEXT' },
+  /** Imagen apaisada, la que luce en la portada. El cartel es vertical. */
+  { tabla: 'movie', columna: 'backdrop', tipo: 'TEXT' },
+  /** Marca de que ya se preguntó, aunque el panel no contestara nada. */
+  { tabla: 'movie', columna: 'detalle_pedido', tipo: 'TEXT' },
   { tabla: 'episode', columna: 'rating', tipo: 'REAL' },
   { tabla: 'episode', columna: 'year', tipo: 'INTEGER' },
   { tabla: 'episode', columna: 'seconds', tipo: 'INTEGER' },
