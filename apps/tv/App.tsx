@@ -1302,7 +1302,15 @@ function BibliotecaVista({
         </View>
       ) : null}
 
-      {estado.inicio ? <View style={estilos.cabeceraFlotante}>{cabecera}</View> : null}
+      {/*
+        La barra flota sobre la portada, así que hay que quitarla a mano
+        cuando el vídeo ocupa la pantalla: el reproductor se pinta por encima
+        de todo lo demás, pero esto va en su propia capa y se quedaba puesto
+        sobre la película.
+      */}
+      {estado.inicio && !(reproduciendo && aPantallaCompleta) ? (
+        <View style={estilos.cabeceraFlotante}>{cabecera}</View>
+      ) : null}
 
       {verAjustes && estado.lateral ? (
         <View style={estilos.ajustes}>
@@ -1615,9 +1623,15 @@ const FUNDIDO_MS = 450;
 /**
  * La portada del inicio, con sus sugerencias turnándose.
  *
- * Se funde en negro y vuelve a aparecer en vez de deslizarse: un deslizamiento
- * pide una dirección, y aquí no la hay —no es una lista que se recorra, es una
- * sugerencia que se sustituye—.
+ * El cambio es un **fundido cruzado**: la que entra aparece encima de la que
+ * sale, y las dos se cruzan a la vez. Antes se apagaba la que había, se
+ * cambiaba y se encendía la nueva, y lo que se veía era el fondo vacío en
+ * medio —"primero el degradado y luego la película", que es justo lo que no
+ * queremos—.
+ *
+ * Se cruza en vez de deslizarse porque un deslizamiento pide una dirección, y
+ * aquí no la hay: no es una lista que se recorra, es una sugerencia que se
+ * sustituye.
  *
  * El reloj lo lleva la vista y no el presentador porque es cosa de la
  * animación: el presentador solo apunta cuál se está enseñando, para que
@@ -1638,7 +1652,11 @@ function Destacado({
   onTurno: (siguiente: number) => void;
   onTocar: () => void;
 }) {
-  const opacidad = useRef(new Animated.Value(1)).current;
+  /** 0 recién cambiada, 1 con la nueva ya del todo puesta. */
+  const paso = useRef(new Animated.Value(1)).current;
+  /** La que se está yendo, que sigue pintada debajo mientras se cruza. */
+  const [saliente, setSaliente] = useState<Elemento | null>(null);
+  const ultima = useRef<Elemento | null>(null);
 
   /*
     El índice y la función de turno se leen de una referencia, no de las
@@ -1656,27 +1674,33 @@ function Destacado({
 
   useEffect(() => {
     if (elementos.length < 2) return;
-
-    const reloj = setInterval(() => {
-      Animated.timing(opacidad, { toValue: 0, duration: FUNDIDO_MS, useNativeDriver: true }).start(() => {
-        turno.current(actual.current + 1);
-        Animated.timing(opacidad, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start();
-      });
-    }, TURNO_PORTADA_MS);
-
+    const reloj = setInterval(() => turno.current(actual.current + 1), TURNO_PORTADA_MS);
     return () => clearInterval(reloj);
-  }, [elementos.length, opacidad]);
+  }, [elementos.length]);
 
-  const elemento = elementos[Math.min(indice, elementos.length - 1)];
+  const elemento = elementos[Math.min(indice, elementos.length - 1)] ?? null;
+
+  useEffect(() => {
+    const anterior = ultima.current;
+    ultima.current = elemento;
+    // Ni al montar ni al repintar sin cambio de sugerencia.
+    if (!anterior || !elemento || anterior.id === elemento.id) return;
+
+    setSaliente(anterior);
+    paso.setValue(0);
+    Animated.timing(paso, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start(({ finished }) => {
+      if (finished) setSaliente(null);
+    });
+  }, [elemento, paso]);
+
   if (!elemento) return null;
 
-  return (
-    <Pressable focusable={false} onPress={onTocar} style={[estilos.destacado, { height: alto }]}>
-      <Animated.View style={[estilos.destacadoCapa, { opacity: opacidad }]}>
-        {elemento.logo ? (
-          <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
-        ) : null}
-      </Animated.View>
+  /** Lo que se ve de una sugerencia: su imagen, los velos y su ficha. */
+  const capa = (una: Elemento, activa: boolean): ReactNode => (
+    <>
+      {una.logo ? (
+        <Image source={{ uri: una.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
+      ) : null}
 
       {/*
         Tres degradados: uno de lado, que despeja la izquierda para el texto;
@@ -1687,47 +1711,75 @@ function Destacado({
       <View style={estilos.destacadoPie} pointerEvents="none" />
       <View style={estilos.destacadoTecho} pointerEvents="none" />
 
-      <Animated.View style={[estilos.destacadoTexto, { opacity: opacidad }]}>
+      <View style={estilos.destacadoTexto}>
         <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
         <Text style={estilos.destacadoNombre} numberOfLines={2}>
-          {elemento.titulo}
+          {una.titulo}
         </Text>
 
         <View style={estilos.destacadoDatos}>
-          {elemento.valoracion !== null ? (
+          {una.valoracion !== null ? (
             <>
-              <Estrellas valoracion={elemento.valoracion} />
-              <Text style={estilos.destacadoNota}>{nota(elemento.valoracion)}</Text>
+              <Estrellas valoracion={una.valoracion} />
+              <Text style={estilos.destacadoNota}>{nota(una.valoracion)}</Text>
             </>
           ) : null}
-          {elemento.anio !== null ? <Text style={estilos.destacadoAnio}>{elemento.anio}</Text> : null}
+          {una.anio !== null ? <Text style={estilos.destacadoAnio}>{una.anio}</Text> : null}
         </View>
 
         {/* Lo que el panel no rellene simplemente no se pinta. */}
-        {elemento.resumen ? (
+        {una.resumen ? (
           <Text style={estilos.destacadoSinopsis} numberOfLines={3}>
-            {elemento.resumen}
+            {una.resumen}
           </Text>
         ) : null}
-        {elemento.detalle ? (
+        {una.detalle ? (
           <Text style={estilos.destacadoReparto} numberOfLines={1}>
-            {elemento.detalle}
+            {una.detalle}
           </Text>
         ) : null}
 
-        <View style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}>
+        {/*
+          Reproducir es un botón de verdad, y **el único sitio que responde al
+          dedo**: con la portada entera pulsable, en la tablet arrancaba la
+          película al tocar la imagen sin querer.
+        */}
+        <Pressable
+          focusable={false}
+          onPress={activa ? onTocar : undefined}
+          style={[estilos.destacadoBoton, enfocado && activa && estilos.destacadoBotonEnfocado]}
+        >
           <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
-        </View>
-      </Animated.View>
+        </Pressable>
+      </View>
 
       {/* El género, en la esquina, donde no compite con el título. */}
-      {elemento.genero ? (
-        <Animated.Text style={[estilos.destacadoGenero, { opacity: opacidad }]} numberOfLines={1}>
-          {elemento.genero}
-        </Animated.Text>
+      {una.genero ? (
+        <Text style={estilos.destacadoGenero} numberOfLines={1}>
+          {una.genero}
+        </Text>
+      ) : null}
+    </>
+  );
+
+  return (
+    <View style={[estilos.destacado, { height: alto }]}>
+      {saliente ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            estilos.destacadoCapa,
+            { opacity: paso.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) },
+          ]}
+        >
+          {capa(saliente, false)}
+        </Animated.View>
       ) : null}
 
-      {/* Y los puntitos, para saber cuántas hay y por cuál va. */}
+      <Animated.View style={[estilos.destacadoCapa, { opacity: paso }]}>{capa(elemento, true)}</Animated.View>
+
+      {/* Los puntitos, para saber cuántas hay y por cuál va. No se funden: son
+          de la portada, no de la sugerencia. */}
       {elementos.length > 1 ? (
         <View style={estilos.destacadoPuntos} pointerEvents="none">
           {elementos.map((una, posicion) => (
@@ -1738,7 +1790,7 @@ function Destacado({
           ))}
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 }
 
@@ -1826,6 +1878,14 @@ function FichaDeFila({
 }) {
   const escala = useRef(new Animated.Value(1)).current;
 
+  /*
+    Con el dedo **no hay foco**, así que no hay ficha que enseñar al enfocar:
+    en una tablet no se vería nunca ni el título ni el año ni la nota. Ahí se
+    enseñan siempre. Lo que cambia no es el aparato sino la forma de señalar:
+    en el televisor hay un sitio marcado y en la tablet, no.
+  */
+  const verFicha = enfocado || DESPLAZA_EL_DEDO;
+
   useEffect(() => {
     Animated.spring(escala, {
       toValue: enfocado ? ESCALA_ENFOQUE : 1,
@@ -1861,7 +1921,7 @@ function FichaDeFila({
             Debajo no: con el texto fuera, la fila tenía que reservar un hueco
             que estaba vacío en todas las fichas menos una.
           */}
-          {enfocado ? (
+          {verFicha ? (
             <View style={estilos.fichaVelo} pointerEvents="none">
               <Text style={estilos.fichaVeloTitulo} numberOfLines={2}>
                 {item.titulo}
@@ -2504,7 +2564,8 @@ const estilos = StyleSheet.create({
     width: 26,
   },
   destacadoPuntos: {
-    bottom: 26,
+    // Por debajo del botón: a la altura de antes se lo comía su borde.
+    bottom: 8,
     flexDirection: 'row',
     gap: 7,
     left: MARGEN_PANTALLA,
@@ -2547,10 +2608,17 @@ const estilos = StyleSheet.create({
     paddingHorizontal: MARGEN_PANTALLA,
   },
   destacadoCapa: {
+    /*
+      Cada sugerencia se pinta entera en su capa —imagen, velos y ficha— para
+      poder cruzarlas. Se sale por los lados, cancelando el
+      `paddingHorizontal` del destacado, y lo devuelve dentro el texto: así la
+      imagen llega a los bordes y la ficha se queda en su margen.
+    */
     bottom: 0,
-    left: 0,
+    justifyContent: 'flex-end',
+    left: -MARGEN_PANTALLA,
     position: 'absolute',
-    right: 0,
+    right: -MARGEN_PANTALLA,
     top: 0,
   },
   destacadoImagen: {
@@ -2562,27 +2630,27 @@ const estilos = StyleSheet.create({
       por arriba, que es donde estorba al texto y a la barra.
     */
     bottom: 0,
-    left: -MARGEN_PANTALLA,
+    left: 0,
     position: 'absolute',
-    right: -MARGEN_PANTALLA,
+    right: 0,
     top: 0,
   },
   destacadoVelo: {
     bottom: 0,
     experimental_backgroundImage:
       `linear-gradient(to right, ${FONDO} 0%, rgba(${FONDO_RGB},0.92) 34%, rgba(${FONDO_RGB},0.55) 62%, rgba(${FONDO_RGB},0) 100%)`,
-    left: -MARGEN_PANTALLA,
+    left: 0,
     position: 'absolute',
-    right: -MARGEN_PANTALLA,
+    right: 0,
     top: 0,
   },
   destacadoTecho: {
     experimental_backgroundImage:
       `linear-gradient(to bottom, rgba(${FONDO_RGB},0.85) 0%, rgba(${FONDO_RGB},0.35) 60%, rgba(${FONDO_RGB},0) 100%)`,
     height: MARGEN_CABECERA + 20,
-    left: -MARGEN_PANTALLA,
+    left: 0,
     position: 'absolute',
-    right: -MARGEN_PANTALLA,
+    right: 0,
     top: 0,
   },
   destacadoPie: {
@@ -2592,12 +2660,14 @@ const estilos = StyleSheet.create({
     experimental_backgroundImage:
       `linear-gradient(to bottom, rgba(${FONDO_RGB},0) 0%, rgba(${FONDO_RGB},0.85) 65%, ${FONDO} 100%)`,
     height: 120,
-    left: -MARGEN_PANTALLA,
+    left: 0,
     position: 'absolute',
-    right: -MARGEN_PANTALLA,
+    right: 0,
   },
   destacadoTexto: {
     gap: 7,
+    // El margen que la capa canceló para poder ir a sangre.
+    marginHorizontal: MARGEN_PANTALLA,
     maxWidth: 620,
     paddingBottom: 26,
   },
@@ -2649,9 +2719,10 @@ const estilos = StyleSheet.create({
     fontSize: 16,
   },
   destacadoSinopsis: {
-    color: '#c6d3dd',
-    fontSize: 16,
-    lineHeight: 23,
+    // Blanca y del tamaño del reparto: se lee bien y no se come la portada.
+    color: '#fff',
+    fontSize: 14,
+    lineHeight: 20,
   },
   destacadoReparto: {
     color: TINTA_TENUE,

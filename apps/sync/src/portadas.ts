@@ -70,7 +70,7 @@ export interface Preparado {
   generos: Genero[];
 }
 
-export const VERSION = 2;
+export const VERSION = 3;
 
 /**
  * De cuántas películas se averigua el género, por cada criterio.
@@ -121,32 +121,34 @@ export async function prepararPortadas(url: string, opciones: OpcionesPortadas =
   const dePeliculas = await elegir(
     candidatasDePelicula(peliculas, desde),
     CUANTAS,
-    async (candidata) => {
-      const info = (await cliente.vodInfo(candidata.panelId)).info;
-      if (!info) return null;
-      return {
-        imagen: primeraImagen(info.backdrop_path),
-        sinopsis: info.plot?.trim() || null,
-        reparto: info.cast?.trim() || null,
-        genero: info.genre?.trim() || null,
-      };
-    },
+    (candidata) =>
+      juntar(candidata.panelIds, async (panelId) => {
+        const info = (await cliente.vodInfo(panelId)).info;
+        if (!info) return null;
+        return {
+          imagen: primeraImagen(info.backdrop_path),
+          sinopsis: info.plot?.trim() || null,
+          reparto: info.cast?.trim() || null,
+          genero: info.genre?.trim() || null,
+        };
+      }),
     opciones,
   );
 
   const deSeries = await elegir(
     candidatasDeSerie(series, desde),
     CUANTAS,
-    async (candidata) => {
-      const info = (await cliente.seriesInfo(candidata.panelId)).info;
-      if (!info) return null;
-      return {
-        imagen: primeraImagen(info.backdrop_path),
-        sinopsis: info.plot?.trim() || null,
-        reparto: info.cast?.trim() || null,
-        genero: info.genre?.trim() || null,
-      };
-    },
+    (candidata) =>
+      juntar(candidata.panelIds, async (panelId) => {
+        const info = (await cliente.seriesInfo(panelId)).info;
+        if (!info) return null;
+        return {
+          imagen: primeraImagen(info.backdrop_path),
+          sinopsis: info.plot?.trim() || null,
+          reparto: info.cast?.trim() || null,
+          genero: info.genre?.trim() || null,
+        };
+      }),
     opciones,
   );
 
@@ -224,10 +226,53 @@ async function averiguarGeneros(
 interface Candidata {
   clase: 'pelicula' | 'serie';
   id: string;
-  panelId: number;
+  /**
+   * Todas las entradas del panel de este título.
+   *
+   * El proveedor manda una por calidad y **no todas traen lo mismo**: hay
+   * variantes con imagen y sin sinopsis. Se prueban en orden hasta juntar las
+   * dos, que es lo que hace también el aparato cuando pregunta por su cuenta.
+   */
+  panelIds: number[];
   titulo: string;
   anio: number | null;
   valoracion: number | null;
+}
+
+/** Cuántas variantes se prueban antes de darse por satisfecho. */
+const VARIANTES = 3;
+
+interface Datos {
+  imagen: string | null;
+  sinopsis: string | null;
+  reparto: string | null;
+  genero: string | null;
+}
+
+/** Junta lo que traigan las variantes de un título, hasta tener lo que hace falta. */
+async function juntar(ids: number[], pedir: (panelId: number) => Promise<Datos | null>): Promise<Datos | null> {
+  let junto: Datos = { imagen: null, sinopsis: null, reparto: null, genero: null };
+
+  for (const panelId of ids.slice(0, VARIANTES)) {
+    let traido: Datos | null = null;
+    try {
+      traido = await pedir(panelId);
+    } catch {
+      continue;
+    }
+    if (!traido) continue;
+
+    junto = {
+      imagen: junto.imagen ?? traido.imagen,
+      sinopsis: junto.sinopsis ?? traido.sinopsis,
+      reparto: junto.reparto ?? traido.reparto,
+      genero: junto.genero ?? traido.genero,
+    };
+    // Con imagen y sinopsis ya está: preguntar más son peticiones de balde.
+    if (junto.imagen && junto.sinopsis) break;
+  }
+
+  return junto.imagen ? junto : null;
 }
 
 function nota(valor: string | undefined): number | null {
@@ -240,57 +285,57 @@ function primeraImagen(lista: string[] | undefined): string | null {
 }
 
 function candidatasDePelicula(streams: XtreamVodStream[], desde: number): Candidata[] {
-  const vistas = new Set<string>();
-  return streams
-    .map((stream) => {
-      const parsed = parseName(stream.name);
-      const titulo = parsed.title || stream.name;
-      const anio = Number(stream.year) || parsed.year || null;
-      return {
-        clase: 'pelicula' as const,
-        id: slug(`${titulo}-${anio ?? ''}`),
-        panelId: stream.stream_id,
-        titulo,
-        anio,
-        valoracion: nota(stream.rating),
-      };
-    })
-    .filter((candidata) => {
-      if (candidata.anio === null || candidata.anio < desde) return false;
-      if ((candidata.valoracion ?? 0) < NOTA) return false;
-      // El proveedor manda una entrada por calidad: la misma película sale
-      // varias veces y bastaría con preguntar por una.
-      if (vistas.has(candidata.id)) return false;
-      vistas.add(candidata.id);
-      return true;
-    })
+  // El proveedor manda una entrada por calidad: se agrupan por identidad y se
+  // guardan todas, que es de donde salen las variantes que se prueban.
+  const porTitulo = new Map<string, Candidata>();
+
+  for (const stream of streams) {
+    const parsed = parseName(stream.name);
+    const titulo = parsed.title || stream.name;
+    const anio = Number(stream.year) || parsed.year || null;
+    if (anio === null || anio < desde) continue;
+
+    const valoracion = nota(stream.rating);
+    if ((valoracion ?? 0) < NOTA) continue;
+
+    const id = slug(`${titulo}-${anio}`);
+    const ya = porTitulo.get(id);
+    if (ya) {
+      if (!ya.panelIds.includes(stream.stream_id)) ya.panelIds.push(stream.stream_id);
+      continue;
+    }
+    porTitulo.set(id, { clase: 'pelicula', id, panelIds: [stream.stream_id], titulo, anio, valoracion });
+  }
+
+  return [...porTitulo.values()]
     .sort((a, b) => (b.valoracion ?? 0) - (a.valoracion ?? 0))
     .slice(0, CANDIDATAS);
 }
 
 function candidatasDeSerie(fichas: XtreamSeries[], desde: number): Candidata[] {
-  const vistas = new Set<string>();
-  return fichas
-    .map((ficha) => {
-      const parsed = parseName(ficha.name);
-      const titulo = parsed.title || ficha.name;
-      const anio = Number((ficha.releaseDate ?? '').slice(0, 4)) || parsed.year || null;
-      return {
-        clase: 'serie' as const,
-        id: slug(`${titulo}-${anio ?? ''}`),
-        panelId: ficha.series_id,
-        titulo,
-        anio,
-        valoracion: nota(ficha.rating),
-      };
-    })
-    .filter((candidata) => {
-      if (candidata.anio === null || candidata.anio < desde) return false;
-      if ((candidata.valoracion ?? 0) < NOTA) return false;
-      if (vistas.has(candidata.id)) return false;
-      vistas.add(candidata.id);
-      return true;
-    })
+  // Aquí la repetición no es por calidad sino por categoría: el proveedor
+  // reparte la misma serie entre varias y cada una trae su identificador.
+  const porTitulo = new Map<string, Candidata>();
+
+  for (const ficha of fichas) {
+    const parsed = parseName(ficha.name);
+    const titulo = parsed.title || ficha.name;
+    const anio = Number((ficha.releaseDate ?? '').slice(0, 4)) || parsed.year || null;
+    if (anio === null || anio < desde) continue;
+
+    const valoracion = nota(ficha.rating);
+    if ((valoracion ?? 0) < NOTA) continue;
+
+    const id = slug(`${titulo}-${anio}`);
+    const ya = porTitulo.get(id);
+    if (ya) {
+      if (!ya.panelIds.includes(ficha.series_id)) ya.panelIds.push(ficha.series_id);
+      continue;
+    }
+    porTitulo.set(id, { clase: 'serie', id, panelIds: [ficha.series_id], titulo, anio, valoracion });
+  }
+
+  return [...porTitulo.values()]
     .sort((a, b) => (b.valoracion ?? 0) - (a.valoracion ?? 0))
     .slice(0, CANDIDATAS);
 }
@@ -305,12 +350,7 @@ function candidatasDeSerie(fichas: XtreamSeries[], desde: number): Candidata[] {
 async function elegir(
   candidatas: Candidata[],
   cuantas: number,
-  ficha: (candidata: Candidata) => Promise<{
-    imagen: string | null;
-    sinopsis: string | null;
-    reparto: string | null;
-    genero: string | null;
-  } | null>,
+  ficha: (candidata: Candidata) => Promise<Datos | null>,
   opciones: OpcionesPortadas,
 ): Promise<Portada[]> {
   const elegidas: Portada[] = [];

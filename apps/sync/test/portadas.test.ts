@@ -58,7 +58,9 @@ function panelFalso(): typeof globalThis.fetch {
     const accion = url.searchParams.get('action');
     if (accion === 'get_vod_streams') {
       return respuesta([
-        { stream_id: 1, name: `La buena (${ANIO})`, rating: '8.4', year: String(ANIO), stream_icon: 'x' },
+        { stream_id: 1, name: `La buena (${ANIO}) 1080p`, rating: '8.4', year: String(ANIO), stream_icon: 'x' },
+        // La misma película en otra calidad: aquí es donde está la sinopsis.
+        { stream_id: 4, name: `La buena (${ANIO}) 720p`, rating: '8.4', year: String(ANIO), stream_icon: 'x' },
         { stream_id: 2, name: `La del cartel (${ANIO})`, rating: '9.1', year: String(ANIO), stream_icon: 'x' },
         { stream_id: 3, name: 'Una vieja (1998)', rating: '9.9', year: '1998', stream_icon: 'x' },
       ]);
@@ -71,12 +73,10 @@ function panelFalso(): typeof globalThis.fetch {
     if (accion === 'get_vod_info') {
       const id = url.searchParams.get('vod_id');
       // La 2 está mejor valorada, pero lo que da por fondo es el cartel.
-      return respuesta({
-        info:
-          id === '2'
-            ? { backdrop_path: ['http://panel/cartel.png'], plot: 'Con cartel.' }
-            : { backdrop_path: ['http://panel/fondo.png'], plot: 'Con fondo.', cast: 'Fulana', genre: 'Drama' },
-      });
+      if (id === '2') return respuesta({ info: { backdrop_path: ['http://panel/cartel.png'], plot: 'Con cartel.' } });
+      // La primera calidad trae imagen pero no sinopsis; la segunda, al revés.
+      if (id === '1') return respuesta({ info: { backdrop_path: ['http://panel/fondo.png'], genre: 'Drama' } });
+      return respuesta({ info: { plot: 'Con fondo.', cast: 'Fulana', genre: 'Drama' } });
     }
     if (accion === 'get_series_info') {
       return respuesta({ info: { backdrop_path: ['http://panel/fondo.png'], plot: 'Una serie.' } });
@@ -117,6 +117,19 @@ test('el identificador es el mismo que calcula el aparato', async () => {
       { id: 'una-vieja-1998', genero: 'Drama' },
     ],
   );
+});
+
+test('la sinopsis se busca en las otras calidades del mismo título', async () => {
+  // El proveedor manda una entrada por calidad y no todas traen lo mismo: una
+  // tiene la imagen y otra la sinopsis, y la portada las quiere las dos.
+  const { portadas } = await prepararPortadas('http://panel/get.php?username=u&password=p', {
+    fetch: panelFalso(),
+  });
+
+  const pelicula = portadas.find((portada) => portada.clase === 'pelicula');
+  assert.equal(pelicula?.imagen, 'http://panel/fondo.png');
+  assert.equal(pelicula?.sinopsis, 'Con fondo.');
+  assert.equal(pelicula?.reparto, 'Fulana');
 });
 
 test('sin credenciales en la URL no hay nada que preparar', async () => {

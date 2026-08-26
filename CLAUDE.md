@@ -213,6 +213,18 @@ mitad de las veces el texto cae encima de una cara clara. Debajo no, porque
 entonces la fila tiene que reservar un hueco que está vacío en todas las fichas
 menos una.
 
+**Con el dedo no hay foco**, así que la ficha de la carátula —que en el
+televisor solo se enseña en la enfocada— se enseña siempre en tablet y
+teléfono: si no, ahí no se vería nunca ni el título ni la nota. Lo que cambia
+no es el aparato sino la forma de señalar, y es la única diferencia que se
+permite entre plataformas: **una sola interfaz**, con lo que dependa de tener
+foco resuelto en el sitio donde se pinta. `DESPLAZA_EL_DEDO` (`!Platform.isTV`)
+es la que lo decide, la misma que ya desactivaba el desplazamiento del sistema.
+
+La portada solo responde al dedo **en el botón de reproducir**. Con la portada
+entera pulsable, en la tablet arrancaba la película al tocar la imagen sin
+querer.
+
 **El género de una serie viene con el catálogo** (`get_series` lo trae) y se
 guarda al importar. El de una película no: `get_vod_streams` da título, cartel,
 nota y año, y el género está en la ficha larga, una petición por título. Por eso
