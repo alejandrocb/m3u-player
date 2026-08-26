@@ -176,6 +176,42 @@ de parsear nada. Así que ahí:
 La importación completa tarda ~50 s contra el panel, casi todo en las 66
 peticiones, que van en fila. Paralelizarlas es la optimización pendiente.
 
+### La portada del inicio: apaisada o no sale
+
+La carátula del proveedor es un cartel 2:3 y la portada es un rectángulo
+ancho. Recortando el cartel sale la cara del actor a pantalla completa y
+borrosa, y estirarlo es peor. La imagen que vale es `backdrop_path`, que viene
+en la ficha larga —`get_vod_info` en las películas, `get_series_info` en las
+series—, así que la regla es **sin imagen apaisada no hay sugerencia**: se
+pregunta por ocho candidatas y se cogen las cuatro primeras que la traigan. Si
+no la trae ninguna, el inicio arranca por "Seguir viendo".
+
+La ficha de una serie se pide **aparte de sus temporadas** aunque salgan de la
+misma respuesta: la portada quiere la ficha de cuatro series y no sus
+episodios, que es la parte gorda. Se guarda en las mismas cinco columnas que
+las películas (`plot`, `actors`, `backdrop`, `genre`, `detalle_pedido`).
+
+**Eso lo prepara el servidor**, una vez al día y por lista, no por aparato: es
+una petición por candidata y bastantes no sirven, así que multiplicado por los
+tres aparatos de la casa y por cada arranque salían muchas peticiones
+repetidas contra el panel para el mismo resultado. El VPS ya guarda las URLs de
+las listas, así que no expone ningún secreto nuevo.
+
+Y hace algo que un televisor no puede: **mide la imagen** antes de proponerla,
+leyendo las medidas de la cabecera del fichero con una petición `Range`
+(`apps/sync/src/imagen.ts`, sin dependencias: son JPEG, PNG, GIF y WebP). Hay
+paneles que meten el cartel vertical en el campo del fondo.
+
+Los identificadores se calculan con el mismo `slug(título-año)` de
+`@m3u/core`, y por eso valen para reproducir en el aparato. Aun así, el
+presentador comprueba que cada sugerencia exista en la base local antes de
+enseñarla: el catálogo del aparato puede ser de hace tres días.
+
+**El servidor manda datos, nunca interfaz, y nunca es imprescindible.** Si no
+contesta, si aún no ha preparado esa lista o si la casa no tiene servidor, el
+aparato saca sus portadas preguntando al panel como siempre. `GET
+/api/portadas` devuelve `[]` y no pasa nada.
+
 ### Compartir el historial entre aparatos: nada se borra de verdad
 
 Dejar una película a medias en la tele y seguirla en la tablet exige compartir
@@ -372,6 +408,13 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   Los iconos se dibujan con vistas en `apps/tv/src/iconos.tsx`: un triángulo es
   una caja de tamaño cero con un solo borde relleno.
 
+- **Los colores viven en `apps/tv/src/tema.ts`.** React Native no tiene hojas
+  de estilo —ni cascada, ni selectores, ni herencia—, así que lo único que se
+  puede compartir entre pantallas son los valores. Antes el verde estaba
+  copiado a mano en cinco ficheros y el fondo, escrito dentro de cada
+  degradado. Los degradados se montan con plantilla (`FONDO_RGB`) porque
+  `experimental_backgroundImage` es texto CSS y ahí hacen falta las
+  componentes sueltas.
 - **Regex construidas con plantillas**: dentro de `` ` ` ``, `\b` es un carácter
   de retroceso y `\s` se queda en `s`. Usa `String.raw`. Costó dos bugs
   silenciosos en `normalize.ts`.

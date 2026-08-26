@@ -77,6 +77,29 @@ secreto largo que nunca se enseña. Adivinar el código no sirve de nada.
 El token se entrega **una sola vez** y de él solo queda la huella. Si un
 aparato lo pierde —borrar datos, reinstalar— se vuelve a emparejar.
 
+## Las portadas del inicio
+
+Además de sincronizar, el servidor **prepara una vez al día las sugerencias que
+presiden el inicio** de cada lista: título, nota, año, sinopsis, reparto,
+género y una imagen apaisada. Los aparatos las recogen con `GET /api/portadas`.
+
+Se hace aquí porque cuesta una petición al panel por candidata y muchas no
+traen imagen apaisada, así que hay que preguntar por bastantes más de las que
+salen. Hecho en el servidor, se paga una vez para toda la casa en vez de una
+vez por aparato y arranque. Y de paso se puede comprobar que la imagen sea de
+verdad apaisada, midiéndola: hay paneles que ponen el cartel vertical en el
+campo del fondo.
+
+Es una **caché**: la tabla `portada` se puede borrar entera y se vuelve a
+llenar sola en la siguiente revisión, que es cada hora. Si el trabajo falla
+—panel caído, credenciales caducadas— se anota en el registro y se queda lo
+que hubiera preparado antes; los aparatos, mientras tanto, sacan sus portadas
+preguntando al panel ellos mismos.
+
+```bash
+docker compose -f apps/sync/compose.yaml logs -f sync | grep portadas
+```
+
 ## Copias de seguridad
 
 Todo está en el volumen `m3u-sync-datos`: `panel.sqlite` con los grupos, los
