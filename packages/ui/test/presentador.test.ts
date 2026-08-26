@@ -93,6 +93,7 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
             sinopsis: 'Una película de prueba con su sinopsis.',
             reparto: 'Actriz Primera, Actor Segundo, Actriz Tercera',
             fondo: 'http://host/fondo.jpg',
+            genero: 'Comedia, Animación',
           }
         : null;
     },
@@ -155,14 +156,55 @@ test('el inicio son filas, empezando por las secciones con sus totales', async (
   assert.equal(estado.inicio?.columna, 0);
 });
 
-test('el inicio trae carruseles de novedades, series y mejor valoradas', async () => {
+test('el inicio trae carruseles de películas y de series', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   const estado = await presentador.cargar();
 
   assert.deepEqual(
     estado.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
-    ['Novedades', 'Series recién llegadas', 'Mejor valoradas'],
+    ['Películas recién llegadas', 'Series recién llegadas', 'Mejor valoradas'],
   );
+  assert.equal(estado.inicio?.modo, 'todo');
+});
+
+test('la pestaña de películas deja fuera las series, y al revés', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+
+  const soloPeliculas = await presentador.elegirModo('peliculas');
+  assert.deepEqual(
+    soloPeliculas.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
+    ['Novedades', 'Mejor valoradas'],
+  );
+
+  const soloSeries = await presentador.elegirModo('series');
+  assert.deepEqual(
+    soloSeries.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
+    ['Novedades', 'Mejor valoradas'],
+  );
+  assert.equal(soloSeries.inicio?.modo, 'series');
+});
+
+test('cambiar de pestaña devuelve el foco arriba', async () => {
+  // Lo que hay debajo es otro contenido: dejar el foco en la cuarta fila de
+  // unos carruseles que ya no existen es peor que empezar de nuevo.
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.mover('abajo');
+  await presentador.mover('derecha');
+
+  const cambiado = await presentador.elegirModo('peliculas');
+  assert.equal(cambiado.inicio?.fila, 0);
+  assert.equal(cambiado.inicio?.columna, 0);
+});
+
+test('elegir la pestaña que ya está no recarga nada', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await presentador.mover('abajo');
+
+  const igual = await presentador.elegirModo('todo');
+  assert.equal(igual.inicio?.fila, 1, 'el foco se queda donde estaba');
 });
 
 test('sin cartel ni buena nota no hay destacado', async () => {

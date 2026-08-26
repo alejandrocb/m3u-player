@@ -170,8 +170,9 @@ async function detalleDePelicula(cliente: XtreamClient, panelIds: number[]): Pro
     const reparto = info.cast?.trim() || null;
     // `backdrop_path` llega como lista aunque traiga una sola imagen.
     const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
+    const genero = info.genre?.trim() || null;
 
-    if (sinopsis || reparto || fondo) return { sinopsis, reparto, fondo };
+    if (sinopsis || reparto || fondo || genero) return { sinopsis, reparto, fondo, genero };
   }
   return null;
 }

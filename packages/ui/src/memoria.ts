@@ -216,7 +216,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
       if (!pelicula) return null;
       // Aquí no hay panel al que preguntar y el M3U no trae sinopsis: la
       // ficha larga solo existe con un panel Xtream detrás.
-      return { sinopsis: null, reparto: null, fondo: null };
+      return { sinopsis: null, reparto: null, fondo: null, genero: null };
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {

@@ -53,6 +53,8 @@ export interface DetallePelicula {
   reparto: string | null;
   /** Imagen apaisada. La de la carátula es vertical y no sirve de fondo. */
   fondo: string | null;
+  /** Géneros tal y como los da el panel: "Comedia, Animación". */
+  genero: string | null;
 }
 
 export interface TemporadaFicha {

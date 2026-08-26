@@ -50,6 +50,7 @@ import {
   COLUMNAS_POSIBLES,
   ClienteSync,
   GestorCuentas,
+  MODOS_INICIO,
   elementosDeFila,
   Presentador,
   cantidad,
@@ -782,7 +783,7 @@ function BibliotecaVista({
           if (evento.eventType === 'left') {
             setFocoCabecera((actual) => Math.max(0, actual - 1));
           } else if (evento.eventType === 'right') {
-            setFocoCabecera((actual) => Math.min(botonesCabecera.length - 1, actual + 1));
+            setFocoCabecera((actual) => Math.min(pestanasCabecera.length + botonesCabecera.length - 1, actual + 1));
           } else if (evento.eventType === 'down') {
             setEnCabecera(false);
           }
@@ -795,8 +796,9 @@ function BibliotecaVista({
           ? estado.inicio.fila === 0
           : (estado?.foco ?? 0) < (estado?.columnas ?? 1);
 
-        if (evento.eventType === 'up' && botonesCabecera.length > 0 && !estado?.lateral?.dentro && arribaDelTodo) {
-          setFocoCabecera((actual) => Math.min(actual, botonesCabecera.length - 1));
+        const cuantosArriba = pestanasCabecera.length + botonesCabecera.length;
+        if (evento.eventType === 'up' && cuantosArriba > 0 && !estado?.lateral?.dentro && arribaDelTodo) {
+          setFocoCabecera((actual) => Math.min(actual, cuantosArriba - 1));
           setEnCabecera(true);
           return;
         }
@@ -862,7 +864,10 @@ function BibliotecaVista({
           return;
         }
         if (enCabecera) {
-          botonesCabecera[focoCabecera]?.onPress();
+          // Un solo índice para pestañas y botones, en ese orden.
+          const enPestanas = pestanasCabecera[focoCabecera];
+          if (enPestanas) enPestanas.onPress();
+          else botonesCabecera[focoCabecera - pestanasCabecera.length]?.onPress();
           return;
         }
         // Aceptar sobre la vista previa la abre entera.
@@ -952,6 +957,31 @@ function BibliotecaVista({
     { texto: 'Cerrar sesión', onPress: onCerrarSesion },
   ];
 
+  /**
+   * Las pestañas del inicio, delante de los iconos en el recorrido del mando.
+   *
+   * Van en el mismo índice que los botones —izquierda y derecha los recorren
+   * todos seguidos— porque para quien maneja el mando es una sola fila, por
+   * mucho que se dibujen en dos sitios de la barra.
+   */
+  const pestanasCabecera: Array<{ clave: string; nombre: string; onPress: () => void; activa: boolean }> =
+    estado.inicio
+      ? [
+          ...MODOS_INICIO.map((opcion) => ({
+            clave: opcion.modo,
+            nombre: opcion.nombre,
+            activa: estado.inicio!.modo === opcion.modo,
+            onPress: () => void presentador.current?.elegirModo(opcion.modo).then(setEstado),
+          })),
+          {
+            clave: 'directo',
+            nombre: 'TV en directo',
+            activa: false,
+            onPress: () => void presentador.current?.irADirecto().then(setEstado),
+          },
+        ]
+      : [];
+
   const botonesCabecera: Array<{ texto: string; onPress: () => void; perfil?: true }> = [
     { texto: '⌕', onPress: abrirBuscador },
     ...(estado.lateral
@@ -986,8 +1016,10 @@ function BibliotecaVista({
   const cabecera = (
 <View style={estilos.cabecera}>
           <View style={estilos.tituloBloque}>
-            <Text style={estilos.titulo}>{estado.titulo}</Text>
-            {enInicio ? (
+            {/* En el inicio no va ninguno: lo dicen las pestañas, y el
+                subtítulo se comía el sitio de la portada. */}
+            {estado.inicio ? null : <Text style={estilos.titulo}>{estado.titulo}</Text>}
+            {enInicio && !estado.inicio ? (
               <Text style={estilos.subtitulo}>
                 {cuenta.nombre} · {cantidad(medicion.entradas, 'ficha', 'fichas')} ·{' '}
                 {medicion.via === 'guardada'
@@ -996,6 +1028,33 @@ function BibliotecaVista({
               </Text>
             ) : null}
           </View>
+          {/*
+            El selector de sección, centrado. Cambia la portada y los
+            carruseles sin cambiar de pantalla: la forma se mantiene y uno no
+            se pierde. TV en directo sí es otra pantalla —tiene parrilla y
+            vista previa—, así que entra en vez de filtrar.
+          */}
+          {pestanasCabecera.length > 0 ? (
+            <View style={estilos.pestanas}>
+              {pestanasCabecera.map((pestana, indice) => (
+                <Pressable
+                  key={pestana.clave}
+                  focusable={false}
+                  style={[
+                    estilos.pestana,
+                    pestana.activa && estilos.pestanaActiva,
+                    enCabecera && focoCabecera === indice && estilos.pestanaEnfocada,
+                  ]}
+                  onPress={pestana.onPress}
+                >
+                  <Text style={[estilos.pestanaTexto, pestana.activa && estilos.pestanaTextoActiva]}>
+                    {pestana.nombre}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
           {botonesCabecera.length > 0 ? (
             <View style={estilos.botonera}>
               {botonesCabecera.map((boton, indice) => (
@@ -1013,7 +1072,7 @@ function BibliotecaVista({
                     boton.perfil ? estilos.avatar : estilos.botonCabecera,
                     boton.perfil && { backgroundColor: perfil.color },
                     enCabecera &&
-                      focoCabecera === indice &&
+                      focoCabecera === pestanasCabecera.length + indice &&
                       (boton.perfil ? estilos.avatarEnfocado : estilos.botonCabeceraEnfocado),
                   ]}
                   onPress={boton.onPress}
@@ -1147,11 +1206,14 @@ function BibliotecaVista({
     >
     <View style={[estilos.pantalla, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
       {/*
-        La cabecera, ya solo con dos iconos.
+        La cabecera.
 
-        En el inicio **no se pinta aquí**: va dentro de la lista, como
-        encabezado, y se va con el desplazamiento. Antes era una barra fija
-        que se comía el alto y en el teléfono se pisaba con el contenido.
+        En el inicio **flota sobre la portada**, pegada al borde de arriba, y
+        por eso se pinta después que la lista: la portada llega hasta el borde
+        y si la cabecera fuera antes quedaría debajo de la imagen. Eso es
+        justo lo que pasó al hacerla a sangre y desaparecieron los botones.
+
+        En el resto de pantallas va donde siempre, ocupando su sitio.
       */}
       {estado.inicio ? null : cabecera}
 
@@ -1199,6 +1261,8 @@ function BibliotecaVista({
           </Pressable>
         </View>
       ) : null}
+
+      {estado.inicio ? <View style={estilos.cabeceraFlotante}>{cabecera}</View> : null}
 
       {verAjustes && estado.lateral ? (
         <View style={estilos.ajustes}>
@@ -1270,7 +1334,6 @@ function BibliotecaVista({
       */}
       {estado.inicio ? (
         <PantallaInicio
-          cabecera={cabecera}
           enCabecera={enCabecera}
           inicio={estado.inicio}
           onTocar={(fila, columna) => {
@@ -1364,13 +1427,10 @@ function BibliotecaVista({
  * por el alto, que era lo que dejaba el menú fuera de la vista en el teléfono.
  */
 function PantallaInicio({
-  cabecera,
   enCabecera,
   inicio,
   onTocar,
 }: {
-  /** Va como encabezado de la lista, así que se desplaza con el contenido. */
-  cabecera: ReactNode;
   /** El mando está arriba, en la lupa o el perfil. */
   enCabecera: boolean;
   inicio: Inicio;
@@ -1385,7 +1445,7 @@ function PantallaInicio({
     coma la fila de "seguir viendo", que tiene que asomar: es lo que invita a
     bajar.
   */
-  const altoDestacado = Math.min(520, Math.round(alto * 0.68)) + MARGEN_CABECERA;
+  const altoDestacado = Math.min(470, Math.round(alto * 0.58)) + MARGEN_CABECERA;
 
   useEffect(() => {
     // Con el foco arriba hay que subir del todo: la cabecera va dentro de la
@@ -1412,7 +1472,6 @@ function PantallaInicio({
       ref={lista}
       style={estilos.inicioLista}
       data={inicio.filas}
-      ListHeaderComponent={<>{cabecera}</>}
       keyExtractor={(fila, indice) => `${fila.tipo}-${indice}`}
       extraData={inicio}
       showsVerticalScrollIndicator={false}
@@ -1515,6 +1574,8 @@ function Destacado({
       */}
       <View style={estilos.destacadoVelo} pointerEvents="none" />
       <View style={estilos.destacadoPie} pointerEvents="none" />
+      {/* Y uno arriba, para que la barra flotante se lea sobre la imagen. */}
+      <View style={estilos.destacadoTecho} pointerEvents="none" />
 
       <View style={estilos.destacadoTexto}>
         <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
@@ -1548,6 +1609,13 @@ function Destacado({
           <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
         </View>
       </View>
+
+      {/* El género, en la esquina, donde no compite con el título. */}
+      {elemento.genero ? (
+        <Text style={estilos.destacadoGenero} numberOfLines={1}>
+          {elemento.genero}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -2210,6 +2278,63 @@ const estilos = StyleSheet.create({
     display: 'none',
   },
 
+  cabeceraFlotante: {
+    // Un respiro arriba: pegada al borde, el recuadro de la lupa se cortaba.
+    paddingTop: 14,
+    /*
+      Flota sobre la portada, pegada al borde. Va la última en el árbol para
+      quedar por encima de la imagen, que llega hasta arriba del todo.
+    */
+    left: MARGEN_PANTALLA,
+    position: 'absolute',
+    right: MARGEN_PANTALLA,
+    top: 0,
+    zIndex: 10,
+  },
+  pestanas: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    /*
+      Centradas respecto a la pantalla, no repartidas entre los otros dos
+      bloques de la barra: si van en el flujo, los iconos de la derecha las
+      empujan y dejan de estar en el medio.
+    */
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  pestana: {
+    borderColor: 'transparent',
+    borderRadius: 20,
+    borderWidth: 2,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+  },
+  pestanaActiva: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  pestanaEnfocada: {
+    borderColor: '#fff',
+  },
+  pestanaTexto: {
+    color: '#8fa3b3',
+    fontSize: 17,
+  },
+  pestanaTextoActiva: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  destacadoGenero: {
+    bottom: 26,
+    color: '#8fa3b3',
+    fontSize: 14,
+    letterSpacing: 1,
+    position: 'absolute',
+    right: MARGEN_PANTALLA,
+    textTransform: 'uppercase',
+  },
   destacado: {
     /*
       A sangre: la imagen sale por los lados y por arriba, pasando por debajo
@@ -2243,6 +2368,15 @@ const estilos = StyleSheet.create({
     right: 0,
     top: 0,
   },
+  destacadoTecho: {
+    experimental_backgroundImage:
+      'linear-gradient(to bottom, rgba(6,19,28,0.85) 0%, rgba(6,19,28,0.35) 60%, rgba(6,19,28,0) 100%)',
+    height: MARGEN_CABECERA + 20,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
   destacadoPie: {
     // Funde el borde de abajo con el fondo, para que la fila siguiente no
     // aparezca pegada a un corte recto.
@@ -2255,9 +2389,9 @@ const estilos = StyleSheet.create({
     right: 0,
   },
   destacadoTexto: {
-    gap: 9,
+    gap: 7,
     maxWidth: 620,
-    paddingBottom: 30,
+    paddingBottom: 26,
   },
   destacadoEtiqueta: {
     color: VERDE,
@@ -2268,7 +2402,7 @@ const estilos = StyleSheet.create({
   },
   destacadoNombre: {
     color: '#fff',
-    fontSize: 38,
+    fontSize: 32,
     fontWeight: '700',
   },
   destacadoDatos: {

@@ -51,6 +51,13 @@ export interface Elemento {
   avance: number | null;
   /** Marcado por este perfil. Se pinta el corazón y entra en su grupo. */
   favorito: boolean;
+  /**
+   * Géneros, solo en la portada del inicio.
+   *
+   * Es opcional porque ninguna otra ficha tiene sitio para pintarlos: en una
+   * carátula de la rejilla no cabe una línea más.
+   */
+  genero?: string | null;
 }
 
 /** Una entrada de la barra lateral de categorías. */
@@ -121,10 +128,28 @@ export type FilaInicio =
  * Es el recorrido de cualquier servicio de vídeo, y con un mando es el único
  * que no obliga a adivinar dónde va a saltar el foco.
  */
+/**
+ * Qué se está mirando en el inicio.
+ *
+ * No son pantallas distintas: es **la misma pantalla filtrada**. Cambiar de
+ * pestaña cambia la portada y los carruseles, pero la forma es la misma, así
+ * que uno no se pierde. TV en directo no está aquí porque no se filtra: es
+ * otra pantalla, con su parrilla y su vista previa.
+ */
+export type ModoInicio = 'todo' | 'peliculas' | 'series';
+
+export const MODOS_INICIO: Array<{ modo: ModoInicio; nombre: string }> = [
+  { modo: 'todo', nombre: 'Todo' },
+  { modo: 'peliculas', nombre: 'Películas' },
+  { modo: 'series', nombre: 'Series' },
+];
+
 export interface Inicio {
   filas: FilaInicio[];
   fila: number;
   columna: number;
+  /** La pestaña activa del selector de arriba. */
+  modo: ModoInicio;
 }
 
 /** Los elementos de una fila, sea del tipo que sea. */
@@ -137,6 +162,27 @@ const CARRUSEL = 20;
 
 /** Cuántos nombres del reparto caben en una línea sin cansar. */
 const REPARTO_VISIBLE = 3;
+
+/** Cuántos géneros se enseñan: el panel llega a poner cinco. */
+const GENEROS_VISIBLES = 3;
+
+/**
+ * Los géneros de una película, recortados y limpios.
+ *
+ * El panel los da separados por comas y a veces son cinco. Tres bastan para
+ * saber si te apetece, que es para lo que sirven.
+ */
+export function primerosGeneros(genero: string | null): string | null {
+  if (!genero) return null;
+
+  const generos = genero
+    .split(/[,/]/)
+    .map((uno) => uno.trim())
+    .filter(Boolean);
+  if (generos.length === 0) return null;
+
+  return generos.slice(0, GENEROS_VISIBLES).join(' · ');
+}
 
 /**
  * Los primeros nombres del reparto, como los da el panel.
@@ -261,6 +307,8 @@ export class Presentador {
    * devolvía siempre a la primera ficha de la primera fila.
    */
   #focoInicio = { fila: 0, columna: 0 };
+  /** La pestaña del inicio. Se conserva al entrar y salir de una sección. */
+  #modoInicio: ModoInicio = 'todo';
   #avances: OpcionesPresentador['avances'];
   #seguirViendo: OpcionesPresentador['seguirViendo'];
   #favoritos: PuertoFavoritos | undefined;
@@ -463,17 +511,22 @@ export class Presentador {
       return;
     }
 
-    const [totales, novedades, valoradas, series, continuar] = await Promise.all([
+    const modo = this.#modoInicio;
+    const conPeliculas = modo !== 'series';
+    const conSeries = modo !== 'peliculas';
+
+    const [totales, novedades, valoradas, series, seriesValoradas, continuar] = await Promise.all([
       this.#biblioteca.totales(),
-      this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'reciente' }),
-      this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'valoracion' }),
-      this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'reciente' }),
+      conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'reciente' }) : [],
+      conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'valoracion' }) : [],
+      conSeries ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'reciente' }) : [],
+      modo === 'series' ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'valoracion' }) : [],
       this.#filaContinuar(),
     ]);
 
     const filas: FilaInicio[] = [];
 
-    const destacada = destacar(novedades);
+    const destacada = destacar(modo === 'series' ? series : novedades);
     if (destacada) {
       /*
         La ficha larga es **una petición al panel**, y solo para esta película.
@@ -481,10 +534,12 @@ export class Presentador {
         tire la pantalla: la portada sale igual, solo que sin sinopsis.
       */
       let detalle: DetallePelicula | null = null;
-      try {
-        detalle = await this.#biblioteca.detalleDePelicula(destacada.id);
-      } catch {
-        detalle = null;
+      if (modo !== 'series') {
+        try {
+          detalle = await this.#biblioteca.detalleDePelicula(destacada.id);
+        } catch {
+          detalle = null;
+        }
       }
 
       filas.push({
@@ -495,6 +550,7 @@ export class Presentador {
           // El reparto va en el detalle, recortado: la portada no es una ficha
           // técnica y una lista de doce nombres no la lee nadie.
           detalle: primerosDelReparto(detalle?.reparto ?? null),
+          genero: primerosGeneros(detalle?.genero ?? null),
           valoracion: destacada.valoracion,
           anio: destacada.anio,
           resumen: detalle?.sinopsis ?? null,
@@ -503,7 +559,10 @@ export class Presentador {
           logo: detalle?.fondo ?? destacada.logo,
           avance: null,
           favorito: false,
-          accion: { tipo: 'reproducir', medio: { clase: 'pelicula', id: destacada.id, titulo: destacada.titulo } },
+          accion:
+            modo === 'series'
+              ? { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: destacada.id, titulo: destacada.titulo } }
+              : { tipo: 'reproducir', medio: { clase: 'pelicula', id: destacada.id, titulo: destacada.titulo } },
         },
       });
     }
@@ -522,16 +581,19 @@ export class Presentador {
       ],
     });
 
-    const novedadesFila = await this.#aCarrusel(novedades, 'pelicula');
-    if (novedadesFila.length > 0) filas.push({ tipo: 'carrusel', titulo: 'Novedades', elementos: novedadesFila });
+    const anadir = async (
+      titulo: string,
+      fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
+      clase: 'pelicula' | 'serie',
+    ): Promise<void> => {
+      if (fichas.length === 0) return;
+      const elementos = await this.#aCarrusel(fichas, clase);
+      if (elementos.length > 0) filas.push({ tipo: 'carrusel', titulo, elementos });
+    };
 
-    const seriesFila = await this.#aCarrusel(series, 'serie');
-    if (seriesFila.length > 0) filas.push({ tipo: 'carrusel', titulo: 'Series recién llegadas', elementos: seriesFila });
-
-    const valoradasFila = await this.#aCarrusel(valoradas, 'pelicula');
-    if (valoradasFila.length > 0) {
-      filas.push({ tipo: 'carrusel', titulo: 'Mejor valoradas', elementos: valoradasFila });
-    }
+    await anadir(modo === 'peliculas' ? 'Novedades' : 'Películas recién llegadas', novedades, 'pelicula');
+    await anadir(modo === 'series' ? 'Novedades' : 'Series recién llegadas', series, 'serie');
+    await anadir('Mejor valoradas', modo === 'series' ? seriesValoradas : valoradas, modo === 'series' ? 'serie' : 'pelicula');
 
     // El foco vuelve donde estaba, recortado por si las filas han cambiado.
     // Vale para dos casos: volver de una sección, y una sincronización que
@@ -541,7 +603,32 @@ export class Presentador {
     const columna = Math.min(this.#focoInicio.columna, Math.max(cuantos - 1, 0));
 
     this.#focoInicio = { fila, columna };
-    this.#inicio = { filas, fila, columna };
+    this.#inicio = { filas, fila, columna, modo };
+  }
+
+  /**
+   * Cambia la pestaña del inicio y lo recarga.
+   *
+   * El foco vuelve arriba a propósito: lo que hay debajo es otro contenido, y
+   * dejar el foco en la cuarta fila de unos carruseles que ya no existen es
+   * peor que empezar de nuevo.
+   */
+  async elegirModo(modo: ModoInicio): Promise<EstadoPantalla> {
+    if (modo === this.#modoInicio) return this.estado();
+    this.#modoInicio = modo;
+    this.#focoInicio = { fila: 0, columna: 0 };
+    return this.cargar();
+  }
+
+  /**
+   * Entra en TV en directo desde el selector del inicio.
+   *
+   * No es una pestaña más: el directo tiene su parrilla y su vista previa, así
+   * que es otra pantalla y se apila como tal. Volver atrás devuelve al inicio.
+   */
+  async irADirecto(): Promise<EstadoPantalla> {
+    this.#navegador.entrar({ tipo: 'directo' }, 0);
+    return this.cargar();
   }
 
   /** Apunta dónde ha quedado el foco del inicio, para cuando se vuelva. */

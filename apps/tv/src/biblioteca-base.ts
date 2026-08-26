@@ -319,13 +319,14 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async detalleDePelicula(id: string): Promise<DetallePelicula | null> {
-      const guardado = filas(db, 'SELECT plot, actors, backdrop, detalle_pedido FROM movie WHERE id = ?', [id])[0];
+      const guardado = filas(db, 'SELECT plot, actors, backdrop, genre, detalle_pedido FROM movie WHERE id = ?', [id])[0];
       if (!guardado) return null;
 
       const deLaBase = (): DetallePelicula => ({
         sinopsis: (guardado.plot as string) || null,
         reparto: (guardado.actors as string) || null,
         fondo: (guardado.backdrop as string) || null,
+        genero: (guardado.genre as string) || null,
       });
 
       // Ya se preguntó una vez: se devuelve lo que hubiera, aunque fuera nada.
@@ -352,8 +353,15 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         `[detalle] ${id}: sinopsis ${traido?.sinopsis ? 'sí' : 'no'}, reparto ${traido?.reparto ? 'sí' : 'no'}, fondo ${traido?.fondo ? 'sí' : 'no'}`,
       );
       db.executeSync(
-        'UPDATE movie SET plot = ?, actors = ?, backdrop = ?, detalle_pedido = ? WHERE id = ?',
-        [traido?.sinopsis ?? null, traido?.reparto ?? null, traido?.fondo ?? null, new Date().toISOString(), id],
+        'UPDATE movie SET plot = ?, actors = ?, backdrop = ?, genre = ?, detalle_pedido = ? WHERE id = ?',
+        [
+          traido?.sinopsis ?? null,
+          traido?.reparto ?? null,
+          traido?.fondo ?? null,
+          traido?.genero ?? null,
+          new Date().toISOString(),
+          id,
+        ],
       );
       return traido ?? deLaBase();
     },
