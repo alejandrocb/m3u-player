@@ -1653,18 +1653,28 @@ function Destacado({
   onTurno: (siguiente: number) => void;
   onTocar: () => void;
 }) {
-  /** 0 recién cambiada, 1 con la imagen nueva ya del todo puesta. */
-  const paso = useRef(new Animated.Value(1)).current;
   /**
-   * Qué se está enseñando y qué se está yendo.
+   * Cuál de las dos capas se está viendo: 0 la de abajo, 1 la de arriba.
    *
-   * Las dos juntas y en un solo estado a propósito: tienen que cambiar en el
-   * mismo pintado, o se ve un fotograma con una puesta y la otra no.
+   * **Las dos capas no se desmontan nunca.** Es lo que quita el fotograma en
+   * negro: antes, al cambiar de sugerencia, se montaba una imagen nueva y a
+   * la otra se le cambiaba la dirección a la vez, así que las dos estaban
+   * cargando al mismo tiempo y por un momento no había ninguna que pintar.
+   *
+   * Aquí la imagen nueva se le pone siempre a la capa que **no se está
+   * viendo**, tapada del todo por la otra, y solo cuando ya ha cargado se
+   * descubre. Cargar a escondidas y enseñar cuando está lista.
    */
-  const [capas, setCapas] = useState<{ actual: Elemento | null; saliente: string | null }>({
-    actual: null,
-    saliente: null,
+  const capa = useRef(new Animated.Value(0)).current;
+  const [imagenes, setImagenes] = useState<{ abajo: string | null; arriba: string | null }>({
+    abajo: null,
+    arriba: null,
   });
+  /** Cuál manda ahora mismo. */
+  const enArriba = useRef(false);
+  /** La que está cargando a escondidas, esperando a que se la descubra. */
+  const esperando = useRef<'abajo' | 'arriba' | null>(null);
+  const puesta = useRef<string | null>(null);
 
   /*
     El índice y la función de turno se leen de una referencia, no de las
@@ -1686,51 +1696,88 @@ function Destacado({
     return () => clearInterval(reloj);
   }, [elementos.length]);
 
+  /** Descubre la capa que estaba cargando, fundiéndola sobre la otra. */
+  const descubrir = useCallback(
+    (cual: 'abajo' | 'arriba') => {
+      if (esperando.current !== cual) return;
+      esperando.current = null;
+      enArriba.current = cual === 'arriba';
+      Animated.timing(capa, {
+        toValue: cual === 'arriba' ? 1 : 0,
+        duration: FUNDIDO_MS,
+        useNativeDriver: true,
+      }).start();
+    },
+    [capa],
+  );
+
   const elemento = elementos[Math.min(indice, elementos.length - 1)] ?? null;
 
   /*
-    El relevo se prepara **durante el pintado**, no en un efecto.
-
-    Es lo que quita el parpadeo de antes de la transición: un efecto se
-    ejecuta cuando el pintado ya ha salido, así que había un fotograma con la
-    imagen nueva del todo puesta —opacidad todavía a 1, y la que salía sin
-    montar— y justo después se ponía a cero para empezar a fundir. Ese ida y
-    vuelta de un fotograma es el parpadeo.
-
-    Cambiar el estado aquí es lo que React llama ajustarlo al vuelo: vuelve a
-    pintar en el sitio, antes de enseñar nada, y el guardia del `if` lo corta
-    en la segunda pasada.
+    El relevo se prepara **durante el pintado**, no en un efecto: un efecto se
+    ejecuta cuando el pintado ya ha salido, y entonces se ve un fotograma con
+    la sugerencia a medio cambiar. Cambiar el estado aquí es lo que React
+    llama ajustarlo al vuelo —vuelve a pintar en el sitio, antes de enseñar
+    nada— y el guardia del `if` lo corta en la segunda pasada.
   */
-  if (elemento && capas.actual?.id !== elemento.id) {
-    setCapas({ actual: elemento, saliente: capas.actual?.logo ?? null });
-    // A cero antes de que se vea: la nueva entra desde invisible.
-    if (capas.actual) paso.setValue(0);
+  if (elemento && puesta.current !== elemento.id) {
+    const primera = puesta.current === null;
+    puesta.current = elemento.id;
+
+    if (primera) {
+      // La primera no se funde con nada: se pone abajo y se ve.
+      setImagenes({ abajo: elemento.logo, arriba: null });
+      esperando.current = null;
+    } else {
+      const destino = enArriba.current ? 'abajo' : 'arriba';
+      setImagenes((previas) => ({ ...previas, [destino]: elemento.logo }));
+      esperando.current = destino;
+    }
   }
 
   useEffect(() => {
-    if (!capas.saliente) return;
-    Animated.timing(paso, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start(({ finished }) => {
-      // La que salía ya no tapa nada: fuera, que es una imagen a pantalla
-      // completa de más en memoria.
-      if (finished) setCapas((puestas) => ({ ...puestas, saliente: null }));
-    });
-  }, [capas.actual, capas.saliente, paso]);
+    if (!esperando.current) return;
+    const cual = esperando.current;
+    /*
+      Red de seguridad. Lo normal es que la descubra `onLoad` en cuanto la
+      imagen esté lista —del caché, al instante—, pero si esa imagen no llega
+      nunca (servidor caído, dirección rota) la portada se quedaría clavada
+      en la anterior para siempre.
+    */
+    const plazo = setTimeout(() => descubrir(cual), 2000);
+    return () => clearTimeout(plazo);
+  }, [imagenes, descubrir]);
 
   if (!elemento) return null;
 
   return (
     <View style={[estilos.destacado, { height: alto }]}>
-      {capas.saliente ? (
-        <View style={estilos.destacadoCapa} pointerEvents="none">
-          <Image source={{ uri: capas.saliente }} style={estilos.destacadoImagen} resizeMode="cover" />
-        </View>
-      ) : null}
+      {/*
+        Las dos capas, siempre montadas. La de abajo se ve entera y la de
+        arriba se funde encima; cuál manda va turnándose, así que a la que le
+        toca cambiar de imagen siempre está tapada mientras carga.
+      */}
+      <View style={estilos.destacadoCapa} pointerEvents="none">
+        {imagenes.abajo ? (
+          <Image
+            source={{ uri: imagenes.abajo }}
+            style={estilos.destacadoImagen}
+            resizeMode="cover"
+            onLoad={() => descubrir('abajo')}
+          />
+        ) : null}
+      </View>
 
-      {elemento.logo ? (
-        <Animated.View style={[estilos.destacadoCapa, { opacity: paso }]} pointerEvents="none">
-          <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
-        </Animated.View>
-      ) : null}
+      <Animated.View style={[estilos.destacadoCapa, { opacity: capa }]} pointerEvents="none">
+        {imagenes.arriba ? (
+          <Image
+            source={{ uri: imagenes.arriba }}
+            style={estilos.destacadoImagen}
+            resizeMode="cover"
+            onLoad={() => descubrir('arriba')}
+          />
+        ) : null}
+      </Animated.View>
 
       {/*
         Tres degradados: uno de lado, que despeja la izquierda para el texto;
