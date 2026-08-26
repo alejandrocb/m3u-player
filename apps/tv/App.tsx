@@ -11,7 +11,6 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -1615,23 +1614,25 @@ function Estrellas({ valoracion }: { valoracion: number }) {
 }
 
 /** Cuánto se queda cada sugerencia antes de dar paso a la siguiente. */
-const TURNO_PORTADA_MS = 5000;
+const TURNO_PORTADA_MS = 8000;
 
 /** Lo que tarda el fundido entre una y otra. */
-const FUNDIDO_MS = 450;
+const FUNDIDO_MS = 600;
 
 /**
  * La portada del inicio, con sus sugerencias turnándose.
  *
- * El cambio es un **fundido cruzado**: la que entra aparece encima de la que
- * sale, y las dos se cruzan a la vez. Antes se apagaba la que había, se
- * cambiaba y se encendía la nueva, y lo que se veía era el fondo vacío en
- * medio —"primero el degradado y luego la película", que es justo lo que no
- * queremos—.
+ * **Lo único que se funde es la imagen.** La ficha —título, nota, sinopsis— se
+ * cambia de golpe, en el mismo momento en que empieza el fundido.
  *
- * Se cruza en vez de deslizarse porque un deslizamiento pide una dirección, y
- * aquí no la hay: no es una lista que se recorra, es una sugerencia que se
- * sustituye.
+ * Las dos formas anteriores se veían raras, y las dos por lo mismo: por
+ * fundir el texto. Apagar la portada entera y volver a encenderla deja un
+ * hueco sin nada en medio; cruzar las dos capas deja dos títulos
+ * superpuestos, y encima un bajón de luz, porque dos capas a media opacidad
+ * sobre fondo oscuro suman menos que una entera.
+ *
+ * De la que sale se pinta solo su imagen, quieta y entera debajo, y la nueva
+ * aparece encima. Así en ningún instante falta imagen ni sobra texto.
  *
  * El reloj lo lleva la vista y no el presentador porque es cosa de la
  * animación: el presentador solo apunta cuál se está enseñando, para que
@@ -1652,10 +1653,10 @@ function Destacado({
   onTurno: (siguiente: number) => void;
   onTocar: () => void;
 }) {
-  /** 0 recién cambiada, 1 con la nueva ya del todo puesta. */
+  /** 0 recién cambiada, 1 con la imagen nueva ya del todo puesta. */
   const paso = useRef(new Animated.Value(1)).current;
-  /** La que se está yendo, que sigue pintada debajo mientras se cruza. */
-  const [saliente, setSaliente] = useState<Elemento | null>(null);
+  /** La imagen que se está yendo, que sigue quieta debajo mientras entra la otra. */
+  const [saliente, setSaliente] = useState<string | null>(null);
   const ultima = useRef<Elemento | null>(null);
 
   /*
@@ -1664,8 +1665,8 @@ function Destacado({
 
     Si el efecto dependiera de ellos, el reloj se rehace en cada pintado —y
     `onTurno` llega como una función nueva cada vez—, así que nunca llegaba a
-    cumplir los cinco segundos. Se notaba en la pestaña "Todo", que al tener
-    más carruseles se repinta más: allí la portada no se turnaba jamás.
+    cumplir su tiempo. Se notaba en la pestaña "Todo", que al tener más
+    carruseles se repinta más: allí la portada no se turnaba jamás.
   */
   const actual = useRef(indice);
   actual.current = indice;
@@ -1686,7 +1687,7 @@ function Destacado({
     // Ni al montar ni al repintar sin cambio de sugerencia.
     if (!anterior || !elemento || anterior.id === elemento.id) return;
 
-    setSaliente(anterior);
+    setSaliente(anterior.logo);
     paso.setValue(0);
     Animated.timing(paso, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start(({ finished }) => {
       if (finished) setSaliente(null);
@@ -1695,91 +1696,84 @@ function Destacado({
 
   if (!elemento) return null;
 
-  /** Lo que se ve de una sugerencia: su imagen, los velos y su ficha. */
-  const capa = (una: Elemento, activa: boolean): ReactNode => (
-    <>
-      {una.logo ? (
-        <Image source={{ uri: una.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
+  return (
+    <View style={[estilos.destacado, { height: alto }]}>
+      {saliente ? (
+        <View style={estilos.destacadoCapa} pointerEvents="none">
+          <Image source={{ uri: saliente }} style={estilos.destacadoImagen} resizeMode="cover" />
+        </View>
+      ) : null}
+
+      {elemento.logo ? (
+        <Animated.View style={[estilos.destacadoCapa, { opacity: paso }]} pointerEvents="none">
+          <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
+        </Animated.View>
       ) : null}
 
       {/*
         Tres degradados: uno de lado, que despeja la izquierda para el texto;
         otro abajo, que funde la imagen con la fila siguiente en vez de
         cortarla en seco; y otro arriba, para que la barra flotante se lea.
+
+        Van fuera de las capas porque no cambian con la sugerencia: fundirlos
+        con ella sería fundir el velo del texto, y el texto no se funde.
       */}
       <View style={estilos.destacadoVelo} pointerEvents="none" />
       <View style={estilos.destacadoPie} pointerEvents="none" />
       <View style={estilos.destacadoTecho} pointerEvents="none" />
 
-      <View style={estilos.destacadoTexto}>
-        <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
-        <Text style={estilos.destacadoNombre} numberOfLines={2}>
-          {una.titulo}
-        </Text>
+      <View style={estilos.destacadoCapa} pointerEvents="box-none">
+        <View style={estilos.destacadoTexto}>
+          <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
+          <Text style={estilos.destacadoNombre} numberOfLines={2}>
+            {elemento.titulo}
+          </Text>
 
-        <View style={estilos.destacadoDatos}>
-          {una.valoracion !== null ? (
-            <>
-              <Estrellas valoracion={una.valoracion} />
-              <Text style={estilos.destacadoNota}>{nota(una.valoracion)}</Text>
-            </>
+          <View style={estilos.destacadoDatos}>
+            {elemento.valoracion !== null ? (
+              <>
+                <Estrellas valoracion={elemento.valoracion} />
+                <Text style={estilos.destacadoNota}>{nota(elemento.valoracion)}</Text>
+              </>
+            ) : null}
+            {elemento.anio !== null ? <Text style={estilos.destacadoAnio}>{elemento.anio}</Text> : null}
+          </View>
+
+          {/* Lo que el panel no rellene simplemente no se pinta. */}
+          {elemento.resumen ? (
+            <Text style={estilos.destacadoSinopsis} numberOfLines={3}>
+              {elemento.resumen}
+            </Text>
           ) : null}
-          {una.anio !== null ? <Text style={estilos.destacadoAnio}>{una.anio}</Text> : null}
+          {elemento.detalle ? (
+            <Text style={estilos.destacadoReparto} numberOfLines={1}>
+              {elemento.detalle}
+            </Text>
+          ) : null}
+
+          {/*
+            Reproducir es un botón de verdad, y **el único sitio que responde
+            al dedo**: con la portada entera pulsable, en la tablet arrancaba
+            la película al tocar la imagen sin querer.
+          */}
+          <Pressable
+            focusable={false}
+            onPress={onTocar}
+            style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}
+          >
+            <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
+          </Pressable>
         </View>
 
-        {/* Lo que el panel no rellene simplemente no se pinta. */}
-        {una.resumen ? (
-          <Text style={estilos.destacadoSinopsis} numberOfLines={3}>
-            {una.resumen}
+        {/* El género, en la esquina, donde no compite con el título. */}
+        {elemento.genero ? (
+          <Text style={estilos.destacadoGenero} numberOfLines={1}>
+            {elemento.genero}
           </Text>
         ) : null}
-        {una.detalle ? (
-          <Text style={estilos.destacadoReparto} numberOfLines={1}>
-            {una.detalle}
-          </Text>
-        ) : null}
-
-        {/*
-          Reproducir es un botón de verdad, y **el único sitio que responde al
-          dedo**: con la portada entera pulsable, en la tablet arrancaba la
-          película al tocar la imagen sin querer.
-        */}
-        <Pressable
-          focusable={false}
-          onPress={activa ? onTocar : undefined}
-          style={[estilos.destacadoBoton, enfocado && activa && estilos.destacadoBotonEnfocado]}
-        >
-          <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
-        </Pressable>
       </View>
 
-      {/* El género, en la esquina, donde no compite con el título. */}
-      {una.genero ? (
-        <Text style={estilos.destacadoGenero} numberOfLines={1}>
-          {una.genero}
-        </Text>
-      ) : null}
-    </>
-  );
-
-  return (
-    <View style={[estilos.destacado, { height: alto }]}>
-      {saliente ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            estilos.destacadoCapa,
-            { opacity: paso.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }) },
-          ]}
-        >
-          {capa(saliente, false)}
-        </Animated.View>
-      ) : null}
-
-      <Animated.View style={[estilos.destacadoCapa, { opacity: paso }]}>{capa(elemento, true)}</Animated.View>
-
-      {/* Los puntitos, para saber cuántas hay y por cuál va. No se funden: son
-          de la portada, no de la sugerencia. */}
+      {/* Los puntitos, para saber cuántas hay y por cuál va. */}
       {elementos.length > 1 ? (
         <View style={estilos.destacadoPuntos} pointerEvents="none">
           {elementos.map((una, posicion) => (
