@@ -1,4 +1,4 @@
-# m3u player
+# ChocitaTV
 
 Reproductor de listas M3U / paneles Xtream Codes con tres secciones: **TV en directo**
 (organizada por grupos de canales), **películas** y **series**.
@@ -142,11 +142,11 @@ La ruta del SDK va en `apps/tv/android/local.properties`, que no se sube.
 Arrancar Metro y, con un aparato conectado, compilar e instalar:
 
 ```bash
-npm start --workspace m3utv
+npm start --workspace chocitatv
 ```
 
 ```bash
-npm run android --workspace m3utv
+npm run android --workspace chocitatv
 ```
 
 Empaquetar el bundle sin necesidad de SDK, útil para comprobar que las
