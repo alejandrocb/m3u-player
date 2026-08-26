@@ -78,16 +78,15 @@ test('el presentador navega sobre la biblioteca en memoria', async () => {
   const presentador = new Presentador(biblioteca());
   const inicio = await presentador.cargar();
 
-  // El inicio son filas, no una rejilla: las secciones viven en la suya.
-  const secciones = inicio.inicio?.filas.find((fila) => fila.tipo === 'secciones');
-  assert.ok(secciones && secciones.tipo === 'secciones');
-  assert.equal(secciones.elementos[0]!.detalle, '3 canales');
+  // El inicio son filas, no una rejilla.
+  assert.ok((inicio.inicio?.filas.length ?? 0) > 0);
+  assert.deepEqual(inicio.elementos, []);
 
   // TV en directo entra ya con los canales puestos: los grupos van en la
   // barra de la izquierda.
-  const directo = await presentador.aceptar();
-  assert.equal(directo.estado.titulo, 'TV en directo');
-  assert.equal(directo.estado.elementos.length, 3);
+  const directo = await presentador.irASeccion({ tipo: 'directo' });
+  assert.equal(directo.titulo, 'TV en directo');
+  assert.equal(directo.elementos.length, 3);
 
   const { reproducir } = await presentador.aceptar();
   assert.equal(reproducir?.titulo, '24 Horas');

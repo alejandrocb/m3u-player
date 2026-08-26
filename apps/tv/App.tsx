@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   BackHandler,
   FlatList,
@@ -419,6 +420,8 @@ function BibliotecaVista({
   const [cajaVista, setCajaVista] = useState<Caja | null>(null);
   /** El mando está sobre la vista previa, no sobre la lista de canales. */
   const [focoEnVideo, setFocoEnVideo] = useState(false);
+  /** La barra de arriba solo se ve estando arriba del todo del inicio. */
+  const [arribaDelInicio, setArribaDelInicio] = useState(true);
 
   const [verAjustes, setVerAjustes] = useState(false);
   /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
@@ -1262,7 +1265,9 @@ function BibliotecaVista({
         </View>
       ) : null}
 
-      {estado.inicio ? <View style={estilos.cabeceraFlotante}>{cabecera}</View> : null}
+      {estado.inicio && (arribaDelInicio || enCabecera) ? (
+        <View style={estilos.cabeceraFlotante}>{cabecera}</View>
+      ) : null}
 
       {verAjustes && estado.lateral ? (
         <View style={estilos.ajustes}>
@@ -1336,6 +1341,8 @@ function BibliotecaVista({
         <PantallaInicio
           enCabecera={enCabecera}
           inicio={estado.inicio}
+          onTurno={(siguiente) => setEstado(presentador.current!.rotarDestacado(siguiente))}
+          onDesplazar={setArribaDelInicio}
           onTocar={(fila, columna) => {
             const instancia = presentador.current;
             if (!instancia) return;
@@ -1430,11 +1437,17 @@ function PantallaInicio({
   enCabecera,
   inicio,
   onTocar,
+  onTurno,
+  onDesplazar,
 }: {
   /** El mando está arriba, en la lupa o el perfil. */
   enCabecera: boolean;
   inicio: Inicio;
   onTocar: (fila: number, columna: number) => void;
+  /** La portada pasa a la siguiente sugerencia. */
+  onTurno: (siguiente: number) => void;
+  /** Cuánto se ha bajado, para esconder la barra al alejarse de arriba. */
+  onDesplazar: (arriba: boolean) => void;
 }) {
   const lista = useRef<FlatList<FilaInicio>>(null);
   const { height: alto } = useWindowDimensions();
@@ -1475,6 +1488,10 @@ function PantallaInicio({
       keyExtractor={(fila, indice) => `${fila.tipo}-${indice}`}
       extraData={inicio}
       showsVerticalScrollIndicator={false}
+      // La barra de arriba solo se enseña estando arriba del todo: bajando
+      // estorba, y con el mando hay que volver a subir de todas formas.
+      onScroll={(evento) => onDesplazar(evento.nativeEvent.contentOffset.y < 40)}
+      scrollEventThrottle={80}
       // Son pocas filas y `scrollToIndex` necesita que estén montadas.
       initialNumToRender={8}
       onScrollToIndexFailed={() => {}}
@@ -1484,9 +1501,11 @@ function PantallaInicio({
         if (item.tipo === 'destacado') {
           return (
             <Destacado
-              elemento={item.elemento}
+              elementos={item.elementos}
+              indice={inicio.destacado}
               alto={altoDestacado}
               enfocado={activa}
+              onTurno={onTurno}
               onTocar={() => onTocar(index, 0)}
             />
           );
@@ -1494,9 +1513,8 @@ function PantallaInicio({
 
         return (
           <Carrusel
-            titulo={item.tipo === 'carrusel' ? item.titulo : null}
-            elementos={elementosDeFila(item)}
-            grandes={item.tipo === 'secciones'}
+            titulo={item.titulo}
+            elementos={item.elementos}
             activa={activa}
             columna={inicio.columna}
             onTocar={(columna) => onTocar(index, columna)}
@@ -1550,34 +1568,74 @@ function Estrellas({ valoracion }: { valoracion: number }) {
   );
 }
 
+/** Cuánto se queda cada sugerencia antes de dar paso a la siguiente. */
+const TURNO_PORTADA_MS = 5000;
+
+/** Lo que tarda el fundido entre una y otra. */
+const FUNDIDO_MS = 450;
+
+/**
+ * La portada del inicio, con sus sugerencias turnándose.
+ *
+ * Se funde en negro y vuelve a aparecer en vez de deslizarse: un deslizamiento
+ * pide una dirección, y aquí no la hay —no es una lista que se recorra, es una
+ * sugerencia que se sustituye—.
+ *
+ * El reloj lo lleva la vista y no el presentador porque es cosa de la
+ * animación: el presentador solo apunta cuál se está enseñando, para que
+ * aceptar reproduzca la correcta.
+ */
 function Destacado({
-  elemento,
+  elementos,
+  indice,
   alto,
   enfocado,
+  onTurno,
   onTocar,
 }: {
-  elemento: Elemento;
+  elementos: Elemento[];
+  indice: number;
   alto: number;
   enfocado: boolean;
+  onTurno: (siguiente: number) => void;
   onTocar: () => void;
 }) {
+  const opacidad = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (elementos.length < 2) return;
+
+    const reloj = setInterval(() => {
+      Animated.timing(opacidad, { toValue: 0, duration: FUNDIDO_MS, useNativeDriver: true }).start(() => {
+        onTurno(indice + 1);
+        Animated.timing(opacidad, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start();
+      });
+    }, TURNO_PORTADA_MS);
+
+    return () => clearInterval(reloj);
+  }, [elementos.length, indice, onTurno, opacidad]);
+
+  const elemento = elementos[Math.min(indice, elementos.length - 1)];
+  if (!elemento) return null;
+
   return (
     <Pressable focusable={false} onPress={onTocar} style={[estilos.destacado, { height: alto }]}>
-      {elemento.logo ? (
-        <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
-      ) : null}
+      <Animated.View style={[estilos.destacadoCapa, { opacity: opacidad }]}>
+        {elemento.logo ? (
+          <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
+        ) : null}
+      </Animated.View>
 
       {/*
-        Dos degradados: uno de lado, que despeja la izquierda para el texto, y
-        otro de abajo arriba, que funde la imagen con la fila de "seguir
-        viendo" en vez de cortarla en seco.
+        Tres degradados: uno de lado, que despeja la izquierda para el texto;
+        otro abajo, que funde la imagen con la fila siguiente en vez de
+        cortarla en seco; y otro arriba, para que la barra flotante se lea.
       */}
       <View style={estilos.destacadoVelo} pointerEvents="none" />
       <View style={estilos.destacadoPie} pointerEvents="none" />
-      {/* Y uno arriba, para que la barra flotante se lea sobre la imagen. */}
       <View style={estilos.destacadoTecho} pointerEvents="none" />
 
-      <View style={estilos.destacadoTexto}>
+      <Animated.View style={[estilos.destacadoTexto, { opacity: opacidad }]}>
         <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
         <Text style={estilos.destacadoNombre} numberOfLines={2}>
           {elemento.titulo}
@@ -1608,13 +1666,25 @@ function Destacado({
         <View style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}>
           <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
         </View>
-      </View>
+      </Animated.View>
 
       {/* El género, en la esquina, donde no compite con el título. */}
       {elemento.genero ? (
-        <Text style={estilos.destacadoGenero} numberOfLines={1}>
+        <Animated.Text style={[estilos.destacadoGenero, { opacity: opacidad }]} numberOfLines={1}>
           {elemento.genero}
-        </Text>
+        </Animated.Text>
+      ) : null}
+
+      {/* Y los puntitos, para saber cuántas hay y por cuál va. */}
+      {elementos.length > 1 ? (
+        <View style={estilos.destacadoPuntos} pointerEvents="none">
+          {elementos.map((una, posicion) => (
+            <View
+              key={una.id}
+              style={[estilos.destacadoPunto, posicion === indice && estilos.destacadoPuntoActivo]}
+            />
+          ))}
+        </View>
       ) : null}
     </Pressable>
   );
@@ -1624,15 +1694,12 @@ function Destacado({
 function Carrusel({
   titulo,
   elementos,
-  grandes,
   activa,
   columna,
   onTocar,
 }: {
-  titulo: string | null;
+  titulo: string;
   elementos: Elemento[];
-  /** Las secciones se pintan más anchas y apaisadas: son el menú. */
-  grandes: boolean;
   activa: boolean;
   columna: number;
   onTocar: (columna: number) => void;
@@ -1650,7 +1717,7 @@ function Carrusel({
 
   return (
     <View style={estilos.filaZona}>
-      {titulo ? <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo}</Text> : null}
+      <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo}</Text>
       <FlatList
         focusable={false}
         isTVSelectable={false}
@@ -1670,24 +1737,18 @@ function Carrusel({
             <Pressable
               focusable={false}
               onPress={() => onTocar(index)}
-              style={[
-                grandes ? estilos.seccionFicha : estilos.fichaFila,
-                enfocado && estilos.fichaFilaEnfocada,
-              ]}
+              style={[estilos.fichaFila, enfocado && estilos.fichaFilaEnfocada]}
             >
-              <View style={grandes ? estilos.seccionCaja : estilos.fichaCaratula}>
+              <View style={estilos.fichaCaratula}>
                 {item.logo ? (
                   <Image
                     source={{ uri: item.logo }}
-                    style={grandes ? estilos.seccionImagen : estilos.fichaImagen}
+                    style={estilos.fichaImagen}
                     resizeMode="cover"
                   />
                 ) : (
-                  <View style={[grandes ? estilos.seccionImagen : estilos.fichaImagen, estilos.fichaSinImagen]}>
-                    <Text
-                      style={grandes ? estilos.seccionTexto : estilos.fichaSinImagenTexto}
-                      numberOfLines={2}
-                    >
+                  <View style={[estilos.fichaImagen, estilos.fichaSinImagen]}>
+                    <Text style={estilos.fichaSinImagenTexto} numberOfLines={2}>
                       {item.titulo}
                     </Text>
                   </View>
@@ -1698,15 +1759,9 @@ function Carrusel({
                   </View>
                 ) : null}
               </View>
-              {/*
-                El nombre de una sección va dentro del recuadro, no debajo:
-                puesto en los dos sitios salía repetido.
-              */}
-              {grandes ? null : (
-                <Text style={estilos.fichaNombre} numberOfLines={1}>
-                  {item.titulo}
-                </Text>
-              )}
+              <Text style={estilos.fichaNombre} numberOfLines={1}>
+                {item.titulo}
+              </Text>
               {item.detalle ? (
                 <Text style={estilos.filaFichaDetalle} numberOfLines={1}>
                   {item.detalle}
@@ -2326,13 +2381,32 @@ const estilos = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
   },
+  destacadoPuntos: {
+    bottom: 26,
+    flexDirection: 'row',
+    gap: 7,
+    left: MARGEN_PANTALLA,
+    position: 'absolute',
+  },
+  destacadoPunto: {
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    borderRadius: 3,
+    height: 6,
+    width: 6,
+  },
+  destacadoPuntoActivo: {
+    backgroundColor: VERDE,
+    width: 18,
+  },
   destacadoGenero: {
     bottom: 26,
+    // Doble margen: el hijo absoluto no hereda el `paddingHorizontal` del
+    // destacado, así que con uno solo el texto quedaba pegado al borde.
     color: '#8fa3b3',
     fontSize: 14,
     letterSpacing: 1,
     position: 'absolute',
-    right: MARGEN_PANTALLA,
+    right: MARGEN_PANTALLA * 2,
     textTransform: 'uppercase',
   },
   destacado: {
@@ -2351,13 +2425,23 @@ const estilos = StyleSheet.create({
     overflow: 'hidden',
     paddingHorizontal: MARGEN_PANTALLA,
   },
+  destacadoCapa: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
   destacadoImagen: {
     height: '100%',
     position: 'absolute',
-    right: 0,
+    // Negativo para salirse del `paddingHorizontal` del propio destacado: así
+    // la imagen llega al borde de la pantalla y se pierde por la derecha, en
+    // vez de cortarse con un margen a la vista.
+    right: -MARGEN_PANTALLA,
     // Ancha de verdad: con la imagen apaisada del panel llena casi todo, y el
     // degradado se encarga de despejar la izquierda.
-    width: '78%',
+    width: '82%',
   },
   destacadoVelo: {
     bottom: 0,

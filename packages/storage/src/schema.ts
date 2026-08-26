@@ -333,14 +333,23 @@ export const RELLENOS_SQL = [
   'UPDATE profile SET updated = created WHERE updated IS NULL',
   'UPDATE favorite SET updated = created WHERE updated IS NULL',
   `UPDATE profile_setting SET updated = '${ANTES_DE_SINCRONIZAR}' WHERE updated IS NULL`,
+];
+
+/**
+ * Rellenos que solo valen donde hay catálogo.
+ *
+ * Van aparte de `RELLENOS_SQL` porque **el servidor de sincronización también
+ * ejecuta aquello** sobre las bases de cada casa, y ahí solo existen las
+ * tablas de perfil: un `UPDATE movie` revienta la apertura entera. Se rompió
+ * así la primera vez.
+ */
+export const RELLENOS_CATALOGO_SQL = [
   /*
     Lo que se pidió al panel antes de que existiera la columna del género se
     marca como no preguntado, para que vuelva a pedirse una vez y la traiga.
 
     Solo afecta a las películas cuya ficha ya se había traído, que son las que
-    han presidido el inicio: un puñado. La contrapartida es que una película
-    cuyo panel de verdad no dé género se preguntará otra vez en cada arranque;
-    con una sola petición y una sola película, sale a cuenta.
+    han presidido el inicio: un puñado.
   */
   'UPDATE movie SET detalle_pedido = NULL WHERE detalle_pedido IS NOT NULL AND genre IS NULL',
 ];

@@ -19,6 +19,7 @@ import {
   COLUMNAS_MIGRADAS,
   CONTENT_TABLES,
   INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_CATALOGO_SQL,
   RELLENOS_SQL,
   SCHEMA_FTS_SQL,
   SCHEMA_PERFILES_SQL,
@@ -67,6 +68,7 @@ export function abrirBase(): { db: DB; conBusquedaRapida: boolean } {
 
   // Y las filas de antes de que existiera la sincronización necesitan fecha.
   for (const relleno of RELLENOS_SQL) db.executeSync(relleno);
+  for (const relleno of RELLENOS_CATALOGO_SQL) db.executeSync(relleno);
 
   return { db, conBusquedaRapida };
 }

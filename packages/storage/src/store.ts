@@ -18,6 +18,7 @@ import {
   CONTENT_TABLES,
   COLUMNAS_MIGRADAS,
   INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_CATALOGO_SQL,
   RELLENOS_SQL,
   SCHEMA_PERFILES_SQL,
   SCHEMA_FTS_SQL,
@@ -144,6 +145,7 @@ export class LibraryStore {
     // Estos índices necesitan las columnas de arriba: van los últimos.
     for (const indice of INDICES_TRAS_MIGRAR_SQL) db.exec(indice);
     for (const relleno of RELLENOS_SQL) db.exec(relleno);
+    for (const relleno of RELLENOS_CATALOGO_SQL) db.exec(relleno);
 
     const store = new LibraryStore(db);
     store.#setMeta('schema_version', String(SCHEMA_VERSION));
