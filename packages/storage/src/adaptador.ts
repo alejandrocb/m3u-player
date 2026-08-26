@@ -14,6 +14,7 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
   Pagina,
@@ -126,6 +127,18 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         anio: pelicula.year,
         valoracion: pelicula.rating ?? null,
         logo: pelicula.logo,
+      }));
+    },
+
+    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
+      return store.episodesById(ids).map((episodio) => ({
+        id: episodio.id,
+        serieId: episodio.seriesId,
+        serieTitulo: episodio.seriesTitle,
+        serieLogo: episodio.seriesLogo,
+        temporada: episodio.season,
+        numero: episodio.episode,
+        titulo: episodio.title,
       }));
     },
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { Presentador } from '../src/presentador.ts';
+import type { FilaInicio } from '../src/presentador.ts';
 import type { ClaseMedio } from '../src/perfiles.ts';
 import type {
   Biblioteca,
@@ -89,6 +90,17 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return ids.includes('dw') ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null }] : [];
     },
+    async episodiosPorId(ids: string[]) {
+      return ids.map((id) => ({
+        id: Number(id),
+        serieId: 'dw',
+        serieTitulo: 'Doctor Who',
+        serieLogo: null,
+        temporada: 1,
+        numero: Number(id),
+        titulo: `Episodio ${id}`,
+      }));
+    },
     async canalesPorId(ids: string[]): Promise<CanalFicha[]> {
       return ids.map((id) => ({ id, nombre: '24 Horas', grupo: 'NOTICIAS', logo: null }));
     },
@@ -107,18 +119,46 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
   };
 }
 
-test('el inicio enseña las secciones con sus totales', async () => {
+test('el inicio son filas, empezando por las secciones con sus totales', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   const estado = await presentador.cargar();
 
   assert.equal(estado.titulo, 'Biblioteca');
+  // La rejilla se queda vacía: en el inicio las fichas viven en las filas.
+  assert.deepEqual(estado.elementos, []);
+
+  const secciones = estado.inicio?.filas.find((fila) => fila.tipo === 'secciones');
+  assert.ok(secciones && secciones.tipo === 'secciones');
   assert.deepEqual(
-    estado.elementos.map((elemento) => elemento.titulo),
+    secciones.elementos.map((elemento) => elemento.titulo),
     ['TV en directo', 'Películas', 'Series', 'Buscar'],
   );
-  assert.equal(estado.elementos[0]!.detalle, '486 canales');
-  // El inicio es una lista, no una rejilla.
-  assert.equal(estado.columnas, 1);
+  assert.equal(secciones.elementos[0]!.detalle, '486 canales');
+  // Y el foco empieza arriba del todo, en la primera ficha.
+  assert.equal(estado.inicio?.fila, 0);
+  assert.equal(estado.inicio?.columna, 0);
+});
+
+test('el inicio trae carruseles de novedades, series y mejor valoradas', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  const estado = await presentador.cargar();
+
+  assert.deepEqual(
+    estado.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
+    ['Novedades', 'Series recién llegadas', 'Mejor valoradas'],
+  );
+});
+
+test('sin cartel ni buena nota no hay destacado', async () => {
+  // Las películas de prueba no traen carátula, así que no hay nada que
+  // presida el inicio: es mejor no tenerlo que presidirlo con cualquier cosa.
+  const presentador = new Presentador(bibliotecaFalsa());
+  const estado = await presentador.cargar();
+
+  assert.equal(
+    estado.inicio?.filas.some((fila) => fila.tipo === 'destacado'),
+    false,
+  );
 });
 
 test('aceptar sobre una sección entra en ella', async () => {
@@ -156,8 +196,8 @@ test('un canal se reproduce en vez de abrir otra pantalla', async () => {
 test('una serie enseña sus temporadas al lado y los episodios en el centro', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
-  await presentador.mover('abajo'); // Series
+  await presentador.mover('derecha');
+  await presentador.mover('derecha'); // Series
   await presentador.aceptar();
 
   assert.equal(pantallaDe(presentador), 'series');
@@ -179,8 +219,8 @@ test('una serie enseña sus temporadas al lado y los episodios en el centro', as
 test('el episodio lleva su ficha: fotograma, sinopsis, nota y duración', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
+  await presentador.mover('derecha');
   await presentador.aceptar(); // Series
   const { estado } = await presentador.aceptar(); // Doctor Who
 
@@ -195,8 +235,8 @@ test('el episodio lleva su ficha: fotograma, sinopsis, nota y duración', async 
 test('cambiar de temporada no apila pantalla: atrás sale de la serie', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
+  await presentador.mover('derecha');
   await presentador.aceptar(); // Series
   await presentador.aceptar(); // Doctor Who
 
@@ -211,7 +251,7 @@ test('cambiar de temporada no apila pantalla: atrás sale de la serie', async ()
 test('las películas se piden por páginas y se amplían al acercarse al final', async () => {
   const presentador = new Presentador(bibliotecaFalsa(7), { tamanoPagina: 4, columnasRejilla: 2 });
   await presentador.cargar();
-  await presentador.mover('abajo'); // Películas
+  await presentador.mover('derecha'); // Películas
   const estado = await presentador.aceptar();
 
   assert.equal(estado.estado.columnas, 2, 'las carátulas van en rejilla');
@@ -228,12 +268,13 @@ test('tocar una ficha lleva el foco a ella', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
 
-  assert.equal(presentador.enfocar(2).foco, 2);
+  assert.equal(presentador.enfocarEnInicio(0, 2).inicio?.columna, 2);
   // Fuera de rango se recorta en vez de dejar el foco en el limbo.
-  assert.equal(presentador.enfocar(99).foco, 3);
-  assert.equal(presentador.enfocar(-5).foco, 0);
+  assert.equal(presentador.enfocarEnInicio(0, 99).inicio?.columna, 3);
+  assert.equal(presentador.enfocarEnInicio(0, -5).inicio?.columna, 0);
+  assert.equal(presentador.enfocarEnInicio(99, 0).inicio?.fila, 3);
 
-  presentador.enfocar(2);
+  presentador.enfocarEnInicio(0, 2);
   const { estado } = await presentador.aceptar();
   assert.equal(estado.titulo, 'Series', 'acepta sobre lo que se tocó');
 });
@@ -254,20 +295,19 @@ test('atrás retrocede y, en el inicio, pide salir', async () => {
 test('al volver, el foco sigue donde estaba', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
-  await presentador.mover('abajo'); // Series, índice 2
+  await presentador.mover('derecha');
+  await presentador.mover('derecha'); // Series, índice 2
   await presentador.aceptar();
   await presentador.atras();
 
   const estado = presentador.estado();
-  assert.equal(estado.foco, 2);
-  assert.equal(estado.elementos[estado.foco]!.titulo, 'Series');
+  assert.equal(estado.inicio?.columna, 2, 'el foco vuelve a la sección desde la que se entró');
 });
 
 test('el desplazamiento pide más sin mover el foco', async () => {
   const presentador = new Presentador(bibliotecaFalsa(7), { tamanoPagina: 4, columnasRejilla: 2 });
   await presentador.cargar();
-  await presentador.mover('abajo'); // Películas
+  await presentador.mover('derecha'); // Películas
   await presentador.aceptar();
 
   const antes = presentador.estado();
@@ -281,7 +321,7 @@ test('el desplazamiento pide más sin mover el foco', async () => {
 test('no se piden dos páginas a la vez ni se pide de más', async () => {
   const presentador = new Presentador(bibliotecaFalsa(7), { tamanoPagina: 4, columnasRejilla: 2 });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar();
 
   // Dos avisos seguidos de la lista, como cuando se arrastra rápido.
@@ -298,7 +338,7 @@ test('no se piden dos páginas a la vez ni se pide de más', async () => {
 test('películas y series traen su barra de categorías', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo'); // Películas
+  await presentador.mover('derecha'); // Películas
   const { estado } = await presentador.aceptar();
 
   assert.ok(estado.lateral);
@@ -314,7 +354,7 @@ test('películas y series traen su barra de categorías', async () => {
 test('la izquierda entra en la barra y la derecha vuelve a la rejilla', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar(); // Películas
 
   const dentro = await presentador.mover('izquierda');
@@ -331,7 +371,7 @@ test('la izquierda entra en la barra y la derecha vuelve a la rejilla', async ()
 test('elegir categoría filtra sin apilar pantalla', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar(); // Películas
 
   const estado = await presentador.elegirCategoria('Estrenos');
@@ -347,7 +387,7 @@ test('elegir categoría filtra sin apilar pantalla', async () => {
 test('el buscador hereda la sección y la categoría donde se abrió', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar(); // Películas
   await presentador.elegirCategoria('Estrenos');
 
@@ -368,7 +408,7 @@ test('las fichas traen cuánto se ha visto de ellas', async () => {
   });
 
   await presentador.cargar();
-  await presentador.mover('abajo'); // Películas
+  await presentador.mover('derecha'); // Películas
   const { estado } = await presentador.aceptar();
 
   assert.deepEqual(
@@ -381,17 +421,14 @@ test('las fichas traen cuánto se ha visto de ellas', async () => {
   assert.equal(pedidos[pedidos.length - 1]!.length, 3);
 });
 
-test('los grupos y las categorías no llevan barrita', async () => {
-  const presentador = new Presentador(bibliotecaFalsa(), {
-    async avances() {
-      throw new Error('no debería preguntarse por cosas que no se reproducen');
-    },
-  });
+test('las secciones no llevan barrita: no son algo que se vea a medias', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  const estado = await presentador.cargar();
 
-  // El inicio son secciones: nada que se vea a medias.
-  const inicio = await presentador.cargar();
+  const secciones = estado.inicio?.filas.find((fila) => fila.tipo === 'secciones');
+  assert.ok(secciones && secciones.tipo === 'secciones');
   assert.deepEqual(
-    inicio.elementos.map((elemento) => elemento.avance),
+    secciones.elementos.map((elemento) => elemento.avance),
     [null, null, null, null],
   );
 });
@@ -404,7 +441,7 @@ test('si el historial falla, la rejilla se pinta igual', async () => {
   });
 
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   const { estado } = await presentador.aceptar();
   assert.equal(estado.elementos.length, 2, 'las películas siguen saliendo');
   assert.equal(estado.elementos[0]!.avance, null);
@@ -413,7 +450,7 @@ test('si el historial falla, la rejilla se pinta igual', async () => {
 test('la ficha lleva el año y la nota sueltos, para pintarlos sobre la carátula', async () => {
   const presentador = new Presentador(bibliotecaFalsa(2));
   await presentador.cargar();
-  await presentador.mover('abajo'); // Películas
+  await presentador.mover('derecha'); // Películas
   const { estado } = await presentador.aceptar();
 
   assert.equal(estado.elementos[0]!.anio, 2000);
@@ -429,7 +466,7 @@ test('la ficha lleva el año y la nota sueltos, para pintarlos sobre la carátul
 test('se puede ordenar por valoración', async () => {
   const presentador = new Presentador(bibliotecaFalsa(3));
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar();
 
   assert.equal(presentador.orden, 'titulo');
@@ -462,7 +499,7 @@ function favoritosFalsos(iniciales: Array<{ clase: ClaseMedio; id: string }> = [
 test('sin puerto de favoritos no aparece su grupo', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   const { estado } = await presentador.aceptar();
 
   assert.equal(
@@ -474,7 +511,7 @@ test('sin puerto de favoritos no aparece su grupo', async () => {
 test('las tres secciones traen el grupo de favoritos', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   const { estado } = await presentador.aceptar();
 
   // Va el segundo, justo detrás de "todas" y antes de lo del proveedor.
@@ -485,7 +522,7 @@ test('las tres secciones traen el grupo de favoritos', async () => {
 test('la pulsación larga marca y desmarca', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   const { estado } = await presentador.aceptar(); // Películas
 
   assert.equal(estado.elementos[0]!.favorito, false);
@@ -501,7 +538,7 @@ test('el corazón sale ya puesto en lo que estaba guardado', async () => {
     favoritos: favoritosFalsos([{ clase: 'pelicula', id: 'p1' }]),
   });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   const { estado } = await presentador.aceptar();
 
   assert.deepEqual(
@@ -515,7 +552,7 @@ test('el grupo de favoritos enseña lo marcado, y nada más', async () => {
     favoritos: favoritosFalsos([{ clase: 'pelicula', id: 'p2' }]),
   });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar();
 
   const estado = await presentador.elegirCategoria(null, { favoritos: true });
@@ -533,7 +570,7 @@ test('quitar de favoritos dentro del grupo saca la ficha de la lista', async () 
     favoritos: favoritosFalsos([{ clase: 'pelicula', id: 'p0' }]),
   });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar();
   await presentador.elegirCategoria(null, { favoritos: true });
 
@@ -544,8 +581,8 @@ test('quitar de favoritos dentro del grupo saca la ficha de la lista', async () 
 test('una serie se marca por su ficha, no por lo que reproduce', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
   await presentador.cargar();
-  await presentador.mover('abajo');
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
+  await presentador.mover('derecha');
   await presentador.aceptar(); // Series
 
   const estado = await presentador.alternarFavorito(0);
@@ -562,7 +599,7 @@ test('los favoritos se piden por clase, no por ficha', async () => {
   const favoritos = favoritosFalsos();
   const presentador = new Presentador(bibliotecaFalsa(7), { favoritos, tamanoPagina: 7 });
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar();
 
   // Siete películas en pantalla, una sola consulta.
@@ -572,7 +609,7 @@ test('los favoritos se piden por clase, no por ficha', async () => {
 test('recorrer los grupos con el mando ya enseña lo que tienen dentro', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo'); // Películas
+  await presentador.mover('derecha'); // Películas
   await presentador.aceptar();
 
   // Entrar en la barra y bajar a la primera categoría del proveedor: sin
@@ -588,7 +625,7 @@ test('recorrer los grupos con el mando ya enseña lo que tienen dentro', async (
 test('en el borde de la barra no se recarga nada', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
-  await presentador.mover('abajo');
+  await presentador.mover('derecha');
   await presentador.aceptar();
   await presentador.mover('izquierda');
 
@@ -596,4 +633,182 @@ test('en el borde de la barra no se recarga nada', async () => {
   const estado = await presentador.mover('arriba');
   assert.equal(estado.lateral?.foco, 0);
   assert.equal(estado.titulo, 'Películas');
+});
+
+/** Un perfil con dos cosas a medias: una película y un episodio. */
+function aMedias(): Array<{
+  clase: 'pelicula' | 'episodio';
+  itemId: string;
+  titulo: string;
+  segundos: number;
+  duracion: number;
+  visto: string;
+}> {
+  return [
+    { clase: 'pelicula', itemId: 'p1', titulo: 'Película 1', segundos: 1800, duracion: 5400, visto: '2026-08-26T21:00:00.000Z' },
+    { clase: 'episodio', itemId: '7', titulo: 'Doctor Who', segundos: 600, duracion: 2400, visto: '2026-08-25T21:00:00.000Z' },
+  ];
+}
+
+/** Busca un carrusel del inicio por su título. */
+function filaDe(estado: { inicio: { filas: FilaInicio[] } | null }, titulo: string) {
+  const fila = estado.inicio?.filas.find((una) => una.tipo === 'carrusel' && una.titulo === titulo);
+  return fila && fila.tipo === 'carrusel' ? fila : null;
+}
+
+/** En qué posición está esa fila, para poder llegar con el mando. */
+function indiceDe(estado: { inicio: { filas: FilaInicio[] } | null }, titulo: string): number {
+  return estado.inicio?.filas.findIndex((una) => una.tipo === 'carrusel' && una.titulo === titulo) ?? -1;
+}
+
+test('seguir viendo es una fila más del inicio, con su avance', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const estado = await presentador.cargar();
+
+  const fila = filaDe(estado, 'Seguir viendo');
+  assert.equal(fila?.elementos.length, 2);
+  assert.equal(fila?.elementos[0]?.titulo, 'Película 1');
+  assert.equal(fila?.elementos[0]?.avance, 1800 / 5400);
+  // Del episodio se enseña la serie, que es lo que se reconoce, y el capítulo
+  // concreto queda debajo.
+  assert.equal(fila?.elementos[1]?.titulo, 'Doctor Who');
+  assert.equal(fila?.elementos[1]?.detalle, 'T1 E7 · Episodio 7');
+});
+
+test('lo empezado se ve antes que el menú de secciones', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const estado = await presentador.cargar();
+
+  const continuar = indiceDe(estado, 'Seguir viendo');
+  const secciones = estado.inicio?.filas.findIndex((fila) => fila.tipo === 'secciones') ?? -1;
+  assert.ok(continuar >= 0 && continuar < secciones);
+});
+
+test('sin nada empezado no hay fila que enseñar', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => [] });
+  assert.equal(filaDe(await presentador.cargar(), 'Seguir viendo'), null);
+});
+
+test('si el historial falla, el inicio se pinta igual', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    async seguirViendo() {
+      throw new Error('base ocupada');
+    },
+  });
+
+  const estado = await presentador.cargar();
+  assert.equal(filaDe(estado, 'Seguir viendo'), null);
+  assert.ok((estado.inicio?.filas.length ?? 0) > 0, 'el resto de filas siguen ahí');
+});
+
+test('las filas son solo del inicio: dentro de una sección no hay', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const inicial = await presentador.cargar();
+
+  // Con "seguir viendo" delante, las secciones ya no son la primera fila.
+  const secciones = inicial.inicio?.filas.findIndex((fila) => fila.tipo === 'secciones') ?? 0;
+  for (let i = 0; i < secciones; i++) await presentador.mover('abajo');
+  const { estado } = await presentador.aceptar();
+
+  assert.equal(estado.inicio, null);
+});
+
+test('arriba y abajo cambian de fila; izquierda y derecha recorren la de dentro', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const inicial = await presentador.cargar();
+  const continuar = indiceDe(inicial, 'Seguir viendo');
+
+  for (let i = 0; i < continuar; i++) await presentador.mover('abajo');
+  const derecha = await presentador.mover('derecha');
+  assert.equal(derecha.inicio?.fila, continuar);
+  assert.equal(derecha.inicio?.columna, 1);
+});
+
+test('en los bordes el foco no se sale', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const estado = await presentador.cargar();
+
+  // Arriba del todo ya.
+  assert.equal((await presentador.mover('arriba')).inicio?.fila, 0);
+  assert.equal((await presentador.mover('izquierda')).inicio?.columna, 0);
+
+  // Y abajo del todo.
+  const ultima = (estado.inicio?.filas.length ?? 1) - 1;
+  for (let i = 0; i < 20; i++) await presentador.mover('abajo');
+  assert.equal(presentador.estado().inicio?.fila, ultima);
+});
+
+test('al cambiar de fila la columna se recorta a lo que quepa', async () => {
+  // Las secciones son cuatro y "seguir viendo" dos: bajar desde la cuarta
+  // sección no puede dejar el foco apuntando a un hueco.
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const estado = await presentador.cargar();
+  const secciones = estado.inicio?.filas.findIndex((fila) => fila.tipo === 'secciones') ?? 0;
+
+  for (let i = 0; i < secciones; i++) await presentador.mover('abajo');
+  for (let i = 0; i < 3; i++) await presentador.mover('derecha');
+  assert.equal(presentador.estado().inicio?.columna, 3);
+
+  const arriba = await presentador.mover('arriba');
+  assert.equal(arriba.inicio?.columna, 1, 'recortada al último hueco de la fila de arriba');
+});
+
+test('aceptar en una fila reproduce lo que haya debajo del foco', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const estado = await presentador.cargar();
+  const continuar = indiceDe(estado, 'Seguir viendo');
+
+  for (let i = 0; i < continuar; i++) await presentador.mover('abajo');
+  const pelicula = await presentador.aceptar();
+  assert.deepEqual(pelicula.reproducir, { clase: 'pelicula', id: 'p1', titulo: 'Película 1' });
+
+  await presentador.mover('derecha');
+  const episodio = await presentador.aceptar();
+  assert.equal(episodio.reproducir?.clase, 'episodio');
+  assert.equal(episodio.reproducir?.id, '7');
+});
+
+test('una serie de un carrusel se abre, no se reproduce', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  const estado = await presentador.cargar();
+  const series = indiceDe(estado, 'Series recién llegadas');
+
+  for (let i = 0; i < series; i++) await presentador.mover('abajo');
+  const { reproducir } = await presentador.aceptar();
+
+  assert.equal(reproducir, null);
+  assert.equal(pantallaDe(presentador), 'serie');
+});
+
+test('lo que ya no está en el catálogo no ensucia la fila', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    // El proveedor quitó esta película: el historial la recuerda y la
+    // biblioteca no la encuentra.
+    seguirViendo: async () => [
+      {
+        clase: 'pelicula' as const,
+        itemId: 'ya-no-esta',
+        titulo: 'Fantasma',
+        segundos: 60,
+        duracion: 5400,
+        visto: '2026-08-26T21:00:00.000Z',
+      },
+    ],
+  });
+
+  assert.equal(filaDe(await presentador.cargar(), 'Seguir viendo'), null);
+});
+
+test('recargar conserva el foco', async () => {
+  // Es lo que pasa cuando entra una sincronización mientras estás mirando.
+  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  const estado = await presentador.cargar();
+  const continuar = indiceDe(estado, 'Seguir viendo');
+
+  for (let i = 0; i < continuar; i++) await presentador.mover('abajo');
+  await presentador.mover('derecha');
+
+  const recargado = await presentador.cargar();
+  assert.equal(recargado.inicio?.fila, continuar);
+  assert.equal(recargado.inicio?.columna, 1);
 });

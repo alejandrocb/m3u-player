@@ -54,6 +54,14 @@ export interface AlmacenPerfiles {
   /** Sin color, se reparte el siguiente libre. */
   crear(nombre: string, color?: string): Promise<Perfil>;
   renombrar(id: string, nombre: string): Promise<void>;
+  /**
+   * Cambia el color de la ficha del perfil.
+   *
+   * Es lo que hace de "foto" sin traerse un selector de imágenes, que en
+   * Android es un módulo nativo. Un círculo con la inicial y un color propio
+   * distingue a cuatro personas de un vistazo, que es para lo que sirve.
+   */
+  recolorear(id: string, color: string): Promise<void>;
   borrar(id: string): Promise<void>;
 
   /** Guarda por dónde va. Se llama cada pocos segundos mientras se reproduce. */

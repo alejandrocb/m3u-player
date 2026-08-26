@@ -11,17 +11,21 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   BackHandler,
   FlatList,
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
   useTVEventHandler,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,7 +36,9 @@ import type {
   Cuenta,
   Elemento,
   EstadoPantalla,
+  FilaInicio,
   Formato,
+  Inicio,
   OpcionLateral,
   Perfil,
   Programacion,
@@ -40,9 +46,11 @@ import type {
 } from '@m3u/ui';
 import {
   AJUSTES_POR_DEFECTO,
+  COLORES_PERFIL,
   COLUMNAS_POSIBLES,
   ClienteSync,
   GestorCuentas,
+  elementosDeFila,
   Presentador,
   cantidad,
   nota,
@@ -71,6 +79,20 @@ const MARGEN_SALIDA_MS = 3000;
  * ranura ocupada y el panel devolviendo 403 el resto del rato.
  */
 const ESPERA_VISTA_PREVIA_MS = 1000;
+
+/**
+ * En un televisor, las listas no se desplazan solas.
+ *
+ * Android TV, al recibir una flecha, desplaza por su cuenta cualquier lista
+ * que tenga debajo del foco. Como aquí el recorrido lo lleva la aplicación
+ * —y luego coloca la lista con `scrollToIndex`—, se movían las dos cosas: un
+ * salto del sistema y, un instante después, el resaltado. Se notaba como
+ * "primero hace scroll y luego se mueve el foco".
+ *
+ * Con el dedo sí tiene que desplazarse, claro, así que solo se corta en la
+ * tele.
+ */
+const DESPLAZA_EL_DEDO = !Platform.isTV;
 
 /** Cada cuánto se sincroniza mientras la biblioteca está abierta. */
 const CADA_SINCRONIZACION_MS = 2 * 60 * 1000;
@@ -103,6 +125,16 @@ function App() {
 function Raiz() {
   const [fase, setFase] = useState<Fase>({ tipo: 'abriendo' });
   const [version, setVersion] = useState(0);
+  /** A qué casa está conectado el aparato, para poder decirlo en pantalla. */
+  const [casa, setCasa] = useState<string | null>(null);
+  /**
+   * Sube cada vez que una sincronización trae algo de otro aparato.
+   *
+   * La biblioteca lo vigila para recargarse. Sin esto, los datos entraban en
+   * SQLite y la pantalla seguía enseñando lo de antes hasta que la cerrabas y
+   * la volvías a abrir: parecía que no había llegado nada.
+   */
+  const [sincronizado, setSincronizado] = useState(0);
   const gestor = useRef<GestorCuentas | null>(null);
   const biblioteca = useRef<Biblioteca | null>(null);
   const perfiles = useRef<AlmacenPerfiles | null>(null);
@@ -138,7 +170,13 @@ function Raiz() {
   const sincronizar = useCallback(async () => {
     try {
       const hecho = await sync.current.sincronizar();
-      if (hecho) console.log(`[sync] ${hecho.subidos} subidos, ${hecho.bajados} bajados`);
+      // Se escribe siempre, aunque no haya nada: es lo único que distingue
+      // "está al día" de "no está emparejada" cuando se depura desde fuera
+      // con `adb logcat -s ReactNativeJS:V`.
+      console.log(hecho ? `[sync] ${hecho.subidos} subidos, ${hecho.bajados} bajados` : '[sync] sin emparejar');
+      // Solo se repinta si ha bajado algo: subir es cosa nuestra y no cambia
+      // lo que se está viendo en pantalla.
+      if (hecho && hecho.bajados > 0) setSincronizado((n) => n + 1);
     } catch (fallo) {
       console.warn('[sync] no se pudo sincronizar', fallo);
     }
@@ -188,20 +226,33 @@ function Raiz() {
     (async () => {
       const abierto = await GestorCuentas.abrir(almacenDeCuentas);
       gestor.current = abierto;
+      setCasa((await sync.current.estado())?.grupo?.nombre ?? null);
       // Sesión abierta de la vez anterior: se entra directo, sin preguntar.
       if (abierto.activa) await conectar(abierto.activa);
       else setFase({ tipo: 'listas' });
     })();
   }, [conectar]);
 
-  // Mientras se está viendo la biblioteca, se sincroniza de vez en cuando. No
-  // hace falta más: lo que se anota mientras se reproduce sube en la siguiente
-  // vuelta, y quien tenga que verlo es otro aparato que no está en marcha.
+  // Mientras se está viendo la biblioteca, se sincroniza de vez en cuando.
   useEffect(() => {
     if (fase.tipo !== 'biblioteca') return;
     const reloj = setInterval(() => void sincronizar(), CADA_SINCRONIZACION_MS);
     return () => clearInterval(reloj);
   }, [fase.tipo, sincronizar]);
+
+  /**
+   * Y al volver la app al primer plano, que es el momento que importa.
+   *
+   * Coger la tablet para seguir lo que dejaste en la tele no pasa por
+   * `conectar`: la app ya estaba abierta, solo se trae al frente. Sin esto
+   * había que esperar al temporizador, o cerrarla del todo y abrirla otra vez.
+   */
+  useEffect(() => {
+    const suscripcion = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') void sincronizar();
+    });
+    return () => suscripcion.remove();
+  }, [sincronizar]);
 
   const cerrarSesion = useCallback(async () => {
     await gestor.current?.cerrarSesion();
@@ -216,7 +267,7 @@ function Raiz() {
    * aparato una lista que alguien puso a mano, sin avisar, sería justo lo que
    * no se espera de conectar con el servidor.
    */
-  const traerListas = useCallback(async (listas: Array<{ nombre: string; url: string }>) => {
+  const traerListas = useCallback(async (grupo: string | null, listas: Array<{ nombre: string; url: string }>) => {
     const actual = gestor.current;
     if (!actual) return;
 
@@ -224,8 +275,15 @@ function Raiz() {
       if (actual.cuentas.some((cuenta) => cuenta.url === lista.url)) continue;
       await actual.anadir({ nombre: lista.nombre, url: lista.url });
     }
+    setCasa(grupo);
     setVersion((n) => n + 1);
     setFase({ tipo: 'listas' });
+  }, []);
+
+  const desemparejar = useCallback(async () => {
+    await sync.current.olvidar();
+    setCasa(null);
+    setVersion((n) => n + 1);
   }, []);
 
   if (fase.tipo === 'abriendo') return <Espera texto="Abriendo…" />;
@@ -249,7 +307,7 @@ function Raiz() {
     return (
       <PantallaEmparejar
         cliente={sync.current}
-        onListo={(_grupo, listas) => void traerListas(listas)}
+        onListo={(grupo, listas) => void traerListas(grupo, listas)}
         onCancelar={() => setFase({ tipo: 'listas' })}
       />
     );
@@ -266,6 +324,8 @@ function Raiz() {
             onConectar={conectar}
             onCambio={() => setVersion((n) => n + 1)}
             onEmparejar={() => setFase({ tipo: 'emparejar' })}
+            grupo={casa}
+            onDesemparejar={() => void desemparejar()}
           />
         ) : null}
       </View>
@@ -283,6 +343,11 @@ function Raiz() {
       onCerrarSesion={cerrarSesion}
       onCambiarPerfil={() => setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion })}
       onActualizar={() => conectar(fase.cuenta, true)}
+      sincronizado={sincronizado}
+      onSincronizar={() => void sincronizar()}
+      onCambioPerfil={(nuevo) =>
+        setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
+      }
     />
   );
 }
@@ -306,6 +371,9 @@ function BibliotecaVista({
   onCerrarSesion,
   onCambiarPerfil,
   onActualizar,
+  sincronizado,
+  onSincronizar,
+  onCambioPerfil,
 }: {
   biblioteca: Biblioteca;
   perfiles: AlmacenPerfiles;
@@ -316,6 +384,12 @@ function BibliotecaVista({
   onCerrarSesion: () => void;
   onCambiarPerfil: () => void;
   onActualizar: () => void;
+  /** Sube cuando ha llegado algo de otro aparato: hay que repintar. */
+  sincronizado: number;
+  /** Pide sincronizar ahora, sin esperar al temporizador. */
+  onSincronizar: () => void;
+  /** El perfil ha cambiado de nombre o de color: hay que repintarlo arriba. */
+  onCambioPerfil: (perfil: Perfil) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [estado, setEstado] = useState<EstadoPantalla | null>(null);
@@ -331,6 +405,40 @@ function BibliotecaVista({
   const [cajaVista, setCajaVista] = useState<Caja | null>(null);
   /** El mando está sobre la vista previa, no sobre la lista de canales. */
   const [focoEnVideo, setFocoEnVideo] = useState(false);
+
+  const [verAjustes, setVerAjustes] = useState(false);
+  /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
+  const [verPerfil, setVerPerfil] = useState(false);
+  const [focoPerfil, setFocoPerfil] = useState(0);
+  /** Cuando se está escribiendo el nombre nuevo del perfil. */
+  const [nombreNuevo, setNombreNuevo] = useState<string | null>(null);
+
+  /*
+    Estos dos van aquí arriba, con el resto de hooks, y no junto al menú que
+    los usa. Es la cuarta vez que este proyecto se cae por lo mismo: React
+    exige el mismo número de hooks en cada pintado, y más abajo hay un
+    `return` temprano —"Cargando la biblioteca…"— que se los saltaba en el
+    primero. El síntoma es "Rendered more hooks than during the previous
+    render" y la aplicación cerrándose al entrar.
+  */
+  /** Guarda el nombre nuevo del perfil y cierra el campo. */
+  const guardarNombre = useCallback(async () => {
+    const limpio = (nombreNuevo ?? '').trim();
+    setNombreNuevo(null);
+    if (!limpio || limpio === perfil.nombre) return;
+
+    await perfiles.renombrar(perfil.id, limpio);
+    onCambioPerfil({ ...perfil, nombre: limpio });
+  }, [nombreNuevo, perfil, perfiles, onCambioPerfil]);
+
+  /** Pasa al siguiente color de la paleta, dando la vuelta al llegar al final. */
+  const siguienteColor = useCallback(async () => {
+    const actual = COLORES_PERFIL.indexOf(perfil.color as (typeof COLORES_PERFIL)[number]);
+    const siguiente = COLORES_PERFIL[(actual + 1) % COLORES_PERFIL.length]!;
+    await perfiles.recolorear(perfil.id, siguiente);
+    onCambioPerfil({ ...perfil, color: siguiente });
+  }, [perfil, perfiles, onCambioPerfil]);
+
   /** El mando está en la cabecera —buscar, ajustes, perfil— y no en la rejilla. */
   const [enCabecera, setEnCabecera] = useState(false);
   const [focoCabecera, setFocoCabecera] = useState(0);
@@ -348,7 +456,7 @@ function BibliotecaVista({
   /** La lista de categorías: se desplaza sola para seguir a su foco. */
   const barra = useRef<FlatList<OpcionLateral> | null>(null);
   const [ajustes, setAjustes] = useState<Ajustes>(AJUSTES_POR_DEFECTO);
-  const [verAjustes, setVerAjustes] = useState(false);
+
   const [texto, setTexto] = useState('');
   const temporizadorBusqueda = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -382,6 +490,8 @@ function BibliotecaVista({
       tamanoPagina: 60,
       // De aquí sale la barrita de "lo llevas por la mitad".
       avances: (medios) => perfiles.avancesDe(perfil.id, medios),
+      // Y de aquí la fila de "seguir viendo" del inicio.
+      seguirViendo: () => perfiles.seguirViendo(perfil.id, 12),
       // Y de aquí los corazones y el grupo de favoritos, que son de cada uno.
       favoritos: {
         listar: async (clase) =>
@@ -448,6 +558,35 @@ function BibliotecaVista({
   // Entrar y salir del directo: al entrar, el vídeo empieza en la columna; al
   // salir, se para, o seguiría ocupando la conexión mientras se navega por
   // películas.
+  /**
+   * Al cerrar el reproductor, sincronizar: acaba de haber algo que contar.
+   *
+   * Es el momento en el que el avance de lo que se estaba viendo tiene su
+   * valor definitivo. Dejarlo al temporizador de dos minutos significaba que
+   * salir de la película y cerrar la app perdía el último tramo.
+   *
+   * Se vigila la transición a `null` y no el botón de atrás porque el
+   * reproductor se cierra por varios caminos —atrás, cambiar de sección, el
+   * efecto de aquí abajo— y todos cuentan igual.
+   */
+  const veniaReproduciendo = useRef(false);
+  useEffect(() => {
+    if (reproduciendo) {
+      veniaReproduciendo.current = true;
+      return;
+    }
+    if (veniaReproduciendo.current) {
+      veniaReproduciendo.current = false;
+      onSincronizar();
+    }
+  }, [reproduciendo, onSincronizar]);
+
+  /** Ha llegado algo de otro aparato: se repinta con los datos nuevos. */
+  useEffect(() => {
+    if (sincronizado === 0) return;
+    presentador.current?.cargar().then(setEstado);
+  }, [sincronizado]);
+
   useEffect(() => {
     if (!estado) return;
     if (estado.formato === 'canales') {
@@ -471,7 +610,15 @@ function BibliotecaVista({
     const instancia = presentador.current;
     if (!instancia) return false;
 
-    // El panel de ajustes se cierra antes que nada: es lo que está encima.
+    // Lo que esté encima se cierra antes que nada, de más reciente a menos.
+    if (nombreNuevo !== null) {
+      setNombreNuevo(null);
+      return true;
+    }
+    if (verPerfil) {
+      setVerPerfil(false);
+      return true;
+    }
     if (verAjustes) {
       setVerAjustes(false);
       return true;
@@ -512,7 +659,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, nombreNuevo]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -608,6 +755,16 @@ function BibliotecaVista({
         // La cabecera: se entra subiendo desde la primera fila y se sale
         // bajando. Sin esto, en un televisor no hay forma de llegar a buscar
         // ni a los ajustes, porque no hay dedo que los toque.
+        // El menú del perfil, mientras está abierto, se queda con las teclas.
+        if (verPerfil) {
+          if (evento.eventType === 'up') {
+            setFocoPerfil((actual) => Math.max(0, actual - 1));
+          } else if (evento.eventType === 'down') {
+            setFocoPerfil((actual) => Math.min(opcionesPerfil.length - 1, actual + 1));
+          }
+          return;
+        }
+
         if (enCabecera) {
           if (evento.eventType === 'left') {
             setFocoCabecera((actual) => Math.max(0, actual - 1));
@@ -618,12 +775,14 @@ function BibliotecaVista({
           }
           return;
         }
-        if (
-          evento.eventType === 'up' &&
-          botonesCabecera.length > 0 &&
-          !estado?.lateral?.dentro &&
-          (estado?.foco ?? 0) < (estado?.columnas ?? 1)
-        ) {
+        // En el inicio manda su propia fila, no el índice de la rejilla: ahí
+        // `foco` vale siempre 0 y subir habría saltado a la cabecera desde
+        // cualquier carrusel, en vez de recorrer las filas.
+        const arribaDelTodo = estado?.inicio
+          ? estado.inicio.fila === 0
+          : (estado?.foco ?? 0) < (estado?.columnas ?? 1);
+
+        if (evento.eventType === 'up' && botonesCabecera.length > 0 && !estado?.lateral?.dentro && arribaDelTodo) {
           setFocoCabecera((actual) => Math.min(actual, botonesCabecera.length - 1));
           setEnCabecera(true);
           return;
@@ -681,6 +840,12 @@ function BibliotecaVista({
       case 'select':
         if (verAjustes) {
           opcionesAjustes[focoAjustes]?.();
+          return;
+        }
+        if (verPerfil) {
+          const opcion = opcionesPerfil[focoPerfil];
+          setVerPerfil(false);
+          opcion?.onPress();
           return;
         }
         if (enCabecera) {
@@ -760,9 +925,22 @@ function BibliotecaVista({
    * poder señalar cuál está enfocado y ejecutarlo desde el manejador de
    * teclas: en la tele no hay dedo que los alcance.
    */
-  const botonesCabecera: Array<{ texto: string; onPress: () => void }> = [
-    ...(enInicio || estado.lateral ? [{ texto: 'Buscar', onPress: abrirBuscador }] : []),
-    ...(enInicio ? [{ texto: 'Actualizar', onPress: onActualizar }] : []),
+  /**
+   * Lo que cuelga del círculo del perfil.
+   *
+   * Todo lo que es "de este usuario" vive aquí y no en la barra: cinco
+   * botones de texto arriba tapaban contenido y no se leían de lejos.
+   */
+  const opcionesPerfil: Array<{ texto: string; onPress: () => void }> = [
+    { texto: 'Editar nombre', onPress: () => setNombreNuevo(perfil.nombre) },
+    { texto: 'Cambiar color', onPress: () => void siguienteColor() },
+    { texto: 'Cambiar de perfil', onPress: onCambiarPerfil },
+    { texto: 'Actualizar catálogo', onPress: onActualizar },
+    { texto: 'Cerrar sesión', onPress: onCerrarSesion },
+  ];
+
+  const botonesCabecera: Array<{ texto: string; onPress: () => void; perfil?: true }> = [
+    { texto: '⌕', onPress: abrirBuscador },
     ...(estado.lateral
       ? [
           {
@@ -776,14 +954,72 @@ function BibliotecaVista({
           },
         ]
       : []),
-    ...(enInicio ? [{ texto: perfil.nombre, onPress: onCambiarPerfil }] : []),
-    ...(enInicio ? [{ texto: 'Cerrar sesión', onPress: onCerrarSesion }] : []),
+    {
+      texto: inicialDe(perfil.nombre),
+      perfil: true as const,
+      onPress: () => {
+        setFocoPerfil(0);
+        setVerPerfil(true);
+      },
+    },
   ];
+
+  /**
+   * La cabecera: el título a la izquierda, la lupa y el perfil a la derecha.
+   *
+   * Se arma como variable porque en el inicio va dentro de la lista —para que
+   * se desplace con ella— y en el resto de pantallas encima, fija.
+   */
+  const cabecera = (
+<View style={estilos.cabecera}>
+          <View style={estilos.tituloBloque}>
+            <Text style={estilos.titulo}>{estado.titulo}</Text>
+            {enInicio ? (
+              <Text style={estilos.subtitulo}>
+                {cuenta.nombre} · {cantidad(medicion.entradas, 'ficha', 'fichas')} ·{' '}
+                {medicion.via === 'guardada'
+                  ? `guardadas ${frescura(medicion.dias)}`
+                  : `traídas del panel en ${(medicion.total / 1000).toFixed(0)} s`}
+              </Text>
+            ) : null}
+          </View>
+          {botonesCabecera.length > 0 ? (
+            <View style={estilos.botonera}>
+              {botonesCabecera.map((boton, indice) => (
+                <Pressable
+                  key={boton.texto}
+                  /*
+                    El foco del sistema no entra aquí a propósito: en esta
+                    pantalla el recorrido lo lleva la aplicación, y si Android
+                    además entregase el OK al botón, cada pulsación contaría dos
+                    veces. Eso hacía que los ajustes se abrieran y se cerraran
+                    en el mismo golpe.
+                  */
+                  focusable={false}
+                  style={[
+                    boton.perfil ? estilos.avatar : estilos.botonCabecera,
+                    boton.perfil && { backgroundColor: perfil.color },
+                    enCabecera &&
+                      focoCabecera === indice &&
+                      (boton.perfil ? estilos.avatarEnfocado : estilos.botonCabeceraEnfocado),
+                  ]}
+                  onPress={boton.onPress}
+                >
+                  <Text style={boton.perfil ? estilos.avatarTexto : estilos.iconoCabecera}>{boton.texto}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+  );
 
   /** La barra de categorías, temporadas o grupos. Solo en las pantallas que la tienen. */
   const barraLateral = estado.lateral ? (
     <View style={[estilos.barra, estado.lateral.dentro && estilos.barraEnfocada]}>
       <FlatList
+        focusable={false}
+        isTVSelectable={false}
+        scrollEnabled={DESPLAZA_EL_DEDO}
         ref={barra}
         data={estado.lateral.opciones}
         keyExtractor={(opcion) => (opcion.favoritos ? 'favoritos' : (opcion.grupo ?? 'todas'))}
@@ -828,6 +1064,9 @@ function BibliotecaVista({
   const rejilla = (
     <View style={estilos.zonaLista}>
     <FlatList
+      focusable={false}
+      isTVSelectable={false}
+      scrollEnabled={DESPLAZA_EL_DEDO}
       ref={lista}
       data={estado.elementos}
       // Cambiar el número de columnas obliga a rehacer la lista entera.
@@ -894,43 +1133,59 @@ function BibliotecaVista({
       hasTVPreferredFocus
     >
     <View style={[estilos.pantalla, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
-      <View style={estilos.cabecera}>
-        <View style={estilos.tituloBloque}>
-          <Text style={estilos.titulo}>{estado.titulo}</Text>
-          {enInicio ? (
-            <Text style={estilos.subtitulo}>
-              {cuenta.nombre} · {cantidad(medicion.entradas, 'ficha', 'fichas')} ·{' '}
-              {medicion.via === 'guardada'
-                ? `guardadas ${frescura(medicion.dias)}`
-                : `traídas del panel en ${(medicion.total / 1000).toFixed(0)} s`}
-            </Text>
-          ) : null}
-        </View>
-        {botonesCabecera.length > 0 ? (
-          <View style={estilos.botonera}>
-            {botonesCabecera.map((boton, indice) => (
-              <Pressable
-                key={boton.texto}
-                /*
-                  El foco del sistema no entra aquí a propósito: en esta
-                  pantalla el recorrido lo lleva la aplicación, y si Android
-                  además entregase el OK al botón, cada pulsación contaría dos
-                  veces. Eso hacía que los ajustes se abrieran y se cerraran
-                  en el mismo golpe.
-                */
-                focusable={false}
-                style={[
-                  estilos.botonCabecera,
-                  enCabecera && focoCabecera === indice && estilos.botonCabeceraEnfocado,
-                ]}
-                onPress={boton.onPress}
-              >
-                <Text style={estilos.cerrarSesionTexto}>{boton.texto}</Text>
-              </Pressable>
-            ))}
+      {/*
+        La cabecera, ya solo con dos iconos.
+
+        En el inicio **no se pinta aquí**: va dentro de la lista, como
+        encabezado, y se va con el desplazamiento. Antes era una barra fija
+        que se comía el alto y en el teléfono se pisaba con el contenido.
+      */}
+      {estado.inicio ? null : cabecera}
+
+      {/*
+        El menú del perfil: todo lo que es "de este usuario", colgando del
+        círculo en vez de repartido por la barra de arriba.
+      */}
+      {verPerfil ? (
+        <View style={estilos.menuPerfil}>
+          <View style={estilos.menuCabecera}>
+            <View style={[estilos.avatarGrande, { backgroundColor: perfil.color }]}>
+              <Text style={estilos.avatarGrandeTexto}>{inicialDe(perfil.nombre)}</Text>
+            </View>
+            <Text style={estilos.menuNombre}>{perfil.nombre}</Text>
           </View>
-        ) : null}
-      </View>
+          {opcionesPerfil.map((opcion, indice) => (
+            <Pressable
+              key={opcion.texto}
+              focusable={false}
+              style={[estilos.menuOpcion, focoPerfil === indice && estilos.menuOpcionEnfocada]}
+              onPress={() => {
+                setVerPerfil(false);
+                opcion.onPress();
+              }}
+            >
+              <Text style={estilos.menuOpcionTexto}>{opcion.texto}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Escribir el nombre nuevo del perfil. */}
+      {nombreNuevo !== null ? (
+        <View style={estilos.menuPerfil}>
+          <Text style={estilos.menuNombre}>Nombre del perfil</Text>
+          <TextInput
+            style={estilos.campoNombre}
+            value={nombreNuevo}
+            onChangeText={setNombreNuevo}
+            autoFocus
+            onSubmitEditing={() => void guardarNombre()}
+          />
+          <Pressable focusable={false} style={estilos.menuOpcionEnfocada} onPress={() => void guardarNombre()}>
+            <Text style={estilos.menuOpcionTexto}>Guardar</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {verAjustes && estado.lateral ? (
         <View style={estilos.ajustes}>
@@ -991,7 +1246,33 @@ function BibliotecaVista({
         />
       ) : null}
 
-      <View style={estilos.cuerpo}>
+      {/*
+        El inicio es su propia pantalla: una sola lista vertical de filas.
+
+        No pasa por el cuerpo de abajo —que es una fila horizontal pensada
+        para barra + rejilla + parrilla— porque aquí lo que hace falta es
+        justo lo contrario: que **todo baje junto**. Cuando eran dos bloques
+        con desplazamiento propio, en el teléfono el primero se comía la
+        pantalla y el menú no se veía.
+      */}
+      {estado.inicio ? (
+        <PantallaInicio
+          cabecera={cabecera}
+          enCabecera={enCabecera}
+          inicio={estado.inicio}
+          onTocar={(fila, columna) => {
+            const instancia = presentador.current;
+            if (!instancia) return;
+            instancia.enfocarEnInicio(fila, columna);
+            void instancia.aceptar().then(({ estado: nuevo, reproducir }) => {
+              setEstado(nuevo);
+              if (reproducir) setReproduciendo(reproducir);
+            });
+          }}
+        />
+      ) : null}
+
+      <View style={[estilos.cuerpo, estado.inicio && estilos.cuerpoOculto]}>
         {/*
           En el directo la pantalla se parte por la mitad: la barra y la lista
           a un lado, la parrilla al otro. En el resto de pantallas la lista
@@ -1061,6 +1342,257 @@ function BibliotecaVista({
  * descargan las que de verdad se miran. Mientras llega la imagen queda el
  * hueco en gris, para que la rejilla no baile.
  */
+/**
+ * La pantalla de inicio: una sola lista vertical de filas.
+ *
+ * Todo baja junto. Cada fila lleva su propio desplazamiento horizontal, que es
+ * lo natural en un carrusel, pero **el vertical es uno solo**: es la
+ * diferencia entre una pantalla que se recorre y varios bloques que se pelean
+ * por el alto, que era lo que dejaba el menú fuera de la vista en el teléfono.
+ */
+function PantallaInicio({
+  cabecera,
+  enCabecera,
+  inicio,
+  onTocar,
+}: {
+  /** Va como encabezado de la lista, así que se desplaza con el contenido. */
+  cabecera: ReactNode;
+  /** El mando está arriba, en la lupa o el perfil. */
+  enCabecera: boolean;
+  inicio: Inicio;
+  onTocar: (fila: number, columna: number) => void;
+}) {
+  const lista = useRef<FlatList<FilaInicio>>(null);
+  const { height: alto } = useWindowDimensions();
+
+  // El destacado ocupa cerca de la mitad de la pantalla, con tope: en una tele
+  // grande, media pantalla de cartel es demasiado.
+  const altoDestacado = Math.min(340, Math.round(alto * 0.46));
+
+  useEffect(() => {
+    // Con el foco arriba hay que subir del todo: la cabecera va dentro de la
+    // lista, y `scrollToIndex` solo sabe llegar a las filas de datos.
+    if (enCabecera) {
+      lista.current?.scrollToOffset({ offset: 0, animated: true });
+      return;
+    }
+    // En la primera fila no se desplaza nada: la cabecera va justo encima y
+    // moverse a ella la dejaría fuera de la pantalla nada más abrir.
+    if (inicio.fila === 0 || inicio.filas.length === 0) return;
+    lista.current?.scrollToIndex({
+      index: Math.min(inicio.fila, inicio.filas.length - 1),
+      animated: true,
+      viewPosition: 0.3,
+    });
+  }, [enCabecera, inicio.fila, inicio.filas.length]);
+
+  return (
+    <FlatList
+      focusable={false}
+      isTVSelectable={false}
+      scrollEnabled={DESPLAZA_EL_DEDO}
+      ref={lista}
+      style={estilos.inicioLista}
+      data={inicio.filas}
+      ListHeaderComponent={<>{cabecera}</>}
+      keyExtractor={(fila, indice) => `${fila.tipo}-${indice}`}
+      extraData={inicio}
+      showsVerticalScrollIndicator={false}
+      // Son pocas filas y `scrollToIndex` necesita que estén montadas.
+      initialNumToRender={8}
+      onScrollToIndexFailed={() => {}}
+      renderItem={({ item, index }) => {
+        const activa = index === inicio.fila;
+
+        if (item.tipo === 'destacado') {
+          return (
+            <Destacado
+              elemento={item.elemento}
+              alto={altoDestacado}
+              enfocado={activa}
+              onTocar={() => onTocar(index, 0)}
+            />
+          );
+        }
+
+        return (
+          <Carrusel
+            titulo={item.tipo === 'carrusel' ? item.titulo : null}
+            elementos={elementosDeFila(item)}
+            grandes={item.tipo === 'secciones'}
+            activa={activa}
+            columna={inicio.columna}
+            onTocar={(columna) => onTocar(index, columna)}
+          />
+        );
+      }}
+    />
+  );
+}
+
+/**
+ * La película que preside el inicio.
+ *
+ * El degradado son capas oscuras superpuestas, no un degradado de verdad:
+ * React Native no los trae y la librería que los añade es un módulo nativo,
+ * que es justo lo que este proyecto lleva evitando desde el principio. A este
+ * tamaño no se distingue.
+ *
+ * El cartel va a la derecha y el texto a la izquierda porque el panel solo da
+ * carteles verticales, no arte apaisado: estirarlo a pantalla ancha lo
+ * deformaría.
+ */
+function Destacado({
+  elemento,
+  alto,
+  enfocado,
+  onTocar,
+}: {
+  elemento: Elemento;
+  alto: number;
+  enfocado: boolean;
+  onTocar: () => void;
+}) {
+  return (
+    <Pressable focusable={false} onPress={onTocar} style={[estilos.destacado, { height: alto }]}>
+      {elemento.logo ? (
+        <Image source={{ uri: elemento.logo }} style={estilos.destacadoImagen} resizeMode="cover" />
+      ) : null}
+
+      {/* El degradado: opaco donde va el texto, transparente sobre el cartel. */}
+      <View style={estilos.destacadoVelo} pointerEvents="none" />
+
+      <View style={estilos.destacadoTexto}>
+        <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
+        <Text style={estilos.destacadoNombre} numberOfLines={2}>
+          {elemento.titulo}
+        </Text>
+        <View style={estilos.destacadoDatos}>
+          {elemento.valoracion !== null ? (
+            <Text style={estilos.destacadoNota}>{nota(elemento.valoracion)}</Text>
+          ) : null}
+          {elemento.anio !== null ? <Text style={estilos.destacadoAnio}>{elemento.anio}</Text> : null}
+        </View>
+        <View style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}>
+          <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Una fila horizontal de fichas: los carruseles y el menú de secciones. */
+function Carrusel({
+  titulo,
+  elementos,
+  grandes,
+  activa,
+  columna,
+  onTocar,
+}: {
+  titulo: string | null;
+  elementos: Elemento[];
+  /** Las secciones se pintan más anchas y apaisadas: son el menú. */
+  grandes: boolean;
+  activa: boolean;
+  columna: number;
+  onTocar: (columna: number) => void;
+}) {
+  const lista = useRef<FlatList<Elemento>>(null);
+
+  useEffect(() => {
+    if (!activa || elementos.length === 0) return;
+    lista.current?.scrollToIndex({
+      index: Math.min(columna, elementos.length - 1),
+      animated: true,
+      viewPosition: 0.5,
+    });
+  }, [activa, columna, elementos.length]);
+
+  return (
+    <View style={estilos.filaZona}>
+      {titulo ? <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo}</Text> : null}
+      <FlatList
+        focusable={false}
+        isTVSelectable={false}
+        scrollEnabled={DESPLAZA_EL_DEDO}
+        ref={lista}
+        horizontal
+        data={elementos}
+        keyExtractor={(elemento) => elemento.id}
+        extraData={`${activa}-${columna}`}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={estilos.filaLista}
+        initialNumToRender={8}
+        onScrollToIndexFailed={() => {}}
+        renderItem={({ item, index }) => {
+          const enfocado = activa && index === columna;
+          return (
+            <Pressable
+              focusable={false}
+              onPress={() => onTocar(index)}
+              style={[
+                grandes ? estilos.seccionFicha : estilos.fichaFila,
+                enfocado && estilos.fichaFilaEnfocada,
+              ]}
+            >
+              <View style={grandes ? estilos.seccionCaja : estilos.fichaCaratula}>
+                {item.logo ? (
+                  <Image
+                    source={{ uri: item.logo }}
+                    style={grandes ? estilos.seccionImagen : estilos.fichaImagen}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <View style={[grandes ? estilos.seccionImagen : estilos.fichaImagen, estilos.fichaSinImagen]}>
+                    <Text
+                      style={grandes ? estilos.seccionTexto : estilos.fichaSinImagenTexto}
+                      numberOfLines={2}
+                    >
+                      {item.titulo}
+                    </Text>
+                  </View>
+                )}
+                {item.avance !== null ? (
+                  <View style={estilos.fichaBarra}>
+                    <View style={[estilos.fichaBarraVista, { width: `${Math.round(item.avance * 100)}%` }]} />
+                  </View>
+                ) : null}
+              </View>
+              {/*
+                El nombre de una sección va dentro del recuadro, no debajo:
+                puesto en los dos sitios salía repetido.
+              */}
+              {grandes ? null : (
+                <Text style={estilos.fichaNombre} numberOfLines={1}>
+                  {item.titulo}
+                </Text>
+              )}
+              {item.detalle ? (
+                <Text style={estilos.filaFichaDetalle} numberOfLines={1}>
+                  {item.detalle}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        }}
+      />
+    </View>
+  );
+}
+
+/**
+ * La letra que va dentro del círculo del perfil.
+ *
+ * Hace las veces de foto sin traerse un selector de imágenes, que en Android
+ * es un módulo nativo. Con el color propio de cada perfil, cuatro personas se
+ * distinguen de un vistazo.
+ */
+function inicialDe(nombre: string): string {
+  return (nombre.trim()[0] ?? '?').toUpperCase();
+}
+
 function Ficha({
   elemento,
   enfocado,
@@ -1522,6 +2054,264 @@ const estilos = StyleSheet.create({
     height: 52,
     width: 72,
   },
+  iconoCabecera: {
+    color: '#dfe7ee',
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  avatar: {
+    alignItems: 'center',
+    borderColor: 'transparent',
+    borderRadius: 22,
+    borderWidth: 3,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  avatarEnfocado: {
+    borderColor: '#fff',
+  },
+  avatarTexto: {
+    color: '#06131c',
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  avatarGrande: {
+    alignItems: 'center',
+    borderRadius: 26,
+    height: 52,
+    justifyContent: 'center',
+    width: 52,
+  },
+  avatarGrandeTexto: {
+    color: '#06131c',
+    fontSize: 23,
+    fontWeight: '700',
+  },
+  menuPerfil: {
+    backgroundColor: '#0d2231',
+    borderRadius: 12,
+    elevation: 12,
+    gap: 6,
+    padding: 18,
+    position: 'absolute',
+    right: 24,
+    top: 78,
+    width: 300,
+    zIndex: 20,
+  },
+  menuCabecera: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 8,
+  },
+  menuNombre: {
+    color: '#fff',
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  menuOpcion: {
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  menuOpcionEnfocada: {
+    backgroundColor: 'rgba(53,208,127,0.2)',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  menuOpcionTexto: {
+    color: '#dfe7ee',
+    fontSize: 17,
+  },
+  campoNombre: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 8,
+    color: '#fff',
+    fontSize: 18,
+    padding: 14,
+  },
+  inicioLista: {
+    height: '100%',
+  },
+  cuerpoOculto: {
+    display: 'none',
+  },
+
+  destacado: {
+    borderRadius: 12,
+    justifyContent: 'flex-end',
+    marginBottom: 22,
+    overflow: 'hidden',
+  },
+  destacadoImagen: {
+    height: '100%',
+    position: 'absolute',
+    right: 0,
+    // El cartel es vertical: ocupa la mitad derecha y el degradado se lo come
+    // hacia la izquierda, que es donde va el texto.
+    width: '62%',
+  },
+  destacadoVelo: {
+    bottom: 0,
+    /*
+      Un degradado de verdad, sin dependencias: React Native 0.80 y posteriores
+      admiten degradados CSS con `experimental_backgroundImage`.
+
+      Antes esto eran bandas de color superpuestas, porque la alternativa
+      conocida era `react-native-linear-gradient`, que es un módulo nativo. Pero
+      dos rectángulos con opacidades distintas siempre dejan costura: en la
+      tablet se veían como franjas verticales por encima del cartel.
+    */
+    experimental_backgroundImage:
+      'linear-gradient(to right, #06131c 0%, #06131c 32%, rgba(6,19,28,0.72) 58%, rgba(6,19,28,0) 100%)',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  destacadoTexto: {
+    gap: 8,
+    maxWidth: 560,
+    padding: 26,
+  },
+  destacadoEtiqueta: {
+    color: VERDE,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  destacadoNombre: {
+    color: '#fff',
+    fontSize: 34,
+    fontWeight: '700',
+  },
+  destacadoDatos: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  destacadoNota: {
+    color: '#f0c14a',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  destacadoAnio: {
+    color: '#8fa3b3',
+    fontSize: 17,
+  },
+  destacadoBoton: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 3,
+    marginTop: 6,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+  },
+  destacadoBotonEnfocado: {
+    backgroundColor: VERDE,
+    borderColor: '#fff',
+  },
+  destacadoBotonTexto: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+
+  filaZona: {
+    marginBottom: 20,
+  },
+  filaTitulo: {
+    color: '#8fa3b3',
+    fontSize: 17,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  filaTituloActivo: {
+    color: VERDE,
+  },
+  filaLista: {
+    gap: 13,
+    paddingRight: 20,
+  },
+  fichaFila: {
+    borderColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 3,
+    padding: 3,
+    width: 126,
+  },
+  fichaFilaEnfocada: {
+    borderColor: '#fff',
+  },
+  fichaCaratula: {
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  fichaImagen: {
+    aspectRatio: 2 / 3,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: '100%',
+  },
+  fichaSinImagen: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 8,
+  },
+  fichaSinImagenTexto: {
+    color: '#8fa3b3',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  fichaBarra: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    bottom: 0,
+    height: 5,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  fichaBarraVista: {
+    backgroundColor: VERDE,
+    height: '100%',
+  },
+  fichaNombre: {
+    color: '#dfe7ee',
+    fontSize: 14,
+    marginTop: 6,
+  },
+  filaFichaDetalle: {
+    color: '#5d6f7d',
+    fontSize: 12,
+  },
+
+  seccionFicha: {
+    borderColor: 'transparent',
+    borderRadius: 10,
+    borderWidth: 3,
+    padding: 3,
+    width: 210,
+  },
+  seccionCaja: {
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  seccionTexto: {
+    color: '#fff',
+    fontSize: 21,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  seccionImagen: {
+    aspectRatio: 16 / 9,
+    backgroundColor: 'rgba(53,208,127,0.14)',
+    width: '100%',
+  },
+
   caratula: {
     borderColor: 'transparent',
     borderRadius: 10,

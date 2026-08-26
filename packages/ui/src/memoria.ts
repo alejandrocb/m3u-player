@@ -16,6 +16,7 @@ import type {
   Biblioteca,
   Orden,
   CanalFicha,
+  EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
   Pagina,
@@ -187,6 +188,26 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           valoracion: pelicula.rating,
           logo: pelicula.logo,
         }));
+    },
+
+    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
+      // Los episodios ya están numerados en `porId`, que es el equivalente al
+      // rowid que les da SQLite: se busca por ahí y no recorriendo series.
+      const encontrados: EpisodioDeSerieFicha[] = [];
+      for (const id of ids) {
+        const indexado = porId.get(Number(id));
+        if (!indexado) continue;
+        encontrados.push({
+          id: indexado.id,
+          serieId: indexado.serie.id,
+          serieTitulo: indexado.serie.title,
+          serieLogo: indexado.serie.logo,
+          temporada: indexado.episodio.season,
+          numero: indexado.episodio.episode,
+          titulo: indexado.episodio.title,
+        });
+      }
+      return encontrados;
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {

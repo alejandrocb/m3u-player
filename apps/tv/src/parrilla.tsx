@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { avanceDePrograma, programaActual, programasSiguientes } from '@m3u/core';
 import type { Programa } from '@m3u/core';
@@ -204,7 +204,15 @@ export function Parrilla({
       {siguientes.length > 0 ? (
         <>
           <Text style={estilos.rotulo}>A continuación</Text>
-          <ScrollView style={estilos.lista} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={estilos.lista}
+            showsVerticalScrollIndicator={false}
+            // Por lo mismo que las listas de App.tsx: en la tele el
+            // sistema la desplazaba sola al pulsar una flecha.
+            focusable={false}
+            isTVSelectable={false}
+            scrollEnabled={!Platform.isTV}
+          >
             {siguientes.map((programa) => (
               <View key={programa.desde.getTime()} style={estilos.fila}>
                 <Text style={estilos.horaFila}>{hora(programa.desde)}</Text>

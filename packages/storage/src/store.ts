@@ -74,6 +74,17 @@ export interface EpisodeRow {
   seconds: number | null;
 }
 
+/** Un episodio con lo justo de su serie para pintarlo fuera de ella. */
+export interface EpisodeOfSeriesRow {
+  id: number;
+  seriesId: string;
+  seriesTitle: string;
+  seriesLogo: string | null;
+  season: number;
+  episode: number;
+  title: string | null;
+}
+
 export interface SearchHit {
   kind: 'channel' | 'movie' | 'series';
   id: string;
@@ -373,6 +384,38 @@ export class LibraryStore {
 
   channelsById(ids: string[]): ChannelRow[] {
     return enElOrdenPedido(ids, this.#porId('channel', ids).map(toChannel));
+  }
+
+  /**
+   * Episodios por identificador, con el título y la carátula de su serie.
+   *
+   * El salto a `series` va en la consulta porque quien pide esto —"seguir
+   * viendo"— solo tiene el id del episodio, y con eso no se puede pintar nada
+   * reconocible: lo que uno identifica es la carátula de la serie.
+   */
+  episodesById(ids: string[]): EpisodeOfSeriesRow[] {
+    if (ids.length === 0) return [];
+    const huecos = ids.map(() => '?').join(', ');
+    const filas = this.#db
+      .prepare(
+        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS series_title, s.logo AS series_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.id IN (${huecos})`,
+      )
+      .all(...ids) as Array<Record<string, unknown>>;
+
+    const fichas: EpisodeOfSeriesRow[] = filas.map((fila) => ({
+      id: Number(fila.id),
+      seriesId: fila.series_id as string,
+      seriesTitle: fila.series_title as string,
+      seriesLogo: (fila.series_logo as string) ?? null,
+      season: Number(fila.season),
+      episode: Number(fila.episode),
+      title: (fila.title as string) ?? null,
+    }));
+
+    const porClave = new Map(fichas.map((ficha) => [String(ficha.id), ficha]));
+    return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodeOfSeriesRow => ficha !== undefined);
   }
 
   #porId(tabla: 'movie' | 'series' | 'channel', ids: string[]): Array<Record<string, unknown>> {

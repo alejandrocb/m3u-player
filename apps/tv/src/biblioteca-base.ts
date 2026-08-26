@@ -15,6 +15,7 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
   Pagina,
@@ -259,6 +260,31 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
           logo: (fila.logo as string) ?? null,
         })),
       );
+    },
+
+    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
+      if (ids.length === 0) return [];
+      const huecos = ids.map(() => '?').join(', ');
+      // El salto a `series` va aquí y no en quien llama: lo que hace falta
+      // para pintar un episodio fuera de su serie es la carátula de la serie.
+      const encontrados = filas(
+        db,
+        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.id IN (${huecos})`,
+        ids,
+      ).map((fila): EpisodioDeSerieFicha => ({
+        id: Number(fila.id),
+        serieId: fila.series_id as string,
+        serieTitulo: fila.serie as string,
+        serieLogo: (fila.serie_logo as string) ?? null,
+        temporada: Number(fila.season),
+        numero: Number(fila.episode),
+        titulo: (fila.title as string) ?? null,
+      }));
+
+      const porClave = new Map(encontrados.map((ficha) => [String(ficha.id), ficha]));
+      return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
     },
 
     async canalesPorId(ids: string[]): Promise<CanalFicha[]> {

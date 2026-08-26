@@ -46,6 +46,18 @@ export interface TemporadaFicha {
   episodios: number;
 }
 
+/** Un episodio con lo justo de su serie para poder pintarlo fuera de ella. */
+export interface EpisodioDeSerieFicha {
+  id: number;
+  serieId: string;
+  serieTitulo: string;
+  /** Carátula de la serie: es la que se reconoce de un vistazo. */
+  serieLogo: string | null;
+  temporada: number;
+  numero: number;
+  titulo: string | null;
+}
+
 /**
  * Un episodio con su ficha entera.
  *
@@ -148,6 +160,15 @@ export interface Biblioteca {
    */
   peliculasPorId(ids: string[]): Promise<PeliculaFicha[]>;
   seriesPorId(ids: string[]): Promise<SerieFicha[]>;
+  /**
+   * Episodios sueltos por su identificador, **con los datos de su serie**.
+   *
+   * Lo pide "seguir viendo": el historial solo guarda el id del episodio, y
+   * con eso no se puede pintar una ficha decente. Lo que uno reconoce es la
+   * carátula de la serie y "S01E03", no el título del capítulo, así que hace
+   * falta el salto a `series` que aquí ya viene hecho.
+   */
+  episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".

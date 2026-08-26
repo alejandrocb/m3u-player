@@ -15,8 +15,8 @@ import type { Direccion } from './foco.ts';
 import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
 import type { Biblioteca, Orden } from './puerto.ts';
-import { claveDeMedio } from './perfiles.ts';
-import type { ClaseMedio } from './perfiles.ts';
+import { claveDeMedio, proporcionVista } from './perfiles.ts';
+import type { Avance, ClaseMedio } from './perfiles.ts';
 
 /** Qué reproducir cuando el usuario acepta sobre una ficha. */
 export interface Reproducible {
@@ -99,6 +99,68 @@ export interface Lateral {
  */
 export type Formato = 'lista' | 'carteles' | 'canales' | 'episodios';
 
+/**
+ * Una banda de la pantalla de inicio.
+ *
+ * El inicio no es una rejilla: es una sucesión de filas de distinta forma —el
+ * destacado ocupa el ancho, los carruseles se recorren de lado, las secciones
+ * son tres fichas grandes—. Modelarlo así es lo que permite que **todo baje
+ * junto en un solo desplazamiento**. Cuando eran bloques independientes, cada
+ * uno con su scroll, en una tele se disimulaba y en un teléfono la primera
+ * fila se comía la pantalla y escondía el resto.
+ */
+export type FilaInicio =
+  | { tipo: 'destacado'; elemento: Elemento }
+  | { tipo: 'carrusel'; titulo: string; elementos: Elemento[] }
+  | { tipo: 'secciones'; elementos: Elemento[] };
+
+/**
+ * La pantalla de inicio entera, con el foco en dos ejes.
+ *
+ * Arriba y abajo cambian de fila; izquierda y derecha recorren la de dentro.
+ * Es el recorrido de cualquier servicio de vídeo, y con un mando es el único
+ * que no obliga a adivinar dónde va a saltar el foco.
+ */
+export interface Inicio {
+  filas: FilaInicio[];
+  fila: number;
+  columna: number;
+}
+
+/** Los elementos de una fila, sea del tipo que sea. */
+export function elementosDeFila(fila: FilaInicio): Elemento[] {
+  return fila.tipo === 'destacado' ? [fila.elemento] : fila.elementos;
+}
+
+/** Cuántas fichas lleva cada carrusel del inicio. */
+const CARRUSEL = 20;
+
+/** Nota mínima para que una película merezca ser el destacado. */
+const NOTA_DESTACADO = 7;
+
+/**
+ * Elige la película que preside el inicio.
+ *
+ * De lo último que ha entrado en el catálogo, la mejor valorada que además
+ * sea reciente. Las tres condiciones importan: lo viejo no es novedad, lo mal
+ * valorado no luce, y sin cartel no hay nada que enseñar.
+ *
+ * Si nada cumple, se devuelve `null` y el inicio arranca sin destacado en vez
+ * de presidirlo con lo primero que haya, que es peor que no tener.
+ */
+export function destacar<T extends { anio: number | null; valoracion: number | null; logo: string | null }>(
+  candidatas: T[],
+  ahora = new Date(),
+): T | null {
+  const desde = ahora.getFullYear() - 1;
+  const buenas = candidatas.filter(
+    (ficha) => ficha.logo && ficha.anio !== null && ficha.anio >= desde && (ficha.valoracion ?? 0) >= NOTA_DESTACADO,
+  );
+  if (buenas.length === 0) return null;
+
+  return buenas.reduce((mejor, ficha) => ((ficha.valoracion ?? 0) > (mejor.valoracion ?? 0) ? ficha : mejor));
+}
+
 export interface EstadoPantalla {
   titulo: string;
   elementos: Elemento[];
@@ -112,6 +174,8 @@ export interface EstadoPantalla {
   lateral: Lateral | null;
   /** Lo tecleado en el buscador, si estamos en él. */
   busqueda: string | null;
+  /** La pantalla de inicio con sus filas. `null` en el resto de pantallas. */
+  inicio: Inicio | null;
 }
 
 export interface OpcionesPresentador {
@@ -124,6 +188,15 @@ export interface OpcionesPresentador {
    * una tacada por pantalla, no ficha a ficha.
    */
   avances?: (medios: Array<{ clase: ClaseMedio; id: string }>) => Promise<Record<string, number>>;
+  /**
+   * Lo que este perfil tiene empezado y sin terminar, de lo más reciente a lo
+   * más viejo. Es lo que llena la fila de "seguir viendo" del inicio.
+   *
+   * Va como opción y no dentro de `Biblioteca` por lo mismo que los favoritos:
+   * el catálogo es de toda la casa y esto es de cada uno. Sin ello la interfaz
+   * funciona igual, solo que sin la fila.
+   */
+  seguirViendo?: () => Promise<Avance[]>;
   /** Cómo ordenar películas y series. Por título si no se dice otra cosa. */
   orden?: Orden;
   /**
@@ -157,7 +230,18 @@ export class Presentador {
   /** Evita que el desplazamiento pida la misma página dos veces seguidas. */
   #cargandoMas = false;
   #lateral: Lateral | null = null;
+  #inicio: Inicio | null = null;
+  /**
+   * Dónde estaba el foco del inicio la última vez.
+   *
+   * Se guarda aparte de `#inicio` porque ese se desmonta al entrar en
+   * cualquier sección, y al volver hay que dejar el foco donde estaba —igual
+   * que hace el navegador con la rejilla—. Sin esto, salir de Películas
+   * devolvía siempre a la primera ficha de la primera fila.
+   */
+  #focoInicio = { fila: 0, columna: 0 };
   #avances: OpcionesPresentador['avances'];
+  #seguirViendo: OpcionesPresentador['seguirViendo'];
   #favoritos: PuertoFavoritos | undefined;
   #orden: Orden;
 
@@ -167,6 +251,7 @@ export class Presentador {
     this.#columnasRejilla = opciones.columnasRejilla ?? 5;
     this.#tamanoPagina = opciones.tamanoPagina ?? 60;
     this.#avances = opciones.avances;
+    this.#seguirViendo = opciones.seguirViendo;
     this.#favoritos = opciones.favoritos;
     this.#orden = opciones.orden ?? 'titulo';
   }
@@ -226,13 +311,207 @@ export class Presentador {
       hayMas: this.#hayMas,
       lateral: this.#lateral ? { ...this.#lateral, opciones: [...this.#lateral.opciones] } : null,
       busqueda: pantalla.tipo === 'buscador' ? (pantalla.texto ?? '') : null,
+      inicio: this.#inicio ? { ...this.#inicio, filas: [...this.#inicio.filas] } : null,
     };
+  }
+
+  /**
+   * Convierte fichas de catálogo en elementos de carrusel.
+   *
+   * Se les pega el avance para que la barrita salga también aquí: en una fila
+   * de novedades, saber qué llevas empezado es la mitad de la información.
+   */
+  async #aCarrusel(
+    fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
+    clase: 'pelicula' | 'serie',
+  ): Promise<Elemento[]> {
+    const elementos: Elemento[] = fichas.map((ficha) => ({
+      id: `${clase}:${ficha.id}`,
+      titulo: ficha.titulo,
+      detalle: null,
+      valoracion: ficha.valoracion,
+      anio: ficha.anio,
+      resumen: null,
+      logo: ficha.logo,
+      avance: null,
+      favorito: false,
+      accion:
+        clase === 'pelicula'
+          ? { tipo: 'reproducir', medio: { clase: 'pelicula', id: ficha.id, titulo: ficha.titulo } }
+          : { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: ficha.id, titulo: ficha.titulo } },
+    }));
+
+    // Por aquí y no llamando al historial a pelo: `#conAvances` ya se guarda de
+    // que un fallo de la base no tire la pantalla, y ya sabe que a una serie
+    // —que se abre, no se reproduce— no se le pregunta por dónde iba.
+    return this.#conAvances(elementos);
+  }
+
+  /** La fila de "seguir viendo", a partir del historial del perfil. */
+  async #filaContinuar(): Promise<FilaInicio | null> {
+    if (!this.#seguirViendo) return null;
+
+    // Si la base está ocupada o el historial falla, el inicio se pinta igual
+    // —sin esta fila— en vez de quedarse en blanco.
+    let historial: Avance[];
+    try {
+      historial = await this.#seguirViendo();
+    } catch {
+      return null;
+    }
+
+    const avances = historial.filter((avance) => avance.clase !== 'canal');
+    if (avances.length === 0) return null;
+
+    const idsDe = (clase: ClaseMedio): string[] =>
+      avances.filter((avance) => avance.clase === clase).map((avance) => avance.itemId);
+
+    const [peliculas, episodios] = await Promise.all([
+      this.#biblioteca.peliculasPorId(idsDe('pelicula')),
+      this.#biblioteca.episodiosPorId(idsDe('episodio')),
+    ]);
+    const porPelicula = new Map(peliculas.map((ficha) => [ficha.id, ficha]));
+    const porEpisodio = new Map(episodios.map((ficha) => [String(ficha.id), ficha]));
+
+    const elementos: Elemento[] = [];
+    for (const avance of avances) {
+      const visto = proporcionVista(avance);
+
+      if (avance.clase === 'pelicula') {
+        const ficha = porPelicula.get(avance.itemId);
+        // Lo que ya no está en el catálogo se calla: el proveedor quita cosas,
+        // y una ficha sin carátula ni título no le sirve a nadie.
+        if (!ficha) continue;
+        elementos.push({
+          id: `continuar:pelicula:${ficha.id}`,
+          titulo: ficha.titulo,
+          detalle: null,
+          valoracion: ficha.valoracion,
+          anio: ficha.anio,
+          resumen: null,
+          logo: ficha.logo,
+          avance: visto,
+          favorito: false,
+          accion: { tipo: 'reproducir', medio: { clase: 'pelicula', id: ficha.id, titulo: ficha.titulo } },
+        });
+        continue;
+      }
+
+      if (avance.clase === 'episodio') {
+        const ficha = porEpisodio.get(avance.itemId);
+        if (!ficha) continue;
+        const codigo = `T${ficha.temporada} E${ficha.numero}`;
+        elementos.push({
+          id: `continuar:episodio:${ficha.id}`,
+          // El nombre de la serie es lo que se busca con la vista; el capítulo
+          // concreto va debajo, que es el orden en que uno lo lee.
+          titulo: ficha.serieTitulo,
+          detalle: ficha.titulo ? `${codigo} · ${ficha.titulo}` : codigo,
+          valoracion: null,
+          anio: null,
+          resumen: null,
+          logo: ficha.serieLogo,
+          avance: visto,
+          favorito: false,
+          accion: {
+            tipo: 'reproducir',
+            medio: { clase: 'episodio', id: String(ficha.id), titulo: `${ficha.serieTitulo} ${codigo}` },
+          },
+        });
+      }
+    }
+
+    return elementos.length > 0 ? { tipo: 'carrusel', titulo: 'Seguir viendo', elementos } : null;
+  }
+
+  /**
+   * Monta la pantalla de inicio entera.
+   *
+   * Las cuatro consultas van en paralelo porque son independientes y contra
+   * SQLite tardan lo mismo juntas que la más lenta por separado.
+   */
+  async #montarInicio(pantalla: Pantalla): Promise<void> {
+    if (pantalla.tipo !== 'inicio') {
+      this.#inicio = null;
+      return;
+    }
+
+    const [totales, novedades, valoradas, series, continuar] = await Promise.all([
+      this.#biblioteca.totales(),
+      this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'reciente' }),
+      this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'valoracion' }),
+      this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'reciente' }),
+      this.#filaContinuar(),
+    ]);
+
+    const filas: FilaInicio[] = [];
+
+    const destacada = destacar(novedades);
+    if (destacada) {
+      filas.push({
+        tipo: 'destacado',
+        elemento: {
+          id: `destacado:${destacada.id}`,
+          titulo: destacada.titulo,
+          detalle: null,
+          valoracion: destacada.valoracion,
+          anio: destacada.anio,
+          resumen: null,
+          logo: destacada.logo,
+          avance: null,
+          favorito: false,
+          accion: { tipo: 'reproducir', medio: { clase: 'pelicula', id: destacada.id, titulo: destacada.titulo } },
+        },
+      });
+    }
+
+    if (continuar) filas.push(continuar);
+
+    filas.push({
+      tipo: 'secciones',
+      elementos: [
+        ficha('seccion:directo', 'TV en directo', cantidad(totales.canales, 'canal', 'canales'), { tipo: 'directo' }),
+        ficha('seccion:peliculas', 'Películas', cantidad(totales.peliculas, 'título', 'títulos'), {
+          tipo: 'peliculas',
+        }),
+        ficha('seccion:series', 'Series', cantidad(totales.series, 'serie', 'series'), { tipo: 'series' }),
+        ficha('seccion:buscador', 'Buscar', null, { tipo: 'buscador' }),
+      ],
+    });
+
+    const novedadesFila = await this.#aCarrusel(novedades, 'pelicula');
+    if (novedadesFila.length > 0) filas.push({ tipo: 'carrusel', titulo: 'Novedades', elementos: novedadesFila });
+
+    const seriesFila = await this.#aCarrusel(series, 'serie');
+    if (seriesFila.length > 0) filas.push({ tipo: 'carrusel', titulo: 'Series recién llegadas', elementos: seriesFila });
+
+    const valoradasFila = await this.#aCarrusel(valoradas, 'pelicula');
+    if (valoradasFila.length > 0) {
+      filas.push({ tipo: 'carrusel', titulo: 'Mejor valoradas', elementos: valoradasFila });
+    }
+
+    // El foco vuelve donde estaba, recortado por si las filas han cambiado.
+    // Vale para dos casos: volver de una sección, y una sincronización que
+    // entre mientras estás mirando.
+    const fila = Math.min(this.#focoInicio.fila, Math.max(filas.length - 1, 0));
+    const cuantos = filas[fila] ? elementosDeFila(filas[fila]!).length : 0;
+    const columna = Math.min(this.#focoInicio.columna, Math.max(cuantos - 1, 0));
+
+    this.#focoInicio = { fila, columna };
+    this.#inicio = { filas, fila, columna };
+  }
+
+  /** Apunta dónde ha quedado el foco del inicio, para cuando se vuelva. */
+  #recordarInicio(): EstadoPantalla {
+    if (this.#inicio) this.#focoInicio = { fila: this.#inicio.fila, columna: this.#inicio.columna };
+    return this.estado();
   }
 
   /** Carga la pantalla actual desde cero. Se llama al entrar y al volver. */
   async cargar(): Promise<EstadoPantalla> {
     this.#cargandoMas = false;
     const pantalla = this.#navegador.actual;
+    await this.#montarInicio(pantalla);
     await this.#montarLateral(pantalla);
     const { titulo, elementos, hayMas } = await this.#contenido(pantalla, 0);
     this.#titulo = titulo;
@@ -249,6 +528,31 @@ export class Presentador {
    */
   async mover(direccion: Direccion): Promise<EstadoPantalla> {
     const lateral = this.#lateral;
+    const inicio = this.#inicio;
+
+    /*
+      En el inicio el foco va en dos ejes: arriba y abajo cambian de fila,
+      izquierda y derecha recorren la de dentro. Al cambiar de fila la columna
+      se recorta a lo que quepa, para no quedarse apuntando a un hueco cuando
+      la siguiente tiene menos fichas.
+    */
+    if (inicio) {
+      if (direccion === 'arriba' || direccion === 'abajo') {
+        const destino =
+          direccion === 'arriba' ? Math.max(0, inicio.fila - 1) : Math.min(inicio.filas.length - 1, inicio.fila + 1);
+        if (destino === inicio.fila) return this.estado();
+
+        inicio.fila = destino;
+        const cuantos = elementosDeFila(inicio.filas[destino]!).length;
+        inicio.columna = Math.min(inicio.columna, Math.max(cuantos - 1, 0));
+        return this.#recordarInicio();
+      }
+
+      const cuantos = elementosDeFila(inicio.filas[inicio.fila]!).length;
+      if (direccion === 'izquierda') inicio.columna = Math.max(0, inicio.columna - 1);
+      if (direccion === 'derecha') inicio.columna = Math.min(cuantos - 1, inicio.columna + 1);
+      return this.#recordarInicio();
+    }
 
     // Con el foco en la barra, arriba y abajo recorren categorías y la derecha
     // devuelve a la rejilla.
@@ -338,8 +642,39 @@ export class Presentador {
     return this.estado();
   }
 
+  /**
+   * Lo mismo en el inicio, donde el foco tiene dos ejes.
+   *
+   * El dedo toca una ficha concreta de una fila concreta, así que no vale el
+   * índice único de la rejilla.
+   */
+  enfocarEnInicio(fila: number, columna: number): EstadoPantalla {
+    const inicio = this.#inicio;
+    if (!inicio || inicio.filas.length === 0) return this.estado();
+
+    inicio.fila = Math.min(Math.max(fila, 0), inicio.filas.length - 1);
+    const cuantos = elementosDeFila(inicio.filas[inicio.fila]!).length;
+    inicio.columna = Math.min(Math.max(columna, 0), Math.max(cuantos - 1, 0));
+    return this.#recordarInicio();
+  }
+
   /** El usuario pulsa OK sobre lo enfocado. */
   async aceptar(): Promise<{ estado: EstadoPantalla; reproducir: Reproducible | null }> {
+    // En el inicio, aceptar actúa sobre la ficha enfocada de su fila. Si es
+    // una película, reproduce —y el reproductor ya reanuda por donde iba, que
+    // eso lo decide él con `avanceDe`—; si es una sección o una serie, entra.
+    const inicio = this.#inicio;
+    if (inicio) {
+      const elemento = elementosDeFila(inicio.filas[inicio.fila]!)[inicio.columna];
+      if (!elemento) return { estado: this.estado(), reproducir: null };
+
+      if (elemento.accion.tipo === 'reproducir') {
+        return { estado: this.estado(), reproducir: elemento.accion.medio };
+      }
+      this.#navegador.entrar(elemento.accion.pantalla, 0);
+      return { estado: await this.cargar(), reproducir: null };
+    }
+
     const lateral = this.#lateral;
     if (lateral?.dentro) {
       const opcion = lateral.opciones[lateral.foco];
@@ -645,23 +980,10 @@ export class Presentador {
     const pagina = { limite: this.#tamanoPagina, desde, orden: this.#orden };
 
     switch (pantalla.tipo) {
-      case 'inicio': {
-        const totales = await this.#biblioteca.totales();
-        return {
-          titulo: 'Biblioteca',
-          hayMas: false,
-          elementos: [
-            ficha('seccion:directo', 'TV en directo', cantidad(totales.canales, 'canal', 'canales'), {
-              tipo: 'directo',
-            }),
-            ficha('seccion:peliculas', 'Películas', cantidad(totales.peliculas, 'título', 'títulos'), {
-              tipo: 'peliculas',
-            }),
-            ficha('seccion:series', 'Series', cantidad(totales.series, 'serie', 'series'), { tipo: 'series' }),
-            ficha('seccion:buscador', 'Buscar', null, { tipo: 'buscador' }),
-          ],
-        };
-      }
+      // El inicio no llena la rejilla: sus fichas viven en `inicio.filas`, que
+      // monta `#montarInicio`. Aquí solo queda el título.
+      case 'inicio':
+        return { titulo: 'Biblioteca', hayMas: false, elementos: [] };
 
       case 'directo': {
         // Sin grupo elegido se enseña el primero: una rejilla con los 482

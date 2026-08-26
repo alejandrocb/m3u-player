@@ -359,6 +359,14 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   no salen hasta que Metro monta el bundle. Para comprobar la app de Android:
   `cd apps/tv` y `npx.cmd tsc --noEmit -p tsconfig.json`,
   aunque hoy saca ruido de los tipos de React Native contra `packages/core`.
+- **En release, `console.log` sí llega a logcat.** Se puede depurar en la tele
+  con `adb logcat -s ReactNativeJS:V`, y los fallos de JavaScript salen
+  enteros en `adb logcat -b crash`.
+- **React Native 0.80+ trae degradados de verdad**, con
+  `experimental_backgroundImage` y sintaxis CSS. No hace falta
+  `react-native-linear-gradient` ni ningún otro módulo nativo. Simular un
+  degradado con bandas de color no vale: dos rectángulos con opacidades
+  distintas siempre dejan costura, y se ven como franjas.
 - **Los emojis del reproductor los pinta Android con su paleta.** ⏪ y ⏩ salían
   con el fondo naranja del emoji del sistema, imposible de quitar por estilo.
   Los iconos se dibujan con vistas en `apps/tv/src/iconos.tsx`: un triángulo es
@@ -384,6 +392,27 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   quedan puestas para siempre. Se deja `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`
   a propósito: sin él no habría forma de salir de la aplicación en una tablet
   sin botones físicos.
+- **Hooks detrás de un `return` temprano cierran la aplicación.** Es el fallo
+  que más veces ha caído aquí: cuatro, en `PantallaPerfiles`, `PantallaListas`
+  y dos en `BibliotecaVista`. React exige el mismo número de hooks en cada
+  pintado, y `if (!estado) return <Espera/>` se los salta en el primero. El
+  síntoma es `Rendered more hooks than during the previous render` y la app
+  cerrándose al entrar. **Todo `useState`, `useEffect`, `useCallback` y
+  `useRef` va arriba del componente**, aunque solo lo use algo que está 400
+  líneas más abajo.
+- **`adb push` puede fallar en silencio y `pm install` decir "Success".**
+  Instala el fichero que ya estuviera en `/data/local/tmp`, o sea el APK
+  anterior, y te pasas media hora buscando en el código un fallo que no
+  existe. Hay que **comparar el tamaño enviado con el local** antes de
+  instalar: `adb shell wc -c < /data/local/tmp/app-release.apk`.
+- **Instalar no reinicia la app.** Si estaba abierta, sigue corriendo el
+  JavaScript viejo. `adb shell am force-stop com.m3utv` después de instalar.
+- **En Git Bash, las rutas del aparato se convierten a rutas de Windows.**
+  `adb push algo /data/local/tmp/` acaba enviando a `C:/Program Files/Git/data/...`.
+  Hace falta `MSYS_NO_PATHCONV=1` delante, o usar PowerShell.
+- **Ver la pantalla del aparato ahorra iteraciones**: `adb shell screencap -p
+  /sdcard/x.png` y `adb pull`. Ojo con redirigir la salida de `exec-out` en
+  PowerShell, que le mete BOM y corrompe el PNG.
 - **MIUI bloquea `adb install`** con `INSTALL_FAILED_USER_RESTRICTED` aunque la
   depuración USB esté activa: hace falta además "Instalar vía USB" en las
   opciones de desarrollador, y Xiaomi lo vuelve a desactivar por su cuenta. El

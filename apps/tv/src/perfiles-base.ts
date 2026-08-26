@@ -120,6 +120,15 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       ]);
     },
 
+    async recolorear(id: string, color: string): Promise<void> {
+      db.executeSync('UPDATE profile SET color = ?, updated = ?, origin = ? WHERE id = ?', [
+        color,
+        ahora(),
+        aparato,
+        id,
+      ]);
+    },
+
     async borrar(id: string): Promise<void> {
       // Se lleva por delante su historial, sus favoritos y sus ajustes.
       enterrar('progress', 'profile_id = ?', [id]);

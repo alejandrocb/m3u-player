@@ -77,7 +77,11 @@ test('el presentador navega sobre la biblioteca en memoria', async () => {
   // permite arrancar la app de Android TV antes de tener base de datos.
   const presentador = new Presentador(biblioteca());
   const inicio = await presentador.cargar();
-  assert.equal(inicio.elementos[0]!.detalle, '3 canales');
+
+  // El inicio son filas, no una rejilla: las secciones viven en la suya.
+  const secciones = inicio.inicio?.filas.find((fila) => fila.tipo === 'secciones');
+  assert.ok(secciones && secciones.tipo === 'secciones');
+  assert.equal(secciones.elementos[0]!.detalle, '3 canales');
 
   // TV en directo entra ya con los canales puestos: los grupos van en la
   // barra de la izquierda.

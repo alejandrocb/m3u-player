@@ -1,6 +1,7 @@
 export { LibraryStore, toMatchQuery } from './store.ts';
 export type {
   ChannelRow,
+  EpisodeOfSeriesRow,
   EpisodeRow,
   GroupRow,
   ImportReport,
