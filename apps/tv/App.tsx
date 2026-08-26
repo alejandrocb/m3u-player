@@ -20,6 +20,7 @@ import {
   Image,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -436,6 +437,13 @@ function BibliotecaVista({
   onCambioPerfil: (perfil: Perfil) => void;
 }) {
   const insets = useSafeAreaInsets();
+  /*
+    En un teléfono no caben las pestañas centradas entre la lupa y el perfil:
+    se salían por los dos lados y encima se montaban con los botones. Por
+    debajo de este ancho se bajan a su propia línea y se recorren con el dedo.
+  */
+  const { width: anchoPantalla } = useWindowDimensions();
+  const estrecha = anchoPantalla < 700;
   const [estado, setEstado] = useState<EstadoPantalla | null>(null);
   const [reproduciendo, setReproduciendo] = useState<Reproducible | null>(null);
   /**
@@ -1046,6 +1054,37 @@ function BibliotecaVista({
     },
   ];
 
+  /*
+    El selector de sección. Cambia la portada y los carruseles sin cambiar de
+    pantalla: la forma se mantiene y uno no se pierde. TV en directo sí es
+    otra pantalla —tiene parrilla y vista previa—, así que entra en vez de
+    filtrar.
+
+    Se arma aparte porque va en dos sitios según quepa: centrado sobre la
+    barra en una tele o una tablet, y en su propia línea en un teléfono.
+  */
+  const pestanas =
+    pestanasCabecera.length > 0 ? (
+      <View style={estrecha ? estilos.pestanasEnLinea : estilos.pestanas}>
+        {pestanasCabecera.map((pestana, indice) => (
+          <Pressable
+            key={pestana.clave}
+            focusable={false}
+            style={[estilos.pestana, enCabecera && focoCabecera === indice && estilos.pestanaEnfocada]}
+            onPress={pestana.onPress}
+          >
+            <Text style={[estilos.pestanaTexto, pestana.activa && estilos.pestanaTextoActiva]}>
+              {pestana.nombre}
+            </Text>
+            {/* La sección en la que estás se marca con una raya debajo, no con
+                un fondo: la barra es transparente y un recuadro relleno vuelve
+                a taparlo todo. */}
+            {pestana.activa ? <View style={estilos.pestanaRaya} /> : null}
+          </Pressable>
+        ))}
+      </View>
+    ) : null;
+
   /**
    * La cabecera: el título a la izquierda, la lupa y el perfil a la derecha.
    *
@@ -1053,7 +1092,8 @@ function BibliotecaVista({
    * se desplace con ella— y en el resto de pantallas encima, fija.
    */
   const cabecera = (
-<View style={estilos.cabecera}>
+    <View>
+      <View style={estilos.cabecera}>
           <View style={estilos.tituloBloque}>
             {/* En el inicio no va ninguno: lo dicen las pestañas, y el
                 subtítulo se comía el sitio de la portada. */}
@@ -1067,32 +1107,8 @@ function BibliotecaVista({
               </Text>
             ) : null}
           </View>
-          {/*
-            El selector de sección, centrado. Cambia la portada y los
-            carruseles sin cambiar de pantalla: la forma se mantiene y uno no
-            se pierde. TV en directo sí es otra pantalla —tiene parrilla y
-            vista previa—, así que entra en vez de filtrar.
-          */}
-          {pestanasCabecera.length > 0 ? (
-            <View style={estilos.pestanas}>
-              {pestanasCabecera.map((pestana, indice) => (
-                <Pressable
-                  key={pestana.clave}
-                  focusable={false}
-                  style={[estilos.pestana, enCabecera && focoCabecera === indice && estilos.pestanaEnfocada]}
-                  onPress={pestana.onPress}
-                >
-                  <Text style={[estilos.pestanaTexto, pestana.activa && estilos.pestanaTextoActiva]}>
-                    {pestana.nombre}
-                  </Text>
-                  {/* La sección en la que estás se marca con una raya debajo,
-                      no con un fondo: la barra es transparente y un recuadro
-                      relleno vuelve a taparlo todo. */}
-                  {pestana.activa ? <View style={estilos.pestanaRaya} /> : null}
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
+
+          {estrecha ? null : pestanas}
 
           {botonesCabecera.length > 0 ? (
             <View style={estilos.botonera}>
@@ -1121,7 +1137,18 @@ function BibliotecaVista({
               ))}
             </View>
           ) : null}
-        </View>
+      </View>
+
+      {/*
+        En un teléfono, las pestañas van debajo y se recorren con el dedo: en
+        ese ancho no caben centradas entre los botones.
+      */}
+      {estrecha ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={estilos.pestanasDesplazables}>
+          {pestanas}
+        </ScrollView>
+      ) : null}
+    </View>
   );
 
   /** La barra de categorías, temporadas o grupos. Solo en las pantallas que la tienen. */
@@ -1308,7 +1335,10 @@ function BibliotecaVista({
         sobre la película.
       */}
       {estado.inicio && !(reproduciendo && aPantallaCompleta) ? (
-        <View style={estilos.cabeceraFlotante}>{cabecera}</View>
+        // El hueco de arriba es del sistema: en la tele no hay ninguno, pero
+        // en un teléfono ahí están el reloj y la batería, y la barra se les
+        // metía debajo.
+        <View style={[estilos.cabeceraFlotante, { paddingTop: insets.top + 14 }]}>{cabecera}</View>
       ) : null}
 
       {verAjustes && estado.lateral ? (
@@ -2569,8 +2599,8 @@ const estilos = StyleSheet.create({
   },
 
   cabeceraFlotante: {
-    // Un respiro arriba: pegada al borde, el recuadro de la lupa se cortaba.
-    paddingTop: 14,
+    // El respiro de arriba lo pone quien la pinta, que es el único que sabe
+    // cuánto ocupan las barras del sistema en este aparato.
     /*
       Flota sobre la portada, pegada al borde. Va la última en el árbol para
       quedar por encima de la imagen, que llega hasta arriba del todo.
@@ -2594,6 +2624,17 @@ const estilos = StyleSheet.create({
     left: 0,
     position: 'absolute',
     right: 0,
+  },
+  pestanasDesplazables: {
+    // Que no se estire para llenar la fila: así el recorrido con el dedo
+    // empieza donde empiezan las pestañas.
+    flexGrow: 0,
+  },
+  pestanasEnLinea: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    paddingBottom: 4,
   },
   pestana: {
     alignItems: 'center',

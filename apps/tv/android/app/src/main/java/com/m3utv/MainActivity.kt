@@ -15,7 +15,15 @@ class MainActivity : ReactActivity() {
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.
    */
-  override fun getMainComponentName(): String = "m3utv"
+  /**
+   * Tiene que ser **exactamente** el `name` de app.json.
+   *
+   * Es lo que pide el lado nativo al arrancar y lo que registra `index.js`.
+   * Si no coinciden, la aplicación se cierra nada más abrirse con
+   * `"…" has not been registered`, y encima no se nota hasta que Gradle
+   * rehace el bundle: mientras siga sirviendo el de antes, funciona.
+   */
+  override fun getMainComponentName(): String = "chocitatv"
 
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]
