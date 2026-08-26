@@ -1655,9 +1655,16 @@ function Destacado({
 }) {
   /** 0 recién cambiada, 1 con la imagen nueva ya del todo puesta. */
   const paso = useRef(new Animated.Value(1)).current;
-  /** La imagen que se está yendo, que sigue quieta debajo mientras entra la otra. */
-  const [saliente, setSaliente] = useState<string | null>(null);
-  const ultima = useRef<Elemento | null>(null);
+  /**
+   * Qué se está enseñando y qué se está yendo.
+   *
+   * Las dos juntas y en un solo estado a propósito: tienen que cambiar en el
+   * mismo pintado, o se ve un fotograma con una puesta y la otra no.
+   */
+  const [capas, setCapas] = useState<{ actual: Elemento | null; saliente: string | null }>({
+    actual: null,
+    saliente: null,
+  });
 
   /*
     El índice y la función de turno se leen de una referencia, no de las
@@ -1681,26 +1688,41 @@ function Destacado({
 
   const elemento = elementos[Math.min(indice, elementos.length - 1)] ?? null;
 
-  useEffect(() => {
-    const anterior = ultima.current;
-    ultima.current = elemento;
-    // Ni al montar ni al repintar sin cambio de sugerencia.
-    if (!anterior || !elemento || anterior.id === elemento.id) return;
+  /*
+    El relevo se prepara **durante el pintado**, no en un efecto.
 
-    setSaliente(anterior.logo);
-    paso.setValue(0);
+    Es lo que quita el parpadeo de antes de la transición: un efecto se
+    ejecuta cuando el pintado ya ha salido, así que había un fotograma con la
+    imagen nueva del todo puesta —opacidad todavía a 1, y la que salía sin
+    montar— y justo después se ponía a cero para empezar a fundir. Ese ida y
+    vuelta de un fotograma es el parpadeo.
+
+    Cambiar el estado aquí es lo que React llama ajustarlo al vuelo: vuelve a
+    pintar en el sitio, antes de enseñar nada, y el guardia del `if` lo corta
+    en la segunda pasada.
+  */
+  if (elemento && capas.actual?.id !== elemento.id) {
+    setCapas({ actual: elemento, saliente: capas.actual?.logo ?? null });
+    // A cero antes de que se vea: la nueva entra desde invisible.
+    if (capas.actual) paso.setValue(0);
+  }
+
+  useEffect(() => {
+    if (!capas.saliente) return;
     Animated.timing(paso, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start(({ finished }) => {
-      if (finished) setSaliente(null);
+      // La que salía ya no tapa nada: fuera, que es una imagen a pantalla
+      // completa de más en memoria.
+      if (finished) setCapas((puestas) => ({ ...puestas, saliente: null }));
     });
-  }, [elemento, paso]);
+  }, [capas.actual, capas.saliente, paso]);
 
   if (!elemento) return null;
 
   return (
     <View style={[estilos.destacado, { height: alto }]}>
-      {saliente ? (
+      {capas.saliente ? (
         <View style={estilos.destacadoCapa} pointerEvents="none">
-          <Image source={{ uri: saliente }} style={estilos.destacadoImagen} resizeMode="cover" />
+          <Image source={{ uri: capas.saliente }} style={estilos.destacadoImagen} resizeMode="cover" />
         </View>
       ) : null}
 
