@@ -16,6 +16,7 @@
 import { codigoCorto } from './claves.ts';
 import { Panel } from './panel.ts';
 import { crearServidor } from './servidor.ts';
+import { vigilarPortadas } from './tareas.ts';
 
 const PUERTO = Number(process.env.PUERTO ?? 3300);
 const ESCUCHA = process.env.ESCUCHA ?? '0.0.0.0';
@@ -45,6 +46,9 @@ if (!panel.hayAdmin()) {
 
 const servidor = crearServidor(panel, () => codigoInicial);
 
+// El trabajo diario: preparar las portadas del inicio de cada lista.
+const pararPortadas = vigilarPortadas(panel);
+
 servidor.listen(PUERTO, ESCUCHA, () => {
   console.log(`[sync] escuchando en ${ESCUCHA}:${PUERTO}, datos en ${DATOS}`);
 });
@@ -52,6 +56,7 @@ servidor.listen(PUERTO, ESCUCHA, () => {
 for (const senal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(senal, () => {
     console.log(`[sync] ${senal}, cerrando`);
+    pararPortadas();
     servidor.close(() => {
       panel.cerrar();
       process.exit(0);

@@ -1,8 +1,8 @@
 /**
  * Lo que hablan los aparatos con el servidor.
  *
- * Cuatro peticiones y ninguna más: darse de alta, esperar el visto bueno,
- * sincronizar y pedir las listas. Todo va con `Authorization: Bearer` salvo
+ * Cinco peticiones y ninguna más: darse de alta, esperar el visto bueno,
+ * sincronizar, pedir las listas y recoger las portadas del inicio. Todo va con `Authorization: Bearer` salvo
  * el alta, que todavía no tiene token —**nunca en la URL**: lo que va en la
  * dirección acaba en los registros del servidor y en el historial del
  * navegador—.
@@ -80,7 +80,7 @@ export async function manejarApi(
   const token = tokenDe(req);
   const aparato = token ? panel.porToken(token) : null;
   if (!aparato || !aparato.grupoId) {
-    if (ruta === '/api/sync' || ruta === '/api/listas') {
+    if (ruta === '/api/sync' || ruta === '/api/listas' || ruta === '/api/portadas') {
       json(res, 401, { error: 'token no válido' });
       return true;
     }
@@ -90,6 +90,26 @@ export async function manejarApi(
   // --- Las listas del grupo ----------------------------------------------
   if (ruta === '/api/listas' && req.method === 'GET') {
     json(res, 200, { listas: panel.listasDe(aparato.grupoId).map(({ id, nombre, url }) => ({ id, nombre, url })) });
+    return true;
+  }
+
+  // --- Las portadas del inicio --------------------------------------------
+  if (ruta === '/api/portadas' && req.method === 'GET') {
+    /*
+      Lo preparado por el trabajo diario. El aparato lo usa si está y sigue
+      funcionando por su cuenta si no: esto acelera el inicio, no lo sostiene.
+    */
+    const preparadas = panel
+      .listasDe(aparato.grupoId)
+      .map((lista) => panel.portadasDe(lista.id))
+      .filter((guardado) => guardado !== null);
+
+    json(res, 200, {
+      // La más vieja de las listas: es hasta cuándo se puede decir que todo
+      // esto está al día.
+      generado: preparadas.map((guardado) => guardado.generado).sort()[0] ?? null,
+      portadas: preparadas.flatMap((guardado) => (Array.isArray(guardado.datos) ? guardado.datos : [])),
+    });
     return true;
   }
 

@@ -284,6 +284,39 @@ function anadirSerie(series: Map<string, Series>, ficha: XtreamSeries, categoria
  * `panelIds` puede traer varios porque el proveedor repite la misma serie en
  * varias categorías: se prueban en orden hasta que uno responda con episodios.
  */
+/**
+ * La ficha larga de una serie: sinopsis, reparto, género e imagen apaisada.
+ *
+ * Sale de la misma respuesta que las temporadas, pero se pide aparte: la
+ * portada del inicio quiere la ficha de tres o cuatro series y no sus
+ * episodios, que es lo que pesa. Devuelve `null` si no hay nada que contar.
+ *
+ * `backdrop_path` es lo único que sirve de fondo. `cover` es el cartel
+ * vertical, y estirarlo a lo ancho es justo lo que no queremos.
+ */
+export async function fichaDeSerie(
+  cliente: XtreamClient,
+  panelIds: number[],
+): Promise<{ sinopsis: string | null; reparto: string | null; fondo: string | null; genero: string | null } | null> {
+  for (const panelId of panelIds) {
+    let info;
+    try {
+      info = (await cliente.seriesInfo(panelId))?.info;
+    } catch {
+      continue;
+    }
+    if (!info) continue;
+
+    const sinopsis = info.plot?.trim() || null;
+    const reparto = info.cast?.trim() || null;
+    const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
+    const genero = info.genre?.trim() || null;
+
+    if (sinopsis || reparto || fondo || genero) return { sinopsis, reparto, fondo, genero };
+  }
+  return null;
+}
+
 export async function temporadasDeSerie(
   cliente: XtreamClient,
   panelIds: number[],

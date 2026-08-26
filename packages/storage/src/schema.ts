@@ -291,6 +291,17 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'movie', columna: 'genre', tipo: 'TEXT' },
   /** Marca de que ya se preguntó, aunque el panel no contestara nada. */
   { tabla: 'movie', columna: 'detalle_pedido', tipo: 'TEXT' },
+  /*
+    Y lo mismo para las series, que salen en la portada igual que las
+    películas. Aquí la respuesta es `get_series_info`, la misma que trae los
+    episodios, pero se pide aparte: la portada quiere la ficha de tres o
+    cuatro series y no sus temporadas.
+  */
+  { tabla: 'series', columna: 'plot', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'actors', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'backdrop', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'genre', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'detalle_pedido', tipo: 'TEXT' },
   { tabla: 'episode', columna: 'rating', tipo: 'REAL' },
   { tabla: 'episode', columna: 'year', tipo: 'INTEGER' },
   { tabla: 'episode', columna: 'seconds', tipo: 'INTEGER' },

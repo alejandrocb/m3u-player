@@ -42,12 +42,16 @@ export interface SerieFicha {
 }
 
 /**
- * La ficha larga de una película: lo que no cabe en una carátula.
+ * La ficha larga de una película o de una serie: lo que no cabe en la carátula.
+ *
+ * Es la misma forma para las dos porque el panel devuelve los mismos campos
+ * —solo cambia la llamada, `get_vod_info` o `get_series_info`—, y la portada
+ * del inicio las trata igual.
  *
  * Todo puede faltar. Cada panel rellena lo que quiere, y la interfaz omite lo
  * que no venga en vez de dejar huecos con etiquetas vacías.
  */
-export interface DetallePelicula {
+export interface FichaLarga {
   sinopsis: string | null;
   /** Reparto tal y como lo da el panel: nombres separados por comas. */
   reparto: string | null;
@@ -192,7 +196,15 @@ export interface Biblioteca {
    * que preside el inicio. Lo que se traiga se guarda, y la siguiente vez sale
    * de la base. Devuelve `null` si no hay nada que contar.
    */
-  detalleDePelicula(id: string): Promise<DetallePelicula | null>;
+  detalleDePelicula(id: string): Promise<FichaLarga | null>;
+  /**
+   * Lo mismo para una serie, con `get_series_info`.
+   *
+   * Va aparte de las temporadas aunque salga de la misma respuesta: la portada
+   * necesita la ficha de cuatro series y no quiere sus episodios, que son la
+   * parte gorda.
+   */
+  detalleDeSerie(id: string): Promise<FichaLarga | null>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".

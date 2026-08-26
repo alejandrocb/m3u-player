@@ -14,7 +14,7 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
-  DetallePelicula,
+  FichaLarga,
   EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
@@ -143,9 +143,13 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       }));
     },
 
-    async detalleDePelicula(): Promise<DetallePelicula | null> {
+    async detalleDePelicula(): Promise<FichaLarga | null> {
       // El escritorio todavía no habla con el panel: cuando tenga su propia
       // carga, esto irá a `get_vod_info` igual que en Android.
+      return null;
+    },
+
+    async detalleDeSerie(): Promise<FichaLarga | null> {
       return null;
     },
 

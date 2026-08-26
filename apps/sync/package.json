@@ -8,6 +8,7 @@
     "start": "node src/index.ts"
   },
   "dependencies": {
+    "@m3u/core": "*",
     "@m3u/storage": "*",
     "@m3u/ui": "*"
   }

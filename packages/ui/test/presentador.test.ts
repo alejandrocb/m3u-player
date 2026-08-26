@@ -101,13 +101,20 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
       return ids.map((id) => todas.find((pelicula) => pelicula.id === id)).filter((p) => p !== undefined);
     },
     async detalleDePelicula(id: string) {
-      return id === 'p1'
-        ? {
-            sinopsis: 'Una película de prueba con su sinopsis.',
-            reparto: 'Actriz Primera, Actor Segundo, Actriz Tercera',
-            fondo: 'http://host/fondo.jpg',
-            genero: 'Comedia, Animación',
-          }
+      // Todas menos `p0` traen imagen apaisada: sin ella no salen en la
+      // portada, que es justo lo que hay que poder probar.
+      if (id === 'p0') return null;
+      return {
+        sinopsis: 'Una película de prueba con su sinopsis.',
+        reparto: 'Actriz Primera, Actor Segundo, Actriz Tercera',
+        fondo: `http://host/fondo-${id}.jpg`,
+        genero: 'Comedia, Animación',
+      };
+    },
+    async detalleDeSerie(id: string) {
+      // Doctor Who sí tiene imagen apaisada: es la que preside "Series".
+      return id === 'dw'
+        ? { sinopsis: 'Un viajero del tiempo.', reparto: null, fondo: 'http://host/dw-fondo.jpg', genero: 'Aventura' }
         : null;
     },
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
@@ -731,6 +738,63 @@ test('la portada sugiere varias y se pueden ir turnando', async () => {
   assert.equal(presentador.rotarDestacado(1).inicio?.destacado, 1);
   // Da la vuelta al llegar al final, que es lo que hace el reloj de la vista.
   assert.equal(presentador.rotarDestacado(portada.elementos.length).inicio?.destacado, 0);
+});
+
+test('las portadas del servidor mandan sobre las de aquí', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(6));
+  presentador.usarPortadas([
+    {
+      clase: 'pelicula',
+      id: 'p2',
+      titulo: 'La que manda el servidor',
+      anio: 2026,
+      valoracion: 9,
+      imagen: 'http://host/preparada.jpg',
+      sinopsis: 'Ya venía escrita.',
+      reparto: null,
+      genero: 'Drama',
+    },
+    {
+      clase: 'pelicula',
+      id: 'no-esta-en-la-base',
+      titulo: 'De otra lista',
+      anio: 2026,
+      valoracion: 10,
+      imagen: 'http://host/otra.jpg',
+      sinopsis: null,
+      reparto: null,
+      genero: null,
+    },
+  ]);
+
+  const portada = (await presentador.cargar()).inicio?.filas[0];
+  assert.equal(portada?.tipo, 'destacado');
+  // La que no existe en este aparato se descarta: sin ficha no hay ni
+  // carátula que enseñar ni URL que reproducir.
+  assert.deepEqual(
+    portada?.elementos.map((elemento) => elemento.titulo),
+    ['La que manda el servidor'],
+  );
+  assert.equal(portada?.elementos[0]?.resumen, 'Ya venía escrita.');
+  assert.equal(portada?.elementos[0]?.logo, 'http://host/preparada.jpg');
+});
+
+test('sin imagen apaisada no se sugiere en la portada', async () => {
+  // `p0` es la mejor valorada del catálogo falso, pero su ficha no trae
+  // fondo: el cartel vertical estirado a lo ancho es lo que queremos evitar.
+  const presentador = new Presentador(bibliotecaFalsa(6));
+  const estado = await presentador.cargar();
+
+  const portada = estado.inicio?.filas[0];
+  assert.equal(portada?.tipo, 'destacado');
+  assert.ok(
+    portada?.elementos.every((elemento) => elemento.logo?.includes('fondo-')),
+    'todas las sugerencias llevan la imagen apaisada',
+  );
+  assert.ok(
+    !portada?.elementos.some((elemento) => elemento.id === 'destacado:pelicula:p0'),
+    'la que no tiene fondo se queda fuera',
+  );
 });
 
 test('en la portada, izquierda y derecha no mueven nada', async () => {

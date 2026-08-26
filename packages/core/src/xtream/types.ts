@@ -89,7 +89,17 @@ export interface XtreamEpisode {
 
 export interface XtreamSeriesInfo {
   seasons?: unknown[];
-  info?: { name?: string; cover?: string; plot?: string; releaseDate?: string };
+  info?: {
+    name?: string;
+    /** El cartel, vertical. Para el fondo del inicio no sirve. */
+    cover?: string;
+    plot?: string;
+    releaseDate?: string;
+    cast?: string;
+    genre?: string;
+    /** Imagen apaisada, en una lista, igual que en las películas. */
+    backdrop_path?: string[];
+  };
   /** Clave = número de temporada. */
   episodes?: Record<string, XtreamEpisode[]>;
 }

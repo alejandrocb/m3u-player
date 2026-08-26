@@ -14,7 +14,8 @@ import { cantidad, duracion } from './texto.ts';
 import type { Direccion } from './foco.ts';
 import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
-import type { Biblioteca, DetallePelicula, Orden, Resultado } from './puerto.ts';
+import type { PortadaRemota } from './cliente-sync.ts';
+import type { Biblioteca, FichaLarga, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
 
@@ -166,6 +167,15 @@ export function elementosDeFila(fila: FilaInicio): Elemento[] {
 
 /** Cuántas sugerencias se turnan en la portada. */
 export const DESTACADAS = 4;
+
+/**
+ * De cuántas se pide la ficha larga para sacar esas cuatro.
+ *
+ * La portada exige imagen apaisada y no todas la tienen, así que se pregunta
+ * por más de las que hacen falta y se van cogiendo las que sirvan. Las
+ * peticiones van en paralelo y solo la primera vez: después están guardadas.
+ */
+const CANDIDATAS = 8;
 
 /** Cuántas fichas lleva cada carrusel del inicio. */
 const CARRUSEL = 20;
@@ -331,6 +341,14 @@ export class Presentador {
   #seguirViendo: OpcionesPresentador['seguirViendo'];
   #favoritos: PuertoFavoritos | undefined;
   #orden: Orden;
+  /**
+   * Las sugerencias que ha preparado el servidor de la casa, si las hay.
+   *
+   * Llegan de fuera y no se piden desde aquí: el presentador no sabe de red.
+   * Cuando están, la portada sale sin preguntarle nada al panel; cuando no,
+   * se saca como siempre, pidiendo la ficha larga de unas cuantas candidatas.
+   */
+  #portadas: PortadaRemota[] = [];
 
   constructor(biblioteca: Biblioteca, opciones: OpcionesPresentador = {}) {
     this.#biblioteca = biblioteca;
@@ -527,6 +545,63 @@ export class Presentador {
   }
 
   /**
+   * Recoge las sugerencias preparadas por el servidor.
+   *
+   * No repinta nada por sí solo: se llaman antes de cargar, o se vuelve a
+   * montar el inicio después. Que no haya ninguna es normal —casa sin
+   * servidor, o servidor que todavía no ha preparado esta lista—.
+   */
+  usarPortadas(portadas: PortadaRemota[]): void {
+    this.#portadas = portadas;
+  }
+
+  /**
+   * La portada a partir de lo que preparó el servidor.
+   *
+   * Se comprueba que cada sugerencia exista de verdad en la base de este
+   * aparato: el identificador se calcula igual en los dos lados, pero el
+   * catálogo de aquí puede ser de antes de ayer. Lo que no esté, fuera; sin
+   * ficha no hay ni carátula que enseñar ni URL que reproducir.
+   */
+  async #portadaDelServidor(modo: ModoInicio): Promise<FilaInicio | null> {
+    const suyas = this.#portadas.filter(
+      (portada) =>
+        (modo !== 'series' && portada.clase === 'pelicula') || (modo !== 'peliculas' && portada.clase === 'serie'),
+    );
+    if (suyas.length === 0) return null;
+
+    const [peliculas, series] = await Promise.all([
+      this.#biblioteca.peliculasPorId(
+        suyas.filter((portada) => portada.clase === 'pelicula').map((portada) => portada.id),
+      ),
+      this.#biblioteca.seriesPorId(suyas.filter((portada) => portada.clase === 'serie').map((portada) => portada.id)),
+    ]);
+    const enLaBase = new Set([...peliculas, ...series].map((ficha) => ficha.id));
+
+    const elementos: Elemento[] = suyas
+      .filter((portada) => enLaBase.has(portada.id))
+      .slice(0, DESTACADAS)
+      .map((portada) => ({
+        id: `destacado:${portada.clase}:${portada.id}`,
+        titulo: portada.titulo,
+        detalle: primerosDelReparto(portada.reparto),
+        genero: primerosGeneros(portada.genero),
+        valoracion: portada.valoracion,
+        anio: portada.anio,
+        resumen: portada.sinopsis,
+        logo: portada.imagen,
+        avance: null,
+        favorito: false,
+        accion:
+          portada.clase === 'serie'
+            ? { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: portada.id, titulo: portada.titulo } }
+            : { tipo: 'reproducir', medio: { clase: 'pelicula', id: portada.id, titulo: portada.titulo } },
+      }));
+
+    return elementos.length > 0 ? { tipo: 'destacado', elementos } : null;
+  }
+
+  /**
    * Monta la pantalla de inicio entera.
    *
    * Las cuatro consultas van en paralelo porque son independientes y contra
@@ -553,50 +628,71 @@ export class Presentador {
     const filas: FilaInicio[] = [];
 
     /*
-      Hasta cuatro sugerencias, que la vista va turnando. Se piden las fichas
-      largas de todas a la vez: son cuatro peticiones al panel, una por
-      película, y solo la primera vez —después salen de la base—.
-    */
-    const candidatas = destacarVarias(modo === 'series' ? series : novedades, DESTACADAS);
-    if (candidatas.length > 0) {
-      const detalles =
-        modo === 'series'
-          ? candidatas.map(() => null)
-          : await Promise.all(
-              candidatas.map(async (ficha) => {
-                try {
-                  return await this.#biblioteca.detalleDePelicula(ficha.id);
-                } catch {
-                  return null;
-                }
-              }),
-            );
+      Hasta cuatro sugerencias, que la vista va turnando. En "Todo" se mezclan
+      películas y series —es lo que promete la pestaña—; en las otras dos, solo
+      lo suyo.
 
+      **Sin imagen apaisada no hay portada.** La carátula del proveedor es un
+      cartel 2:3, y estirarlo a un rectángulo ancho deja la cara del actor
+      ocupando la pantalla entera y borrosa. La imagen buena viene en la ficha
+      larga (`backdrop_path`), así que se pregunta por unas cuantas candidatas
+      y se cogen las primeras que la traigan; si no la trae ninguna, el inicio
+      empieza directamente por "Seguir viendo".
+    */
+    const preparada = await this.#portadaDelServidor(modo);
+    if (preparada) filas.push(preparada);
+
+    const candidatas = preparada
+      ? []
+      : [
+          ...(conPeliculas
+            ? destacarVarias(novedades, CANDIDATAS).map((ficha) => ({ ficha, clase: 'pelicula' as const }))
+            : []),
+          ...(conSeries
+            ? destacarVarias(series, CANDIDATAS).map((ficha) => ({ ficha, clase: 'serie' as const }))
+            : []),
+        ]
+          .sort((a, b) => (b.ficha.valoracion ?? 0) - (a.ficha.valoracion ?? 0))
+          .slice(0, CANDIDATAS);
+
+    const fichas = await Promise.all(
+      candidatas.map(async ({ ficha, clase }) => {
+        try {
+          return clase === 'pelicula'
+            ? await this.#biblioteca.detalleDePelicula(ficha.id)
+            : await this.#biblioteca.detalleDeSerie(ficha.id);
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const conFondo = candidatas
+      .map((candidata, indice) => ({ ...candidata, detalle: fichas[indice] ?? null }))
+      .filter((candidata) => candidata.detalle?.fondo)
+      .slice(0, DESTACADAS);
+
+    if (conFondo.length > 0) {
       filas.push({
         tipo: 'destacado',
-        elementos: candidatas.map((ficha, indice) => {
-          const detalle = detalles[indice] ?? null;
-          return {
-            id: `destacado:${ficha.id}`,
-            titulo: ficha.titulo,
-            // El reparto va en el detalle, recortado: la portada no es una
-            // ficha técnica y una lista de doce nombres no la lee nadie.
-            detalle: primerosDelReparto(detalle?.reparto ?? null),
-            genero: primerosGeneros(detalle?.genero ?? null),
-            valoracion: ficha.valoracion,
-            anio: ficha.anio,
-            resumen: detalle?.sinopsis ?? null,
-            // La imagen apaisada si el panel la da; si no, el cartel, que es
-            // vertical pero es lo que hay.
-            logo: detalle?.fondo ?? ficha.logo,
-            avance: null,
-            favorito: false,
-            accion:
-              modo === 'series'
-                ? { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: ficha.id, titulo: ficha.titulo } }
-                : { tipo: 'reproducir', medio: { clase: 'pelicula', id: ficha.id, titulo: ficha.titulo } },
-          };
-        }),
+        elementos: conFondo.map(({ ficha, clase, detalle }) => ({
+          id: `destacado:${clase}:${ficha.id}`,
+          titulo: ficha.titulo,
+          // El reparto va recortado: la portada no es una ficha técnica y una
+          // lista de doce nombres no la lee nadie.
+          detalle: primerosDelReparto(detalle?.reparto ?? null),
+          genero: primerosGeneros(detalle?.genero ?? null),
+          valoracion: ficha.valoracion,
+          anio: ficha.anio,
+          resumen: detalle?.sinopsis ?? null,
+          logo: detalle!.fondo,
+          avance: null,
+          favorito: false,
+          accion:
+            clase === 'serie'
+              ? { tipo: 'entrar' as const, pantalla: { tipo: 'serie' as const, serieId: ficha.id, titulo: ficha.titulo } }
+              : { tipo: 'reproducir' as const, medio: { clase: 'pelicula' as const, id: ficha.id, titulo: ficha.titulo } },
+        })),
       });
     }
 

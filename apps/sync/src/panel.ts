@@ -74,6 +74,17 @@ CREATE TABLE IF NOT EXISTS lista (
 );
 CREATE INDEX IF NOT EXISTS lista_por_grupo ON lista (grupo_id);
 
+-- Las portadas del inicio, preparadas una vez al día por lista. Es una
+-- caché: se puede borrar entera y se vuelve a llenar sola.
+CREATE TABLE IF NOT EXISTS portada (
+  lista_id TEXT PRIMARY KEY,
+  generado TEXT NOT NULL,
+  -- La lista de sugerencias tal cual se le manda al aparato. Guardarla en JSON
+  -- y no en columnas es a propósito: aquí no se consulta ni se filtra nada,
+  -- se entrega entera, y así añadir un campo no toca el esquema.
+  datos    TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS admin (
   usuario    TEXT PRIMARY KEY,
   contrasena TEXT NOT NULL,
@@ -376,6 +387,38 @@ export class Panel {
    */
   revocar(id: string): void {
     this.#ejecutar("UPDATE aparato SET estado = 'revocado', token = NULL, espera = NULL WHERE id = ?", [id]);
+  }
+
+  // --- Portadas -------------------------------------------------------------
+
+  /** Guarda las sugerencias preparadas de una lista. */
+  guardarPortadas(listaId: string, datos: unknown): void {
+    this.#ejecutar(
+      `INSERT INTO portada (lista_id, generado, datos) VALUES (?, ?, ?)
+       ON CONFLICT(lista_id) DO UPDATE SET generado = excluded.generado, datos = excluded.datos`,
+      [listaId, ahora(), JSON.stringify(datos)],
+    );
+  }
+
+  /** Lo preparado para una lista, o `null` si aún no se ha preparado nada. */
+  portadasDe(listaId: string): { generado: string; datos: unknown } | null {
+    const fila = this.#filas('SELECT generado, datos FROM portada WHERE lista_id = ?', [listaId])[0];
+    if (!fila) return null;
+    try {
+      return { generado: fila.generado as string, datos: JSON.parse(fila.datos as string) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Todas las listas del servidor, para el trabajo diario. */
+  listasTodas(): Lista[] {
+    return this.#filas('SELECT id, grupo_id, nombre, url FROM lista ORDER BY id').map((fila) => ({
+      id: fila.id as string,
+      grupoId: fila.grupo_id as string,
+      nombre: fila.nombre as string,
+      url: fila.url as string,
+    }));
   }
 
   // --- Listas ---------------------------------------------------------------

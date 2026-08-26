@@ -88,6 +88,26 @@ function limpiar(servidor: string): string {
   return servidor.trim().replace(/\/+$/, '');
 }
 
+/**
+ * Una sugerencia del inicio tal y como la manda el servidor.
+ *
+ * El identificador es el que calcula también el aparato al importar, así que
+ * sirve para buscar la ficha en la base y reproducirla. Si no estuviera —una
+ * lista distinta, un catálogo sin refrescar—, la sugerencia se descarta.
+ */
+export interface PortadaRemota {
+  clase: 'pelicula' | 'serie';
+  id: string;
+  titulo: string;
+  anio: number | null;
+  valoracion: number | null;
+  /** Apaisada y ya comprobada en el servidor. */
+  imagen: string;
+  sinopsis: string | null;
+  reparto: string | null;
+  genero: string | null;
+}
+
 export class ClienteSync {
   #almacen: AlmacenSync;
   #perfiles: FuenteDeCambios;
@@ -216,6 +236,32 @@ export class ClienteSync {
 
     const datos = (await respuesta.json()) as { listas?: ListaRemota[] };
     return datos.listas ?? [];
+  }
+
+  /**
+   * Las sugerencias del inicio, preparadas por el servidor.
+   *
+   * Es un acelerador, no un requisito: si el servidor no contesta o no ha
+   * preparado nada todavía, se devuelve la lista vacía y el aparato saca las
+   * suyas preguntando al panel, como cuando no hay servidor ninguno.
+   */
+  async portadas(): Promise<PortadaRemota[]> {
+    const estado = await this.#almacen.leer();
+    if (!estado) return [];
+
+    try {
+      const respuesta = await this.#buscar(`${estado.servidor}/api/portadas`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${estado.token}` },
+      });
+      if (!respuesta.ok) return [];
+
+      const datos = (await respuesta.json()) as { portadas?: PortadaRemota[] };
+      return Array.isArray(datos.portadas) ? datos.portadas : [];
+    } catch {
+      // Sin red, el inicio sale igual. Que esto no impida arrancar.
+      return [];
+    }
   }
 
   /** Deja de sincronizar. Lo guardado en el aparato se queda como está. */

@@ -15,9 +15,9 @@
  */
 
 import { buildLibrary, parseM3U } from '@m3u/core';
-import { XtreamClient, construirCatalogo, credentialsFromUrl, temporadasDeSerie } from '@m3u/core/xtream';
+import { XtreamClient, construirCatalogo, credentialsFromUrl, fichaDeSerie, temporadasDeSerie } from '@m3u/core/xtream';
 import type { Library } from '@m3u/core';
-import type { AlmacenPerfiles, Biblioteca, Cuenta, DetallePelicula, Programacion } from '@m3u/ui';
+import type { AlmacenPerfiles, Biblioteca, Cuenta, FichaLarga, Programacion } from '@m3u/ui';
 
 import { abrirBase, estadoGuardado, guardarCatalogo } from './basedatos';
 import { bibliotecaEnBase } from './biblioteca-base';
@@ -76,8 +76,10 @@ export async function cargarCatalogo(
     // Las temporadas que falten se piden al panel al abrir la serie.
     traerTemporadas: (panelIds, titulo) =>
       cliente ? temporadasDeSerie(cliente, panelIds, titulo) : Promise.resolve([]),
-    // Y la ficha larga de una película, para la que preside el inicio.
+    // Y la ficha larga, para lo que preside el inicio: de una película con
+    // `get_vod_info` y de una serie con `get_series_info`.
     traerDetalle: (panelIds) => (cliente ? detalleDePelicula(cliente, panelIds) : Promise.resolve(null)),
+    traerFichaSerie: (panelIds) => (cliente ? fichaDeSerie(cliente, panelIds) : Promise.resolve(null)),
   });
 
   const guardado = estadoGuardado(db, cuenta.id);
@@ -160,7 +162,7 @@ async function descargarM3U(url: string, avisar: (avance: Avance) => void): Prom
  * varios identificadores de panel. Se prueban en orden y se para en el primero
  * que conteste algo: los demás darían lo mismo.
  */
-async function detalleDePelicula(cliente: XtreamClient, panelIds: number[]): Promise<DetallePelicula | null> {
+async function detalleDePelicula(cliente: XtreamClient, panelIds: number[]): Promise<FichaLarga | null> {
   for (const panelId of panelIds) {
     const respuesta = await cliente.vodInfo(panelId);
     const info = respuesta.info;
