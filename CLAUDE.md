@@ -440,6 +440,14 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   no salen hasta que Metro monta el bundle. Para comprobar la app de Android:
   `cd apps/tv` y `npx.cmd tsc --noEmit -p tsconfig.json`,
   aunque hoy saca ruido de los tipos de React Native contra `packages/core`.
+- **Al renombrar la aplicación hay que tocar `MainActivity` también.**
+  `getMainComponentName()` devuelve el nombre a mano y tiene que ser
+  **exactamente** el `name` de `app.json`, que es el que registra `index.js`.
+  Si no coinciden, la aplicación se cierra nada más abrirse con
+  `"…" has not been registered`. Y lo peor: **no se nota al instalar**, porque
+  mientras Gradle siga sirviendo el bundle de antes todo funciona. Salta en la
+  primera compilación que rehace el bundle, que puede ser dos cambios después,
+  cuando ya no es evidente de dónde viene.
 - **En release, `console.log` sí llega a logcat.** Se puede depurar en la tele
   con `adb logcat -s ReactNativeJS:V`, y los fallos de JavaScript salen
   enteros en `adb logcat -b crash`.
@@ -582,6 +590,25 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   aleatoriza por red. El identificador se lo inventa el propio aparato
   (`idDeAparato`, en la tabla `meta`) y sobrevive a reinicios y
   actualizaciones, no a borrar los datos.
+
+### Los perfiles son de la casa, y su identificador sale del nombre
+
+El identificador de un perfil se calcula del nombre al crearlo
+(`idDePerfil`), igual que el de una película sale de su título. Es lo que
+permite que la tele y la tablet hablen del mismo perfil sin traducir nada.
+
+La contrapartida: **escribir un nombre distinto en cada aparato crea dos
+perfiles distintos**, y como el historial cuelga del perfil, cada uno se queda
+con el suyo aunque la sincronización funcione perfectamente. "Alejandro" y
+"Alejandro 1" no son la misma persona para el sistema.
+
+Y si además los aparatos están en **grupos distintos**, no comparten nada en
+absoluto: el grupo es la frontera de la sincronización. Se reconoce enseguida
+porque cada aparato ve un solo perfil y no el del otro, y porque el trabajo
+diario del servidor prepara la misma lista dos veces, una por grupo.
+
+Lo que falta —y se nota— es que al emparejarse un aparato adopte los perfiles
+de la casa en vez de quedarse con el que se creó él solo antes de emparejar.
 
 ## Estado y siguiente paso
 
