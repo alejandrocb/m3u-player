@@ -121,6 +121,14 @@ export interface Series {
   added: number | null;
   logo: string | null;
   /**
+   * Género tal y como lo da el panel: "Drama, Comedia".
+   *
+   * En las series **viene con el catálogo** (`get_series` lo trae), así que
+   * sale gratis. En las películas no: hay que pedir la ficha larga, una
+   * petición por título, y de eso se encarga el servidor.
+   */
+  genre: string | null;
+  /**
    * Identificadores de la serie en el panel Xtream, si vino por ahí.
    *
    * Hacen falta para pedir sus temporadas con `get_series_info`, que es una

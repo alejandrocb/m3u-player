@@ -257,6 +257,7 @@ function anadirSerie(series: Map<string, Series>, ficha: XtreamSeries, categoria
       rating: nota(ficha.rating),
       added: epoch(ficha.last_modified),
       logo: ficha.cover || null,
+      genre: ficha.genre?.trim() || null,
       groups: [],
       // Las temporadas se piden al abrir la serie.
       seasons: [],
@@ -265,6 +266,7 @@ function anadirSerie(series: Map<string, Series>, ficha: XtreamSeries, categoria
     series.set(id, serie);
   }
   if (!serie.logo && ficha.cover) serie.logo = ficha.cover;
+  if (!serie.genre && ficha.genre?.trim()) serie.genre = ficha.genre.trim();
   // La misma serie viene en varias categorías con fechas distintas: manda la
   // más reciente, que es cuando de verdad se tocó por última vez.
   const tocada = epoch(ficha.last_modified);

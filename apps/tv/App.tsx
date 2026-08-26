@@ -42,7 +42,7 @@ import type {
   Inicio,
   OpcionLateral,
   Perfil,
-  PortadaRemota,
+  Preparado,
   Programacion,
   Reproducible,
 } from '@m3u/ui';
@@ -164,8 +164,8 @@ function Raiz() {
    * perfiles. Por eso lo lee de `perfiles.current` en cada llamada en vez de
    * quedárselo: cuando toque sincronizar de verdad, ya estará.
    */
-  /** Lo que el servidor haya preparado para presidir el inicio. */
-  const [portadas, setPortadas] = useState<PortadaRemota[]>([]);
+  /** Lo que el servidor haya preparado: la portada y los géneros. */
+  const [preparado, setPreparado] = useState<Preparado>({ portadas: [], generos: [] });
 
   const sync = useRef<ClienteSync>(
     new ClienteSync({
@@ -265,9 +265,9 @@ function Raiz() {
   useEffect(() => {
     let vigente = true;
     void (async () => {
-      const preparadas = await sync.current.portadas();
-      console.log(`[portadas] ${preparadas.length} del servidor`);
-      if (vigente && preparadas.length > 0) setPortadas(preparadas);
+      const suyo = await sync.current.portadas();
+      console.log(`[portadas] ${suyo.portadas.length} del servidor, ${suyo.generos.length} géneros`);
+      if (vigente && (suyo.portadas.length > 0 || suyo.generos.length > 0)) setPreparado(suyo);
     })();
     return () => {
       vigente = false;
@@ -385,7 +385,7 @@ function Raiz() {
       onCambiarPerfil={() => setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion })}
       onActualizar={() => conectar(fase.cuenta, true)}
       sincronizado={sincronizado}
-      portadas={portadas}
+      preparado={preparado}
       onSincronizar={() => void sincronizar()}
       onCambioPerfil={(nuevo) =>
         setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
@@ -414,7 +414,7 @@ function BibliotecaVista({
   onCambiarPerfil,
   onActualizar,
   sincronizado,
-  portadas,
+  preparado,
   onSincronizar,
   onCambioPerfil,
 }: {
@@ -424,8 +424,8 @@ function BibliotecaVista({
   perfil: Perfil;
   cuenta: Cuenta;
   medicion: Medicion;
-  /** Las sugerencias preparadas por el servidor, si las hay. */
-  portadas: PortadaRemota[];
+  /** Lo que el servidor haya preparado para el inicio, si hay servidor. */
+  preparado: Preparado;
   onCerrarSesion: () => void;
   onCambiarPerfil: () => void;
   onActualizar: () => void;
@@ -559,14 +559,21 @@ function BibliotecaVista({
       },
     });
     // Antes de cargar: si llegan después, el inicio se monta dos veces.
-    instancia.usarPortadas(portadas);
+    instancia.usarPortadas(preparado.portadas);
     presentador.current = instancia;
-    instancia.cargar().then(setEstado);
+    void (async () => {
+      // Los géneros que el servidor haya averiguado se anotan en la base, y
+      // desde ahí salen con cada ficha: en la carátula, en la rejilla y en lo
+      // que se busque. Antes de cargar, para que la primera pantalla ya los
+      // lleve.
+      await biblioteca.guardarGeneros(preparado.generos);
+      setEstado(await instancia.cargar());
+    })();
     // `ajustes.orden` no está entre las dependencias a propósito: cambiarlo se
     // aplica sobre el presentador vivo, no rehaciéndolo. Las columnas sí
     // obligan a rehacerlo porque la rejilla se monta con ellas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [biblioteca, perfiles, perfil, ajustes.columnas, portadas]);
+  }, [biblioteca, perfiles, perfil, ajustes.columnas, preparado]);
 
   /**
    * El canal sobre el que está el foco, si es que hay uno.
@@ -1491,9 +1498,20 @@ function PantallaInicio({
       lista.current?.scrollToOffset({ offset: 0, animated: true });
       return;
     }
-    // En la primera fila no se desplaza nada: la cabecera va justo encima y
-    // moverse a ella la dejaría fuera de la pantalla nada más abrir.
-    if (inicio.fila === 0 || inicio.filas.length === 0) return;
+    /*
+      La portada es la primera fila, así que volver a ella es subir del todo.
+      `scrollToIndex` no vale aquí: dejaría su borde superior arriba y la
+      cabecera, que va por encima, taparía media portada.
+
+      Antes esto no hacía nada —para no desplazar nada al abrir— y era el
+      único sitio donde el foco se movía sin que la pantalla lo siguiera:
+      subiendo desde los carruseles, el botón de reproducir se quedaba fuera.
+    */
+    if (inicio.fila === 0) {
+      lista.current?.scrollToOffset({ offset: 0, animated: true });
+      return;
+    }
+    if (inicio.filas.length === 0) return;
     lista.current?.scrollToIndex({
       index: Math.min(inicio.fila, inicio.filas.length - 1),
       animated: true,
@@ -1774,6 +1792,17 @@ function Carrusel({
 }
 
 /**
+ * La línea que acompaña al título dentro de la carátula.
+ *
+ * Género, año y lo que traiga la ficha —en "Seguir viendo", el capítulo—.
+ * Lo que falte no deja hueco ni separador suelto: el panel rellena lo que
+ * quiere y aquí no se pinta una raya para nada.
+ */
+function pieDeFicha(elemento: Elemento): string {
+  return [elemento.genero, elemento.anio, elemento.detalle].filter(Boolean).join(' · ');
+}
+
+/**
  * Una ficha de carrusel, que **crece al enfocarse**.
  *
  * El marco de tres píxeles se ve mal desde el sofá y el tamaño se ve siempre:
@@ -1823,30 +1852,36 @@ function FichaDeFila({
               </Text>
             </View>
           )}
+          {/*
+            La ficha va **dentro** de la carátula y solo en la enfocada, sobre
+            un degradado que oscurece el pie de la imagen: en blanco sobre el
+            cartel a pelo, la mitad de las veces el texto cae encima de una
+            cara clara y no se lee.
+
+            Debajo no: con el texto fuera, la fila tenía que reservar un hueco
+            que estaba vacío en todas las fichas menos una.
+          */}
+          {enfocado ? (
+            <View style={estilos.fichaVelo} pointerEvents="none">
+              <Text style={estilos.fichaVeloTitulo} numberOfLines={2}>
+                {item.titulo}
+              </Text>
+              <View style={estilos.fichaVeloDatos}>
+                {item.valoracion !== null ? (
+                  <Text style={estilos.fichaVeloNota}>★ {nota(item.valoracion)}</Text>
+                ) : null}
+                {pieDeFicha(item) ? (
+                  <Text style={estilos.fichaVeloTexto} numberOfLines={1}>
+                    {pieDeFicha(item)}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
           {item.avance !== null ? (
             <View style={estilos.fichaBarra}>
               <View style={[estilos.fichaBarraVista, { width: `${Math.round(item.avance * 100)}%` }]} />
             </View>
-          ) : null}
-        </View>
-        {/*
-          El título, solo bajo la ficha enfocada: con todos puestos la fila es
-          una lista de letra pequeña y el cartel ya dice lo que es. El hueco se
-          reserva siempre —alto fijo— para que al mover el foco no cambie el
-          alto de la fila y las carátulas no den un salto.
-        */}
-        <View style={estilos.fichaPie}>
-          {enfocado ? (
-            <>
-              <Text style={estilos.fichaNombre} numberOfLines={1}>
-                {item.titulo}
-              </Text>
-              {item.detalle ? (
-                <Text style={estilos.filaFichaDetalle} numberOfLines={1}>
-                  {item.detalle}
-                </Text>
-              ) : null}
-            </>
           ) : null}
         </View>
       </Pressable>
@@ -2644,22 +2679,34 @@ const estilos = StyleSheet.create({
 
   filaZona: {
     marginBottom: 14,
+    /*
+      La fila llega a los bordes de la pantalla, cancelando el margen que pone
+      `pantalla`, y el margen se devuelve dentro, en el relleno de la lista.
+
+      Es lo que arregla la primera carátula: una lista horizontal recorta lo
+      que se sale de ella, así que al crecer la de más a la izquierda perdía
+      su mitad. Ahora tiene por dónde crecer, y de paso lo que se va por la
+      derecha se pierde en el borde de la pantalla en vez de cortarse antes.
+    */
+    marginHorizontal: -MARGEN_PANTALLA,
   },
   filaTitulo: {
     color: TINTA,
     fontSize: 20,
     fontWeight: '700',
     marginBottom: 2,
+    // La fila se sale por los lados; el rótulo no.
+    marginLeft: MARGEN_PANTALLA,
   },
   filaTituloActivo: {
     color: VERDE,
   },
   filaLista: {
     gap: 16,
-    // Hueco arriba y abajo para lo que crece: sin él, la ficha enfocada sale
-    // recortada por el borde de la fila.
+    // Hueco por los cuatro lados para lo que crece: sin él, la ficha enfocada
+    // sale recortada por el borde de la fila.
+    paddingHorizontal: MARGEN_PANTALLA,
     paddingVertical: 16,
-    paddingRight: 20,
   },
   fichaFilaCaja: {
     width: 168,
@@ -2677,9 +2724,36 @@ const estilos = StyleSheet.create({
   fichaFilaEnfocada: {
     borderColor: '#fff',
   },
-  fichaPie: {
-    height: 42,
-    justifyContent: 'flex-start',
+  fichaVelo: {
+    bottom: 0,
+    experimental_backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.72) 45%, rgba(0,0,0,0.94) 100%)`,
+    gap: 2,
+    justifyContent: 'flex-end',
+    left: 0,
+    padding: 8,
+    paddingTop: 26,
+    position: 'absolute',
+    right: 0,
+  },
+  fichaVeloTitulo: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  fichaVeloDatos: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  fichaVeloNota: {
+    color: '#f0c14a',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  fichaVeloTexto: {
+    color: '#d6dde4',
+    flexShrink: 1,
+    fontSize: 12,
   },
   fichaCaratula: {
     borderRadius: 6,
@@ -2711,16 +2785,6 @@ const estilos = StyleSheet.create({
   fichaBarraVista: {
     backgroundColor: VERDE,
     height: '100%',
-  },
-  fichaNombre: {
-    color: TINTA,
-    fontSize: 15,
-    fontWeight: '600',
-    marginTop: 6,
-  },
-  filaFichaDetalle: {
-    color: TINTA_TENUE,
-    fontSize: 13,
   },
 
   seccionFicha: {

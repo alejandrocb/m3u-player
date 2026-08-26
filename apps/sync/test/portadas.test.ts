@@ -86,7 +86,7 @@ function panelFalso(): typeof globalThis.fetch {
 }
 
 test('solo se sugiere lo que trae imagen apaisada', async () => {
-  const portadas = await prepararPortadas('http://panel/get.php?username=u&password=p', {
+  const { portadas } = await prepararPortadas('http://panel/get.php?username=u&password=p', {
     fetch: panelFalso(),
   });
 
@@ -98,7 +98,7 @@ test('solo se sugiere lo que trae imagen apaisada', async () => {
 });
 
 test('el identificador es el mismo que calcula el aparato', async () => {
-  const portadas = await prepararPortadas('http://panel/get.php?username=u&password=p', {
+  const { portadas, generos } = await prepararPortadas('http://panel/get.php?username=u&password=p', {
     fetch: panelFalso(),
   });
 
@@ -107,6 +107,16 @@ test('el identificador es el mismo que calcula el aparato', async () => {
   assert.equal(pelicula?.sinopsis, 'Con fondo.');
   assert.equal(pelicula?.genero, 'Drama');
   assert.equal(portadas.find((portada) => portada.clase === 'serie')?.id, `la-serie-${ANIO}`);
+
+  // Y de las que van a salir en los carruseles se averigua el género, que el
+  // catálogo de películas no trae.
+  assert.deepEqual(
+    generos.sort((a, b) => a.id.localeCompare(b.id)),
+    [
+      { id: `la-buena-${ANIO}`, genero: 'Drama' },
+      { id: 'una-vieja-1998', genero: 'Drama' },
+    ],
+  );
 });
 
 test('sin credenciales en la URL no hay nada que preparar', async () => {

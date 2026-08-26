@@ -129,6 +129,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           anio: pelicula.year,
           valoracion: pelicula.rating,
           logo: pelicula.logo,
+          genero: null,
         }));
     },
 
@@ -138,7 +139,14 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         pagina.orden,
       )
         .slice(pagina.desde, pagina.desde + pagina.limite)
-        .map((s) => ({ id: s.id, titulo: s.title, anio: s.year, valoracion: s.rating, logo: s.logo }));
+        .map((s) => ({
+          id: s.id,
+          titulo: s.title,
+          anio: s.year,
+          valoracion: s.rating,
+          logo: s.logo,
+          genero: s.genre,
+        }));
     },
 
     async temporadas(serieId: string): Promise<TemporadaFicha[]> {
@@ -188,6 +196,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           anio: pelicula.year,
           valoracion: pelicula.rating,
           logo: pelicula.logo,
+          genero: null,
         }));
     },
 
@@ -219,6 +228,10 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
       return { sinopsis: null, reparto: null, fondo: null, genero: null };
     },
 
+    async guardarGeneros(): Promise<void> {
+      // Sin base donde guardarlo: esta biblioteca vive en memoria.
+    },
+
     async detalleDeSerie(id: string): Promise<FichaLarga | null> {
       const serie = library.series.find((una) => una.id === id);
       if (!serie) return null;
@@ -236,6 +249,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           anio: serie.year,
           valoracion: serie.rating,
           logo: serie.logo,
+          genero: serie.genre ?? null,
         }));
     },
 

@@ -104,11 +104,14 @@ export async function manejarApi(
       .map((lista) => panel.portadasDe(lista.id))
       .filter((guardado) => guardado !== null);
 
+    const datos = preparadas.map((guardado) => guardado.datos as { portadas?: unknown[]; generos?: unknown[] });
+
     json(res, 200, {
       // La más vieja de las listas: es hasta cuándo se puede decir que todo
       // esto está al día.
       generado: preparadas.map((guardado) => guardado.generado).sort()[0] ?? null,
-      portadas: preparadas.flatMap((guardado) => (Array.isArray(guardado.datos) ? guardado.datos : [])),
+      portadas: datos.flatMap((uno) => uno?.portadas ?? []),
+      generos: datos.flatMap((uno) => uno?.generos ?? []),
     });
     return true;
   }

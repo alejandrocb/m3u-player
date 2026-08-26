@@ -433,13 +433,22 @@ export class Presentador {
    * de novedades, saber qué llevas empezado es la mitad de la información.
    */
   async #aCarrusel(
-    fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
+    fichas: Array<{
+      id: string;
+      titulo: string;
+      anio: number | null;
+      valoracion: number | null;
+      logo: string | null;
+      genero?: string | null;
+    }>,
     clase: 'pelicula' | 'serie',
   ): Promise<Elemento[]> {
     const elementos: Elemento[] = fichas.map((ficha) => ({
       id: `${clase}:${ficha.id}`,
       titulo: ficha.titulo,
       detalle: null,
+      // Va dentro de la carátula, junto al año y la nota.
+      genero: primerosGeneros(ficha.genero ?? null),
       valoracion: ficha.valoracion,
       anio: ficha.anio,
       resumen: null,

@@ -31,6 +31,14 @@ export interface PeliculaFicha {
   /** Nota del panel, de 0 a 10, o `null` si no la valoró. */
   valoracion: number | null;
   logo: string | null;
+  /**
+   * Género del panel, si se sabe. Se pinta dentro de la carátula enfocada.
+   *
+   * En las películas **no viene con el catálogo**: hay que pedir la ficha
+   * larga, una petición por título, así que lo normal es que sea `null` hasta
+   * que el servidor de la casa lo rellene en su pasada diaria.
+   */
+  genero: string | null;
 }
 
 export interface SerieFicha {
@@ -39,6 +47,8 @@ export interface SerieFicha {
   anio: number | null;
   valoracion: number | null;
   logo: string | null;
+  /** Este sí viene con el catálogo: `get_series` trae el género. */
+  genero: string | null;
 }
 
 /**
@@ -205,6 +215,13 @@ export interface Biblioteca {
    * parte gorda.
    */
   detalleDeSerie(id: string): Promise<FichaLarga | null>;
+  /**
+   * Anota el género de unas cuantas películas, que el catálogo no trae.
+   *
+   * Lo manda el servidor de la casa, que se lo pregunta al panel una vez al
+   * día. Aquí solo se guarda: la próxima consulta ya lo devuelve con la ficha.
+   */
+  guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".

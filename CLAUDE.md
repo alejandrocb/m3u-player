@@ -207,6 +207,20 @@ Los identificadores se calculan con el mismo `slug(título-año)` de
 presentador comprueba que cada sugerencia exista en la base local antes de
 enseñarla: el catálogo del aparato puede ser de hace tres días.
 
+En la carátula enfocada van el título, el género, el año y la nota, **dentro de
+la imagen** y sobre un degradado oscuro: en blanco sobre el cartel a pelo, la
+mitad de las veces el texto cae encima de una cara clara. Debajo no, porque
+entonces la fila tiene que reservar un hueco que está vacío en todas las fichas
+menos una.
+
+**El género de una serie viene con el catálogo** (`get_series` lo trae) y se
+guarda al importar. El de una película no: `get_vod_streams` da título, cartel,
+nota y año, y el género está en la ficha larga, una petición por título. Por eso
+lo averigua el servidor en la misma pasada diaria, para las cuarenta más
+recientes y las cuarenta mejor valoradas —que es justo lo que llena los
+carruseles del inicio—, y el aparato lo anota en su base con `guardarGeneros`.
+Lo que no coincida sale sin género y ya está.
+
 **El servidor manda datos, nunca interfaz, y nunca es imprescindible.** Si no
 contesta, si aún no ha preparado esa lista o si la casa no tiene servidor, el
 aparato saca sus portadas preguntando al panel como siempre. `GET

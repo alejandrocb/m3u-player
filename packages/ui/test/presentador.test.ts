@@ -49,6 +49,7 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
     // Notas decrecientes: la primera es la mejor valorada.
     valoracion: 9 - i,
     logo: `http://host/p${i}.jpg`,
+    genero: 'Comedia',
   }));
 
   return {
@@ -74,7 +75,7 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
       return todas.slice(pagina.desde, pagina.desde + pagina.limite);
     },
     async series(): Promise<SerieFicha[]> {
-      return [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null }];
+      return [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }];
     },
     async temporadas(): Promise<TemporadaFicha[]> {
       return [
@@ -111,6 +112,7 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
         genero: 'Comedia, Animación',
       };
     },
+    async guardarGeneros() {},
     async detalleDeSerie(id: string) {
       // Doctor Who sí tiene imagen apaisada: es la que preside "Series".
       return id === 'dw'
@@ -118,7 +120,9 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
         : null;
     },
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
-      return ids.includes('dw') ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null }] : [];
+      return ids.includes('dw')
+        ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }]
+        : [];
     },
     async episodiosPorId(ids: string[]) {
       return ids.map((id) => ({

@@ -80,6 +80,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           anio: pelicula.year,
           valoracion: pelicula.rating ?? null,
           logo: pelicula.logo,
+          genero: null,
         }));
     },
 
@@ -97,6 +98,8 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           anio: serie.year,
           valoracion: serie.rating ?? null,
           logo: serie.logo,
+          // El escritorio todavía no importa el género de las series.
+          genero: null,
         }));
     },
 
@@ -128,6 +131,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         anio: pelicula.year,
         valoracion: pelicula.rating ?? null,
         logo: pelicula.logo,
+        genero: null,
       }));
     },
 
@@ -149,6 +153,10 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       return null;
     },
 
+    async guardarGeneros(): Promise<void> {
+      // El escritorio no habla con el servidor de la casa todavía.
+    },
+
     async detalleDeSerie(): Promise<FichaLarga | null> {
       return null;
     },
@@ -160,6 +168,8 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         anio: serie.year,
         valoracion: serie.rating ?? null,
         logo: serie.logo,
+        // El escritorio todavía no importa el género de las series.
+          genero: null,
       }));
     },
 

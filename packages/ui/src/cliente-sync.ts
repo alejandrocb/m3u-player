@@ -108,6 +108,23 @@ export interface PortadaRemota {
   genero: string | null;
 }
 
+/**
+ * El género de una película, que el catálogo del panel no trae.
+ *
+ * Lo averigua el servidor en su pasada diaria, para las que llenan el inicio.
+ * El aparato lo guarda en su base y desde entonces sale en la carátula.
+ */
+export interface GeneroRemoto {
+  id: string;
+  genero: string;
+}
+
+/** Todo lo que el servidor prepara para el inicio. */
+export interface Preparado {
+  portadas: PortadaRemota[];
+  generos: GeneroRemoto[];
+}
+
 export class ClienteSync {
   #almacen: AlmacenSync;
   #perfiles: FuenteDeCambios;
@@ -245,22 +262,26 @@ export class ClienteSync {
    * preparado nada todavía, se devuelve la lista vacía y el aparato saca las
    * suyas preguntando al panel, como cuando no hay servidor ninguno.
    */
-  async portadas(): Promise<PortadaRemota[]> {
+  async portadas(): Promise<Preparado> {
+    const vacio: Preparado = { portadas: [], generos: [] };
     const estado = await this.#almacen.leer();
-    if (!estado) return [];
+    if (!estado) return vacio;
 
     try {
       const respuesta = await this.#buscar(`${estado.servidor}/api/portadas`, {
         method: 'GET',
         headers: { authorization: `Bearer ${estado.token}` },
       });
-      if (!respuesta.ok) return [];
+      if (!respuesta.ok) return vacio;
 
-      const datos = (await respuesta.json()) as { portadas?: PortadaRemota[] };
-      return Array.isArray(datos.portadas) ? datos.portadas : [];
+      const datos = (await respuesta.json()) as Partial<Preparado>;
+      return {
+        portadas: Array.isArray(datos.portadas) ? datos.portadas : [],
+        generos: Array.isArray(datos.generos) ? datos.generos : [],
+      };
     } catch {
       // Sin red, el inicio sale igual. Que esto no impida arrancar.
-      return [];
+      return vacio;
     }
   }
 

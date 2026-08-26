@@ -184,9 +184,21 @@ export function guardarCatalogo(
 
     for (const serie of library.series) {
       db.executeSync(
-        `INSERT INTO series (id, title, sort_title, year, rating, added, logo)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [serie.id, serie.title, fold(serie.title), serie.year, serie.rating, serie.added, serie.logo],
+        // El género de las series viene con el catálogo, así que se guarda al
+        // importar. El de las películas cuesta una petición por título y lo
+        // rellena el servidor por su cuenta.
+        `INSERT INTO series (id, title, sort_title, year, rating, added, logo, genre)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          serie.id,
+          serie.title,
+          fold(serie.title),
+          serie.year,
+          serie.rating,
+          serie.added,
+          serie.logo,
+          serie.genre,
+        ],
       );
       for (const grupo of serie.groups) {
         db.executeSync('INSERT OR IGNORE INTO item_group (kind, item_id, group_name) VALUES (?, ?, ?)', [

@@ -258,13 +258,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
       const consulta = pagina.grupo
-        ? `SELECT m.id, m.title, m.year, m.rating, m.logo
+        ? `SELECT m.id, m.title, m.year, m.rating, m.logo, m.genre
              FROM movie m
              JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
             WHERE g.group_name = ?
             ORDER BY ${ordenDe(pagina.orden, 'm.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo FROM movie
+        : `SELECT id, title, year, rating, logo, genre FROM movie
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
       const params = pagina.grupo
@@ -277,18 +277,19 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         anio: (fila.year as number) ?? null,
         valoracion: (fila.rating as number) ?? null,
         logo: (fila.logo as string) ?? null,
+        genero: (fila.genre as string) ?? null,
       }));
     },
 
     async series(pagina: Pagina): Promise<SerieFicha[]> {
       const consulta = pagina.grupo
-        ? `SELECT s.id, s.title, s.year, s.rating, s.logo
+        ? `SELECT s.id, s.title, s.year, s.rating, s.logo, s.genre
              FROM series s
              JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
             WHERE g.group_name = ?
             ORDER BY ${ordenDe(pagina.orden, 's.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo FROM series
+        : `SELECT id, title, year, rating, logo, genre FROM series
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
       const params = pagina.grupo
@@ -301,6 +302,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         anio: (fila.year as number) ?? null,
         valoracion: (fila.rating as number) ?? null,
         logo: (fila.logo as string) ?? null,
+        genero: (fila.genre as string) ?? null,
       }));
     },
 
@@ -336,12 +338,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async peliculasPorId(ids: string[]): Promise<PeliculaFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'movie', 'id, title, year, rating, logo', ids).map((fila) => ({
+        porId(db, 'movie', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
           valoracion: (fila.rating as number) ?? null,
           logo: (fila.logo as string) ?? null,
+          genero: (fila.genre as string) ?? null,
         })),
       );
     },
@@ -349,12 +352,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'series', 'id, title, year, rating, logo', ids).map((fila) => ({
+        porId(db, 'series', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
           valoracion: (fila.rating as number) ?? null,
           logo: (fila.logo as string) ?? null,
+          genero: (fila.genre as string) ?? null,
         })),
       );
     },
@@ -386,6 +390,23 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
     async detalleDePelicula(id: string): Promise<FichaLarga | null> {
       return fichaLarga('movie', id, () => panelIdsDePelicula(db, id), opciones.traerDetalle);
+    },
+
+    async guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void> {
+      if (pares.length === 0) return;
+
+      db.executeSync('BEGIN IMMEDIATE');
+      try {
+        for (const { id, genero } of pares) {
+          // Solo lo que falte: si esta película ya se preguntó por su cuenta
+          // —presidió el inicio—, lo suyo es más completo que esto.
+          db.executeSync("UPDATE movie SET genre = ? WHERE id = ? AND (genre IS NULL OR genre = '')", [genero, id]);
+        }
+        db.executeSync('COMMIT');
+      } catch (error) {
+        db.executeSync('ROLLBACK');
+        console.warn('[base] no se pudieron guardar los géneros', error);
+      }
     },
 
     async detalleDeSerie(id: string): Promise<FichaLarga | null> {

@@ -40,6 +40,31 @@ export interface Portada {
   genero: string | null;
 }
 
+/**
+ * El género de una película, que el catálogo no trae.
+ *
+ * `get_vod_streams` da título, cartel, nota y año, y nada más: el género está
+ * en la ficha larga, que es una petición por título. Para 18.000 no vale, pero
+ * para las que llenan la pantalla de inicio —lo último que ha entrado y lo
+ * mejor valorado— sí, y hechas aquí se pagan una vez al día para toda la casa.
+ *
+ * De las series no hace falta: `get_series` ya lo trae, así que el aparato lo
+ * guarda al importar.
+ */
+export interface Genero {
+  /** El mismo `slug(título-año)` que calcula el aparato. */
+  id: string;
+  genero: string;
+}
+
+export interface Preparado {
+  portadas: Portada[];
+  generos: Genero[];
+}
+
+/** De cuántas películas se averigua el género. Una petición por cada una. */
+const CON_GENERO = 40;
+
 /** Cuántas se preparan de cada clase. La aplicación turna entre ellas. */
 const CUANTAS = 6;
 
@@ -62,7 +87,7 @@ export interface OpcionesPortadas {
  * categoría— y luego una por candidata hasta juntar las que hacen falta. Si el
  * panel falla, devuelve lo que llevara: media portada es mejor que ninguna.
  */
-export async function prepararPortadas(url: string, opciones: OpcionesPortadas = {}): Promise<Portada[]> {
+export async function prepararPortadas(url: string, opciones: OpcionesPortadas = {}): Promise<Preparado> {
   const credenciales = credentialsFromUrl(url);
   if (!credenciales) throw new Error('la URL de la lista no lleva usuario y contraseña');
 
@@ -107,7 +132,62 @@ export async function prepararPortadas(url: string, opciones: OpcionesPortadas =
     opciones,
   );
 
-  return [...dePeliculas, ...deSeries];
+  /*
+    Y los géneros de las que van a salir en los carruseles del inicio: lo
+    último que ha entrado y lo mejor valorado, que es exactamente lo que pinta
+    el aparato. Se calculan con el mismo criterio a los dos lados, así que
+    coinciden casi siempre; lo que no coincida sale sin género y ya está.
+  */
+  const generos = await averiguarGeneros(cliente, peliculas, dePeliculas);
+
+  return { portadas: [...dePeliculas, ...deSeries], generos };
+}
+
+/**
+ * El género de las películas que llenan el inicio.
+ *
+ * Las que ya se preguntaron para la portada no se vuelven a preguntar: su
+ * ficha ya trajo el género.
+ */
+async function averiguarGeneros(
+  cliente: XtreamClient,
+  peliculas: XtreamVodStream[],
+  yaSabidas: Portada[],
+): Promise<Genero[]> {
+  const generos = new Map<string, string>();
+  for (const portada of yaSabidas) {
+    if (portada.genero) generos.set(portada.id, portada.genero);
+  }
+
+  const fichas = peliculas.map((stream) => {
+    const parsed = parseName(stream.name);
+    const titulo = parsed.title || stream.name;
+    const anio = Number(stream.year) || parsed.year || null;
+    return {
+      id: slug(`${titulo}-${anio ?? ''}`),
+      panelId: stream.stream_id,
+      entrada: Number(stream.added) || 0,
+      valoracion: nota(stream.rating) ?? 0,
+    };
+  });
+
+  const recientes = [...fichas].sort((a, b) => b.entrada - a.entrada).slice(0, CON_GENERO);
+  const valoradas = [...fichas].sort((a, b) => b.valoracion - a.valoracion).slice(0, CON_GENERO);
+
+  for (const ficha of [...recientes, ...valoradas]) {
+    if (generos.has(ficha.id)) continue;
+    // Se marca antes de preguntar: si el panel no da género, tampoco hay que
+    // volver a preguntar por ella al llegarnos por la otra lista.
+    generos.set(ficha.id, '');
+    try {
+      const genero = (await cliente.vodInfo(ficha.panelId)).info?.genre?.trim();
+      if (genero) generos.set(ficha.id, genero);
+    } catch {
+      // Una película sin género no rompe nada: la ficha sale sin él.
+    }
+  }
+
+  return [...generos].filter(([, genero]) => genero).map(([id, genero]) => ({ id, genero }));
 }
 
 interface Candidata {

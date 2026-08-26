@@ -44,10 +44,12 @@ export async function prepararLoQueToque(panel: Panel, ahora = new Date()): Prom
     if (Number.isFinite(horas) && horas < CADA_HORAS) continue;
 
     try {
-      const portadas = await prepararPortadas(lista.url);
-      panel.guardarPortadas(lista.id, portadas);
+      const preparado = await prepararPortadas(lista.url);
+      panel.guardarPortadas(lista.id, preparado);
       hechas += 1;
-      console.log(`[portadas] ${lista.nombre}: ${portadas.length} preparadas`);
+      console.log(
+        `[portadas] ${lista.nombre}: ${preparado.portadas.length} preparadas, ${preparado.generos.length} géneros`,
+      );
     } catch (fallo) {
       // La URL nunca al registro: lleva las credenciales del panel dentro.
       console.error(`[portadas] ${lista.nombre} (${sinCredenciales(lista.url)}) falló:`, fallo);
