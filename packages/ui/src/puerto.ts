@@ -31,6 +31,14 @@ export interface PeliculaFicha {
   /** Nota del panel, de 0 a 10, o `null` si no la valoró. */
   valoracion: number | null;
   logo: string | null;
+  /**
+   * Género del panel, si se sabe. Se pinta dentro de la carátula enfocada.
+   *
+   * En las películas **no viene con el catálogo**: hay que pedir la ficha
+   * larga, una petición por título, así que lo normal es que sea `null` hasta
+   * que el servidor de la casa lo rellene en su pasada diaria.
+   */
+  genero: string | null;
 }
 
 export interface SerieFicha {
@@ -39,11 +47,45 @@ export interface SerieFicha {
   anio: number | null;
   valoracion: number | null;
   logo: string | null;
+  /** Este sí viene con el catálogo: `get_series` trae el género. */
+  genero: string | null;
+}
+
+/**
+ * La ficha larga de una película o de una serie: lo que no cabe en la carátula.
+ *
+ * Es la misma forma para las dos porque el panel devuelve los mismos campos
+ * —solo cambia la llamada, `get_vod_info` o `get_series_info`—, y la portada
+ * del inicio las trata igual.
+ *
+ * Todo puede faltar. Cada panel rellena lo que quiere, y la interfaz omite lo
+ * que no venga en vez de dejar huecos con etiquetas vacías.
+ */
+export interface FichaLarga {
+  sinopsis: string | null;
+  /** Reparto tal y como lo da el panel: nombres separados por comas. */
+  reparto: string | null;
+  /** Imagen apaisada. La de la carátula es vertical y no sirve de fondo. */
+  fondo: string | null;
+  /** Géneros tal y como los da el panel: "Comedia, Animación". */
+  genero: string | null;
 }
 
 export interface TemporadaFicha {
   numero: number;
   episodios: number;
+}
+
+/** Un episodio con lo justo de su serie para poder pintarlo fuera de ella. */
+export interface EpisodioDeSerieFicha {
+  id: number;
+  serieId: string;
+  serieTitulo: string;
+  /** Carátula de la serie: es la que se reconoce de un vistazo. */
+  serieLogo: string | null;
+  temporada: number;
+  numero: number;
+  titulo: string | null;
 }
 
 /**
@@ -94,7 +136,16 @@ export interface Pagina {
   orden?: Orden;
 }
 
-export type Orden = 'titulo' | 'valoracion' | 'reciente';
+/**
+ * Cómo se ordena una página del catálogo.
+ *
+ * `recomendada` no es solo un orden: **también filtra**. Deja fuera lo que no
+ * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte
+ * el proveedor a mansalva, o copias de pase de prensa— y ordena lo que queda
+ * por año, por lo último que entró y por nota. El criterio vive en
+ * `@m3u/core` porque el servidor de la casa usa exactamente el mismo.
+ */
+export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada';
 
 /** Dónde buscar: en todo, o solo dentro de una sección y su categoría. */
 export interface Ambito {
@@ -148,6 +199,38 @@ export interface Biblioteca {
    */
   peliculasPorId(ids: string[]): Promise<PeliculaFicha[]>;
   seriesPorId(ids: string[]): Promise<SerieFicha[]>;
+  /**
+   * Episodios sueltos por su identificador, **con los datos de su serie**.
+   *
+   * Lo pide "seguir viendo": el historial solo guarda el id del episodio, y
+   * con eso no se puede pintar una ficha decente. Lo que uno reconoce es la
+   * carátula de la serie y "S01E03", no el título del capítulo, así que hace
+   * falta el salto a `series` que aquí ya viene hecho.
+   */
+  episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]>;
+  /**
+   * La ficha larga de una película, pidiéndola al panel la primera vez.
+   *
+   * Es una petición por película, así que **no se pide en lote**: solo para la
+   * que preside el inicio. Lo que se traiga se guarda, y la siguiente vez sale
+   * de la base. Devuelve `null` si no hay nada que contar.
+   */
+  detalleDePelicula(id: string): Promise<FichaLarga | null>;
+  /**
+   * Lo mismo para una serie, con `get_series_info`.
+   *
+   * Va aparte de las temporadas aunque salga de la misma respuesta: la portada
+   * necesita la ficha de cuatro series y no quiere sus episodios, que son la
+   * parte gorda.
+   */
+  detalleDeSerie(id: string): Promise<FichaLarga | null>;
+  /**
+   * Anota el género de unas cuantas películas, que el catálogo no trae.
+   *
+   * Lo manda el servidor de la casa, que se lo pregunta al panel una vez al
+   * día. Aquí solo se guarda: la próxima consulta ya lo devuelve con la ficha.
+   */
+  guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".

@@ -10,11 +10,13 @@
 import type { DB } from '@op-engineering/op-sqlite';
 
 import type { Season } from '@m3u/core';
-import { fold } from '@m3u/core';
+import { fold, filtroRecomendadaSQL, ordenRecomendadaSQL } from '@m3u/core';
 import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  FichaLarga,
+  EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
   Pagina,
@@ -37,6 +39,15 @@ export interface OpcionesBase {
   /** Trae del panel las temporadas de una serie que aún no están guardadas. */
   /** El título va para poder quitarlo del nombre de cada episodio. */
   traerTemporadas: (panelIds: number[], tituloSerie: string) => Promise<Season[]>;
+  /**
+   * Trae del panel la ficha larga de una película: sinopsis, reparto y fondo.
+   *
+   * Va como opción, igual que las temporadas, porque el almacén no sabe hablar
+   * con el panel: solo guarda lo que le den.
+   */
+  traerDetalle: (panelIds: number[]) => Promise<FichaLarga | null>;
+  /** Lo mismo para una serie, con `get_series_info`. */
+  traerFichaSerie: (panelIds: number[]) => Promise<FichaLarga | null>;
   /** Falso si no hubo FTS5: entonces se busca con LIKE. */
   conBusquedaRapida: boolean;
 }
@@ -48,6 +59,7 @@ export interface OpcionesBase {
  * nota no es tenerla mala, ni no saber cuándo entró es ser lo más viejo.
  */
 function ordenDe(orden: Pagina['orden'], prefijo = ''): string {
+  if (orden === 'recomendada') return ordenRecomendadaSQL(prefijo);
   if (orden === 'valoracion') {
     return `${prefijo}rating IS NULL, ${prefijo}rating DESC, ${prefijo}sort_title`;
   }
@@ -64,6 +76,40 @@ function porId(db: DB, tabla: string, columnas: string, ids: string[]): Fila[] {
   return filas(db, `SELECT ${columnas} FROM ${tabla} WHERE id IN (${huecos})`, ids);
 }
 
+/**
+ * El identificador de panel de una película, sacado de la URL de su variante.
+ *
+ * Al importar solo se guardan los de las series, que son los que hacían falta
+ * para pedir episodios. Los de las películas no hay que guardarlos: van dentro
+ * de la propia dirección de reproducción —`/movie/usuario/clave/12345.mkv`—,
+ * así que basta con leer el último tramo.
+ *
+ * Se devuelven todos los de sus calidades: el proveedor manda una entrada por
+ * cada una y cualquiera sirve para preguntar por la ficha.
+ */
+function panelIdsDePelicula(db: DB, id: string): number[] {
+  const urls = filas(db, "SELECT url FROM variant WHERE owner_kind = 'movie' AND owner_id = ? ORDER BY rank", [id]);
+
+  const ids: number[] = [];
+  for (const fila of urls) {
+    const ultimo = String(fila.url ?? '').split('/').pop() ?? '';
+    const numero = Number(ultimo.replace(/\.[a-z0-9]+$/i, ''));
+    if (Number.isInteger(numero) && numero > 0 && !ids.includes(numero)) ids.push(numero);
+  }
+  return ids;
+}
+
+/**
+ * La condición que acompaña al orden, si es que lleva alguna.
+ *
+ * Solo `recomendada` filtra: descarta lo que no merece recomendarse. Los
+ * demás órdenes devuelven el catálogo entero, así que aquí no hay nada que
+ * poner y la consulta se queda como estaba.
+ */
+function filtroDe(orden: Pagina['orden'], prefijo = ''): string | null {
+  return orden === 'recomendada' ? filtroRecomendadaSQL(prefijo) : null;
+}
+
 /** SQL devuelve un `IN` en el orden que quiere; el perfil los quiere por fecha. */
 function enElOrdenPedido<T extends { id: string }>(ids: string[], fichas: T[]): T[] {
   const porClave = new Map(fichas.map((ficha) => [ficha.id, ficha]));
@@ -71,6 +117,70 @@ function enElOrdenPedido<T extends { id: string }>(ids: string[], fichas: T[]): 
 }
 
 export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
+  /**
+   * La ficha larga de una película o de una serie, con su caché en la base.
+   *
+   * Las dos tablas llevan las mismas cinco columnas y la misma regla, así que
+   * comparten código: cambia la tabla, de dónde salen los identificadores del
+   * panel y a quién se le pide.
+   */
+  const fichaLarga = async (
+    tabla: 'movie' | 'series',
+    id: string,
+    idsDePanel: () => number[],
+    traer: (panelIds: number[]) => Promise<FichaLarga | null>,
+  ): Promise<FichaLarga | null> => {
+    const guardado = filas(
+      db,
+      `SELECT plot, actors, backdrop, genre, detalle_pedido FROM ${tabla} WHERE id = ?`,
+      [id],
+    )[0];
+    if (!guardado) return null;
+
+    const deLaBase = (): FichaLarga => ({
+      sinopsis: (guardado.plot as string) || null,
+      reparto: (guardado.actors as string) || null,
+      fondo: (guardado.backdrop as string) || null,
+      genero: (guardado.genre as string) || null,
+    });
+
+    // Ya se preguntó una vez: se devuelve lo que hubiera, aunque fuera nada.
+    // Sin esta marca, una película sin sinopsis se volvería a pedir al panel
+    // en cada arranque, y son 400 ms cada vez.
+    if (guardado.detalle_pedido) return deLaBase();
+
+    const panelIds = idsDePanel();
+    if (panelIds.length === 0) return deLaBase();
+
+    let traido: FichaLarga | null = null;
+    try {
+      traido = await traer(panelIds);
+    } catch (error) {
+      // Sin red o con el panel caído, la portada sale sin sinopsis en vez de
+      // no salir. Y no se marca como pedida: se reintentará.
+      console.warn('[base] no se pudo traer la ficha de', id, error);
+      return deLaBase();
+    }
+
+    // Una línea por ficha y solo la primera vez que se pregunta: sirve para
+    // saber, en una instalación nueva, si el panel rellena estos campos.
+    console.log(
+      `[detalle] ${tabla} ${id}: sinopsis ${traido?.sinopsis ? 'sí' : 'no'}, reparto ${traido?.reparto ? 'sí' : 'no'}, fondo ${traido?.fondo ? 'sí' : 'no'}`,
+    );
+    db.executeSync(
+      `UPDATE ${tabla} SET plot = ?, actors = ?, backdrop = ?, genre = ?, detalle_pedido = ? WHERE id = ?`,
+      [
+        traido?.sinopsis ?? null,
+        traido?.reparto ?? null,
+        traido?.fondo ?? null,
+        traido?.genero ?? null,
+        new Date().toISOString(),
+        id,
+      ],
+    );
+    return traido ?? deLaBase();
+  };
+
   /** Guarda las temporadas recién traídas para no volver a pedirlas. */
   const guardarTemporadas = (serieId: string, temporadas: Season[]): void => {
     db.executeSync('BEGIN IMMEDIATE');
@@ -159,14 +269,16 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
+      const filtro = filtroDe(pagina.orden, 'm.');
       const consulta = pagina.grupo
-        ? `SELECT m.id, m.title, m.year, m.rating, m.logo
+        ? `SELECT m.id, m.title, m.year, m.rating, m.logo, m.genre
              FROM movie m
              JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
-            WHERE g.group_name = ?
+            WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 'm.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo FROM movie
+        : `SELECT id, title, year, rating, logo, genre FROM movie
+            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
       const params = pagina.grupo
@@ -179,18 +291,21 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         anio: (fila.year as number) ?? null,
         valoracion: (fila.rating as number) ?? null,
         logo: (fila.logo as string) ?? null,
+        genero: (fila.genre as string) ?? null,
       }));
     },
 
     async series(pagina: Pagina): Promise<SerieFicha[]> {
+      const filtro = filtroDe(pagina.orden, 's.');
       const consulta = pagina.grupo
-        ? `SELECT s.id, s.title, s.year, s.rating, s.logo
+        ? `SELECT s.id, s.title, s.year, s.rating, s.logo, s.genre
              FROM series s
              JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
-            WHERE g.group_name = ?
+            WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 's.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo FROM series
+        : `SELECT id, title, year, rating, logo, genre FROM series
+            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
       const params = pagina.grupo
@@ -203,6 +318,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         anio: (fila.year as number) ?? null,
         valoracion: (fila.rating as number) ?? null,
         logo: (fila.logo as string) ?? null,
+        genero: (fila.genre as string) ?? null,
       }));
     },
 
@@ -238,12 +354,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async peliculasPorId(ids: string[]): Promise<PeliculaFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'movie', 'id, title, year, rating, logo', ids).map((fila) => ({
+        porId(db, 'movie', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
           valoracion: (fila.rating as number) ?? null,
           logo: (fila.logo as string) ?? null,
+          genero: (fila.genre as string) ?? null,
         })),
       );
     },
@@ -251,14 +368,68 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'series', 'id, title, year, rating, logo', ids).map((fila) => ({
+        porId(db, 'series', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
           valoracion: (fila.rating as number) ?? null,
           logo: (fila.logo as string) ?? null,
+          genero: (fila.genre as string) ?? null,
         })),
       );
+    },
+
+    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
+      if (ids.length === 0) return [];
+      const huecos = ids.map(() => '?').join(', ');
+      // El salto a `series` va aquí y no en quien llama: lo que hace falta
+      // para pintar un episodio fuera de su serie es la carátula de la serie.
+      const encontrados = filas(
+        db,
+        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.id IN (${huecos})`,
+        ids,
+      ).map((fila): EpisodioDeSerieFicha => ({
+        id: Number(fila.id),
+        serieId: fila.series_id as string,
+        serieTitulo: fila.serie as string,
+        serieLogo: (fila.serie_logo as string) ?? null,
+        temporada: Number(fila.season),
+        numero: Number(fila.episode),
+        titulo: (fila.title as string) ?? null,
+      }));
+
+      const porClave = new Map(encontrados.map((ficha) => [String(ficha.id), ficha]));
+      return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
+    },
+
+    async detalleDePelicula(id: string): Promise<FichaLarga | null> {
+      return fichaLarga('movie', id, () => panelIdsDePelicula(db, id), opciones.traerDetalle);
+    },
+
+    async guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void> {
+      if (pares.length === 0) return;
+
+      db.executeSync('BEGIN IMMEDIATE');
+      try {
+        for (const { id, genero } of pares) {
+          // Solo lo que falte: si esta película ya se preguntó por su cuenta
+          // —presidió el inicio—, lo suyo es más completo que esto.
+          db.executeSync("UPDATE movie SET genre = ? WHERE id = ? AND (genre IS NULL OR genre = '')", [genero, id]);
+        }
+        db.executeSync('COMMIT');
+      } catch (error) {
+        db.executeSync('ROLLBACK');
+        console.warn('[base] no se pudieron guardar los géneros', error);
+      }
+    },
+
+    async detalleDeSerie(id: string): Promise<FichaLarga | null> {
+      // Los identificadores de panel de una serie sí se guardan al importar
+      // —hacen falta para pedir las temporadas—, así que aquí no hay que
+      // sacarlos de la URL como en las películas.
+      return fichaLarga('series', id, () => panelIdsDe(db, id), opciones.traerFichaSerie);
     },
 
     async canalesPorId(ids: string[]): Promise<CanalFicha[]> {

@@ -10,12 +10,15 @@
  */
 
 import type { Episode, Library, Season, Series } from '@m3u/core';
+import { esRecomendable } from '@m3u/core';
 
 import type {
   Ambito,
   Biblioteca,
   Orden,
   CanalFicha,
+  FichaLarga,
+  EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
   Pagina,
@@ -51,10 +54,21 @@ export interface OpcionesMemoria {
  * no es lo mismo que tenerla mala, ni no saber cuándo entró es ser lo más
  * viejo.
  */
-function ordenar<T extends { title: string; rating: number | null; added: number | null }>(
+function ordenar<T extends { title: string; year?: number | null; rating: number | null; added: number | null }>(
   fichas: T[],
   orden?: Orden,
 ): T[] {
+  // `recomendada` filtra además de ordenar: es la única que descarta fichas.
+  if (orden === 'recomendada') {
+    return fichas
+      .filter((ficha) => esRecomendable(ficha.title, ficha.rating))
+      .sort(
+        (a, b) =>
+          (b.year ?? -1) - (a.year ?? -1) ||
+          (b.added ?? -1) - (a.added ?? -1) ||
+          (b.rating ?? -1) - (a.rating ?? -1),
+      );
+  }
   if (orden === 'valoracion') return [...fichas].sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1));
   if (orden === 'reciente') return [...fichas].sort((a, b) => (b.added ?? -1) - (a.added ?? -1));
   return fichas;
@@ -127,6 +141,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           anio: pelicula.year,
           valoracion: pelicula.rating,
           logo: pelicula.logo,
+          genero: null,
         }));
     },
 
@@ -136,7 +151,14 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         pagina.orden,
       )
         .slice(pagina.desde, pagina.desde + pagina.limite)
-        .map((s) => ({ id: s.id, titulo: s.title, anio: s.year, valoracion: s.rating, logo: s.logo }));
+        .map((s) => ({
+          id: s.id,
+          titulo: s.title,
+          anio: s.year,
+          valoracion: s.rating,
+          logo: s.logo,
+          genero: s.genre,
+        }));
     },
 
     async temporadas(serieId: string): Promise<TemporadaFicha[]> {
@@ -186,7 +208,46 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           anio: pelicula.year,
           valoracion: pelicula.rating,
           logo: pelicula.logo,
+          genero: null,
         }));
+    },
+
+    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
+      // Los episodios ya están numerados en `porId`, que es el equivalente al
+      // rowid que les da SQLite: se busca por ahí y no recorriendo series.
+      const encontrados: EpisodioDeSerieFicha[] = [];
+      for (const id of ids) {
+        const indexado = porId.get(Number(id));
+        if (!indexado) continue;
+        encontrados.push({
+          id: indexado.id,
+          serieId: indexado.serie.id,
+          serieTitulo: indexado.serie.title,
+          serieLogo: indexado.serie.logo,
+          temporada: indexado.episodio.season,
+          numero: indexado.episodio.episode,
+          titulo: indexado.episodio.title,
+        });
+      }
+      return encontrados;
+    },
+
+    async detalleDePelicula(id: string): Promise<FichaLarga | null> {
+      const pelicula = library.movies.find((una) => una.id === id);
+      if (!pelicula) return null;
+      // Aquí no hay panel al que preguntar y el M3U no trae sinopsis: la
+      // ficha larga solo existe con un panel Xtream detrás.
+      return { sinopsis: null, reparto: null, fondo: null, genero: null };
+    },
+
+    async guardarGeneros(): Promise<void> {
+      // Sin base donde guardarlo: esta biblioteca vive en memoria.
+    },
+
+    async detalleDeSerie(id: string): Promise<FichaLarga | null> {
+      const serie = library.series.find((una) => una.id === id);
+      if (!serie) return null;
+      return { sinopsis: null, reparto: null, fondo: null, genero: null };
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
@@ -200,6 +261,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           anio: serie.year,
           valoracion: serie.rating,
           logo: serie.logo,
+          genero: serie.genre ?? null,
         }));
     },
 

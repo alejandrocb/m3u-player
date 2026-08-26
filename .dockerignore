@@ -1,0 +1,23 @@
+# Lo que no tiene que viajar al construir la imagen del servidor.
+#
+# Sin esto, `docker build` manda la carpeta entera: en un equipo de trabajo eso
+# son los cientos de megas de node_modules y del build de Android, que además
+# no se usan para nada —el servidor no tiene dependencias—.
+node_modules/
+**/node_modules/
+
+# La lista real del usuario, con las credenciales del panel en cada URL.
+.probe-cache/
+playlists/
+downloads/
+
+# Nada de Android ni del escritorio hace falta aquí.
+apps/tv/android/
+apps/tv/ios/
+apps/desktop/
+
+.git/
+*.log
+.cache/
+dist/
+out/

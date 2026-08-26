@@ -13,15 +13,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  AppState,
   BackHandler,
   FlatList,
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
   useTVEventHandler,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,25 +36,48 @@ import type {
   Cuenta,
   Elemento,
   EstadoPantalla,
+  FilaInicio,
   Formato,
+  Inicio,
   OpcionLateral,
   Perfil,
+  Preparado,
   Programacion,
   Reproducible,
 } from '@m3u/ui';
 import {
   AJUSTES_POR_DEFECTO,
+  COLORES_PERFIL,
   COLUMNAS_POSIBLES,
+  ClienteSync,
   GestorCuentas,
+  MODOS_INICIO,
+  elementosDeFila,
   Presentador,
   cantidad,
+  mediasEstrellas,
   nota,
   numero,
 } from '@m3u/ui';
 
 import { almacenDeCuentas } from './src/almacen';
+import {
+  ESCALA_ENFOQUE,
+  FONDO,
+  FONDO_RGB,
+  MARGEN_CABECERA,
+  MARGEN_PANTALLA,
+  ROJO,
+  SUPERFICIE,
+  TINTA,
+  TINTA_SUAVE,
+  TINTA_TENUE,
+  VERDE,
+} from './src/tema';
+import { almacenDeSync } from './src/almacen-sync';
 import { cargarCatalogo } from './src/carga';
 import type { Avance, Medicion } from './src/carga';
+import { PantallaEmparejar } from './src/pantalla-emparejar';
 import { PantallaListas } from './src/listas';
 import { PantallaPerfiles } from './src/pantalla-perfiles';
 import { Parrilla } from './src/parrilla';
@@ -69,9 +96,36 @@ const MARGEN_SALIDA_MS = 3000;
  */
 const ESPERA_VISTA_PREVIA_MS = 1000;
 
+/**
+ * En un televisor, las listas no se desplazan solas.
+ *
+ * Android TV, al recibir una flecha, desplaza por su cuenta cualquier lista
+ * que tenga debajo del foco. Como aquí el recorrido lo lleva la aplicación
+ * —y luego coloca la lista con `scrollToIndex`—, se movían las dos cosas: un
+ * salto del sistema y, un instante después, el resaltado. Se notaba como
+ * "primero hace scroll y luego se mueve el foco".
+ *
+ * Con el dedo sí tiene que desplazarse, claro, así que solo se corta en la
+ * tele.
+ */
+const DESPLAZA_EL_DEDO = !Platform.isTV;
+
+/** Cada cuánto se sincroniza mientras la biblioteca está abierta. */
+const CADA_SINCRONIZACION_MS = 2 * 60 * 1000;
+
+/**
+ * Lo que se espera a la sincronización antes de entrar.
+ *
+ * Sincronizar es un lujo, no un requisito: si el servidor tarda o no está, se
+ * entra igual con lo que hay en el aparato y ya subirá luego. Bloquear el
+ * arranque por esto sería cambiar un fallo raro por una app que no abre.
+ */
+const ESPERA_SINCRONIZAR_MS = 4000;
+
 type Fase =
   | { tipo: 'abriendo' }
   | { tipo: 'listas'; error?: string }
+  | { tipo: 'emparejar' }
   | { tipo: 'conectando'; nombre: string; avance: Avance }
   | { tipo: 'perfiles'; cuenta: Cuenta; medicion: Medicion }
   | { tipo: 'biblioteca'; cuenta: Cuenta; medicion: Medicion; perfil: Perfil };
@@ -87,10 +141,65 @@ function App() {
 function Raiz() {
   const [fase, setFase] = useState<Fase>({ tipo: 'abriendo' });
   const [version, setVersion] = useState(0);
+  /** A qué casa está conectado el aparato, para poder decirlo en pantalla. */
+  const [casa, setCasa] = useState<string | null>(null);
+  /**
+   * Sube cada vez que una sincronización trae algo de otro aparato.
+   *
+   * La biblioteca lo vigila para recargarse. Sin esto, los datos entraban en
+   * SQLite y la pantalla seguía enseñando lo de antes hasta que la cerrabas y
+   * la volvías a abrir: parecía que no había llegado nada.
+   */
+  const [sincronizado, setSincronizado] = useState(0);
   const gestor = useRef<GestorCuentas | null>(null);
   const biblioteca = useRef<Biblioteca | null>(null);
   const perfiles = useRef<AlmacenPerfiles | null>(null);
   const programacion = useRef<Programacion | null>(null);
+  /**
+   * El cliente de sincronización, uno para toda la vida de la app.
+   *
+   * Se crea antes de haber conectado con ninguna lista, porque emparejar es lo
+   * primero que se hace en un aparato nuevo y todavía no hay almacén de
+   * perfiles. Por eso lo lee de `perfiles.current` en cada llamada en vez de
+   * quedárselo: cuando toque sincronizar de verdad, ya estará.
+   */
+  /** Lo que el servidor haya preparado: la portada y los géneros. */
+  const [preparado, setPreparado] = useState<Preparado>({ portadas: [], generos: [] });
+
+  const sync = useRef<ClienteSync>(
+    new ClienteSync({
+      almacen: almacenDeSync,
+      perfiles: {
+        cambiosDesde: async (marca) => (await perfiles.current?.cambiosDesde(marca)) ?? [],
+        aplicarCambios: async (cambios) => {
+          await perfiles.current?.aplicarCambios(cambios);
+        },
+      },
+      buscar: (url, opciones) => fetch(url, opciones),
+    }),
+  );
+
+  /**
+   * Sincroniza si el aparato está emparejado, y se traga los fallos.
+   *
+   * Que no haya red, que el servidor esté caído o que el token ya no valga no
+   * puede notarse en la interfaz: la app funciona igual sin sincronizar, con
+   * lo que tiene guardado.
+   */
+  const sincronizar = useCallback(async () => {
+    try {
+      const hecho = await sync.current.sincronizar();
+      // Se escribe siempre, aunque no haya nada: es lo único que distingue
+      // "está al día" de "no está emparejada" cuando se depura desde fuera
+      // con `adb logcat -s ReactNativeJS:V`.
+      console.log(hecho ? `[sync] ${hecho.subidos} subidos, ${hecho.bajados} bajados` : '[sync] sin emparejar');
+      // Solo se repinta si ha bajado algo: subir es cosa nuestra y no cambia
+      // lo que se está viendo en pantalla.
+      if (hecho && hecho.bajados > 0) setSincronizado((n) => n + 1);
+    } catch (fallo) {
+      console.warn('[sync] no se pudo sincronizar', fallo);
+    }
+  }, []);
 
   const conectar = useCallback(async (elegida: Cuenta, forzar = false) => {
     setFase({
@@ -113,6 +222,16 @@ function Raiz() {
       perfiles.current = almacen;
       programacion.current = parrilla;
       await gestor.current?.conectar(elegida.id);
+
+      // Con el almacén ya abierto se sincroniza, antes de enseñar los
+      // perfiles y con un tope de paciencia, para que el "seguir viendo" que
+      // se ve sea el bueno: es el caso de dejar algo a medias en la tele y
+      // abrir la tablet.
+      await Promise.race([
+        sincronizar(),
+        new Promise<void>((sigue) => setTimeout(() => sigue(), ESPERA_SINCRONIZAR_MS)),
+      ]);
+
       // Antes de la biblioteca, quién está viendo: cada perfil tiene su
       // historial y sus favoritos.
       setFase({ tipo: 'perfiles', cuenta: elegida, medicion });
@@ -120,22 +239,91 @@ function Raiz() {
       biblioteca.current = null;
       setFase({ tipo: 'listas', error: fallo instanceof Error ? fallo.message : String(fallo) });
     }
-  }, []);
+  }, [sincronizar]);
 
   useEffect(() => {
     (async () => {
       const abierto = await GestorCuentas.abrir(almacenDeCuentas);
       gestor.current = abierto;
+      setCasa((await sync.current.estado())?.grupo?.nombre ?? null);
       // Sesión abierta de la vez anterior: se entra directo, sin preguntar.
       if (abierto.activa) await conectar(abierto.activa);
       else setFase({ tipo: 'listas' });
     })();
   }, [conectar]);
 
+  /*
+    Las sugerencias del inicio, preparadas por el servidor de la casa.
+
+    Se piden al arrancar, mientras se elige lista y perfil, para que ya estén
+    cuando se abra la biblioteca: llegando después, el presentador se rehace y
+    el inicio se monta dos veces. La pantalla nunca espera por ellas —si el
+    servidor no contesta, o esta casa no tiene, el presentador saca las suyas
+    preguntando al panel como siempre—.
+  */
+  useEffect(() => {
+    let vigente = true;
+    void (async () => {
+      const suyo = await sync.current.portadas();
+      console.log(`[portadas] ${suyo.portadas.length} del servidor, ${suyo.generos.length} géneros`);
+      if (vigente && (suyo.portadas.length > 0 || suyo.generos.length > 0)) setPreparado(suyo);
+    })();
+    return () => {
+      vigente = false;
+    };
+  }, []);
+
+  // Mientras se está viendo la biblioteca, se sincroniza de vez en cuando.
+  useEffect(() => {
+    if (fase.tipo !== 'biblioteca') return;
+    const reloj = setInterval(() => void sincronizar(), CADA_SINCRONIZACION_MS);
+    return () => clearInterval(reloj);
+  }, [fase.tipo, sincronizar]);
+
+  /**
+   * Y al volver la app al primer plano, que es el momento que importa.
+   *
+   * Coger la tablet para seguir lo que dejaste en la tele no pasa por
+   * `conectar`: la app ya estaba abierta, solo se trae al frente. Sin esto
+   * había que esperar al temporizador, o cerrarla del todo y abrirla otra vez.
+   */
+  useEffect(() => {
+    const suscripcion = AppState.addEventListener('change', (estado) => {
+      if (estado === 'active') void sincronizar();
+    });
+    return () => suscripcion.remove();
+  }, [sincronizar]);
+
   const cerrarSesion = useCallback(async () => {
     await gestor.current?.cerrarSesion();
     biblioteca.current = null;
     setFase({ tipo: 'listas' });
+  }, []);
+
+  /**
+   * Recién emparejado: se dan de alta las listas que reparte la casa.
+   *
+   * Se añaden a las que ya hubiera en vez de reemplazarlas. Quitar de un
+   * aparato una lista que alguien puso a mano, sin avisar, sería justo lo que
+   * no se espera de conectar con el servidor.
+   */
+  const traerListas = useCallback(async (grupo: string | null, listas: Array<{ nombre: string; url: string }>) => {
+    const actual = gestor.current;
+    if (!actual) return;
+
+    for (const lista of listas) {
+      if (actual.cuentas.some((cuenta) => cuenta.url === lista.url)) continue;
+      await actual.anadir({ nombre: lista.nombre, url: lista.url });
+    }
+    setCasa(grupo);
+    setVersion((n) => n + 1);
+    setFase({ tipo: 'listas' });
+  }, []);
+
+  const desemparejar = useCallback(async () => {
+    await sync.current.olvidar();
+    setCasa(null);
+    setVersion((n) => n + 1);
   }, []);
 
   if (fase.tipo === 'abriendo') return <Espera texto="Abriendo…" />;
@@ -155,6 +343,16 @@ function Raiz() {
     );
   }
 
+  if (fase.tipo === 'emparejar') {
+    return (
+      <PantallaEmparejar
+        cliente={sync.current}
+        onListo={(grupo, listas) => void traerListas(grupo, listas)}
+        onCancelar={() => setFase({ tipo: 'listas' })}
+      />
+    );
+  }
+
   if (fase.tipo === 'listas') {
     return (
       <View style={estilos.pantalla}>
@@ -165,6 +363,9 @@ function Raiz() {
             gestor={gestor.current}
             onConectar={conectar}
             onCambio={() => setVersion((n) => n + 1)}
+            onEmparejar={() => setFase({ tipo: 'emparejar' })}
+            grupo={casa}
+            onDesemparejar={() => void desemparejar()}
           />
         ) : null}
       </View>
@@ -182,6 +383,12 @@ function Raiz() {
       onCerrarSesion={cerrarSesion}
       onCambiarPerfil={() => setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion })}
       onActualizar={() => conectar(fase.cuenta, true)}
+      sincronizado={sincronizado}
+      preparado={preparado}
+      onSincronizar={() => void sincronizar()}
+      onCambioPerfil={(nuevo) =>
+        setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
+      }
     />
   );
 }
@@ -205,6 +412,10 @@ function BibliotecaVista({
   onCerrarSesion,
   onCambiarPerfil,
   onActualizar,
+  sincronizado,
+  preparado,
+  onSincronizar,
+  onCambioPerfil,
 }: {
   biblioteca: Biblioteca;
   perfiles: AlmacenPerfiles;
@@ -212,9 +423,17 @@ function BibliotecaVista({
   perfil: Perfil;
   cuenta: Cuenta;
   medicion: Medicion;
+  /** Lo que el servidor haya preparado para el inicio, si hay servidor. */
+  preparado: Preparado;
   onCerrarSesion: () => void;
   onCambiarPerfil: () => void;
   onActualizar: () => void;
+  /** Sube cuando ha llegado algo de otro aparato: hay que repintar. */
+  sincronizado: number;
+  /** Pide sincronizar ahora, sin esperar al temporizador. */
+  onSincronizar: () => void;
+  /** El perfil ha cambiado de nombre o de color: hay que repintarlo arriba. */
+  onCambioPerfil: (perfil: Perfil) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [estado, setEstado] = useState<EstadoPantalla | null>(null);
@@ -230,6 +449,40 @@ function BibliotecaVista({
   const [cajaVista, setCajaVista] = useState<Caja | null>(null);
   /** El mando está sobre la vista previa, no sobre la lista de canales. */
   const [focoEnVideo, setFocoEnVideo] = useState(false);
+
+  const [verAjustes, setVerAjustes] = useState(false);
+  /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
+  const [verPerfil, setVerPerfil] = useState(false);
+  const [focoPerfil, setFocoPerfil] = useState(0);
+  /** Cuando se está escribiendo el nombre nuevo del perfil. */
+  const [nombreNuevo, setNombreNuevo] = useState<string | null>(null);
+
+  /*
+    Estos dos van aquí arriba, con el resto de hooks, y no junto al menú que
+    los usa. Es la cuarta vez que este proyecto se cae por lo mismo: React
+    exige el mismo número de hooks en cada pintado, y más abajo hay un
+    `return` temprano —"Cargando la biblioteca…"— que se los saltaba en el
+    primero. El síntoma es "Rendered more hooks than during the previous
+    render" y la aplicación cerrándose al entrar.
+  */
+  /** Guarda el nombre nuevo del perfil y cierra el campo. */
+  const guardarNombre = useCallback(async () => {
+    const limpio = (nombreNuevo ?? '').trim();
+    setNombreNuevo(null);
+    if (!limpio || limpio === perfil.nombre) return;
+
+    await perfiles.renombrar(perfil.id, limpio);
+    onCambioPerfil({ ...perfil, nombre: limpio });
+  }, [nombreNuevo, perfil, perfiles, onCambioPerfil]);
+
+  /** Pasa al siguiente color de la paleta, dando la vuelta al llegar al final. */
+  const siguienteColor = useCallback(async () => {
+    const actual = COLORES_PERFIL.indexOf(perfil.color as (typeof COLORES_PERFIL)[number]);
+    const siguiente = COLORES_PERFIL[(actual + 1) % COLORES_PERFIL.length]!;
+    await perfiles.recolorear(perfil.id, siguiente);
+    onCambioPerfil({ ...perfil, color: siguiente });
+  }, [perfil, perfiles, onCambioPerfil]);
+
   /** El mando está en la cabecera —buscar, ajustes, perfil— y no en la rejilla. */
   const [enCabecera, setEnCabecera] = useState(false);
   const [focoCabecera, setFocoCabecera] = useState(0);
@@ -247,7 +500,7 @@ function BibliotecaVista({
   /** La lista de categorías: se desplaza sola para seguir a su foco. */
   const barra = useRef<FlatList<OpcionLateral> | null>(null);
   const [ajustes, setAjustes] = useState<Ajustes>(AJUSTES_POR_DEFECTO);
-  const [verAjustes, setVerAjustes] = useState(false);
+
   const [texto, setTexto] = useState('');
   const temporizadorBusqueda = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -281,6 +534,8 @@ function BibliotecaVista({
       tamanoPagina: 60,
       // De aquí sale la barrita de "lo llevas por la mitad".
       avances: (medios) => perfiles.avancesDe(perfil.id, medios),
+      // Y de aquí la fila de "seguir viendo" del inicio.
+      seguirViendo: () => perfiles.seguirViendo(perfil.id, 12),
       // Y de aquí los corazones y el grupo de favoritos, que son de cada uno.
       favoritos: {
         listar: async (clase) =>
@@ -302,13 +557,22 @@ function BibliotecaVista({
         },
       },
     });
+    // Antes de cargar: si llegan después, el inicio se monta dos veces.
+    instancia.usarPortadas(preparado.portadas);
     presentador.current = instancia;
-    instancia.cargar().then(setEstado);
+    void (async () => {
+      // Los géneros que el servidor haya averiguado se anotan en la base, y
+      // desde ahí salen con cada ficha: en la carátula, en la rejilla y en lo
+      // que se busque. Antes de cargar, para que la primera pantalla ya los
+      // lleve.
+      await biblioteca.guardarGeneros(preparado.generos);
+      setEstado(await instancia.cargar());
+    })();
     // `ajustes.orden` no está entre las dependencias a propósito: cambiarlo se
     // aplica sobre el presentador vivo, no rehaciéndolo. Las columnas sí
     // obligan a rehacerlo porque la rejilla se monta con ellas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [biblioteca, perfiles, perfil, ajustes.columnas]);
+  }, [biblioteca, perfiles, perfil, ajustes.columnas, preparado]);
 
   /**
    * El canal sobre el que está el foco, si es que hay uno.
@@ -347,6 +611,35 @@ function BibliotecaVista({
   // Entrar y salir del directo: al entrar, el vídeo empieza en la columna; al
   // salir, se para, o seguiría ocupando la conexión mientras se navega por
   // películas.
+  /**
+   * Al cerrar el reproductor, sincronizar: acaba de haber algo que contar.
+   *
+   * Es el momento en el que el avance de lo que se estaba viendo tiene su
+   * valor definitivo. Dejarlo al temporizador de dos minutos significaba que
+   * salir de la película y cerrar la app perdía el último tramo.
+   *
+   * Se vigila la transición a `null` y no el botón de atrás porque el
+   * reproductor se cierra por varios caminos —atrás, cambiar de sección, el
+   * efecto de aquí abajo— y todos cuentan igual.
+   */
+  const veniaReproduciendo = useRef(false);
+  useEffect(() => {
+    if (reproduciendo) {
+      veniaReproduciendo.current = true;
+      return;
+    }
+    if (veniaReproduciendo.current) {
+      veniaReproduciendo.current = false;
+      onSincronizar();
+    }
+  }, [reproduciendo, onSincronizar]);
+
+  /** Ha llegado algo de otro aparato: se repinta con los datos nuevos. */
+  useEffect(() => {
+    if (sincronizado === 0) return;
+    presentador.current?.cargar().then(setEstado);
+  }, [sincronizado]);
+
   useEffect(() => {
     if (!estado) return;
     if (estado.formato === 'canales') {
@@ -370,7 +663,15 @@ function BibliotecaVista({
     const instancia = presentador.current;
     if (!instancia) return false;
 
-    // El panel de ajustes se cierra antes que nada: es lo que está encima.
+    // Lo que esté encima se cierra antes que nada, de más reciente a menos.
+    if (nombreNuevo !== null) {
+      setNombreNuevo(null);
+      return true;
+    }
+    if (verPerfil) {
+      setVerPerfil(false);
+      return true;
+    }
     if (verAjustes) {
       setVerAjustes(false);
       return true;
@@ -411,7 +712,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, nombreNuevo]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -507,23 +808,36 @@ function BibliotecaVista({
         // La cabecera: se entra subiendo desde la primera fila y se sale
         // bajando. Sin esto, en un televisor no hay forma de llegar a buscar
         // ni a los ajustes, porque no hay dedo que los toque.
+        // El menú del perfil, mientras está abierto, se queda con las teclas.
+        if (verPerfil) {
+          if (evento.eventType === 'up') {
+            setFocoPerfil((actual) => Math.max(0, actual - 1));
+          } else if (evento.eventType === 'down') {
+            setFocoPerfil((actual) => Math.min(opcionesPerfil.length - 1, actual + 1));
+          }
+          return;
+        }
+
         if (enCabecera) {
           if (evento.eventType === 'left') {
             setFocoCabecera((actual) => Math.max(0, actual - 1));
           } else if (evento.eventType === 'right') {
-            setFocoCabecera((actual) => Math.min(botonesCabecera.length - 1, actual + 1));
+            setFocoCabecera((actual) => Math.min(pestanasCabecera.length + botonesCabecera.length - 1, actual + 1));
           } else if (evento.eventType === 'down') {
             setEnCabecera(false);
           }
           return;
         }
-        if (
-          evento.eventType === 'up' &&
-          botonesCabecera.length > 0 &&
-          !estado?.lateral?.dentro &&
-          (estado?.foco ?? 0) < (estado?.columnas ?? 1)
-        ) {
-          setFocoCabecera((actual) => Math.min(actual, botonesCabecera.length - 1));
+        // En el inicio manda su propia fila, no el índice de la rejilla: ahí
+        // `foco` vale siempre 0 y subir habría saltado a la cabecera desde
+        // cualquier carrusel, en vez de recorrer las filas.
+        const arribaDelTodo = estado?.inicio
+          ? estado.inicio.fila === 0
+          : (estado?.foco ?? 0) < (estado?.columnas ?? 1);
+
+        const cuantosArriba = pestanasCabecera.length + botonesCabecera.length;
+        if (evento.eventType === 'up' && cuantosArriba > 0 && !estado?.lateral?.dentro && arribaDelTodo) {
+          setFocoCabecera((actual) => Math.min(actual, cuantosArriba - 1));
           setEnCabecera(true);
           return;
         }
@@ -582,8 +896,17 @@ function BibliotecaVista({
           opcionesAjustes[focoAjustes]?.();
           return;
         }
+        if (verPerfil) {
+          const opcion = opcionesPerfil[focoPerfil];
+          setVerPerfil(false);
+          opcion?.onPress();
+          return;
+        }
         if (enCabecera) {
-          botonesCabecera[focoCabecera]?.onPress();
+          // Un solo índice para pestañas y botones, en ese orden.
+          const enPestanas = pestanasCabecera[focoCabecera];
+          if (enPestanas) enPestanas.onPress();
+          else botonesCabecera[focoCabecera - pestanasCabecera.length]?.onPress();
           return;
         }
         // Aceptar sobre la vista previa la abre entera.
@@ -659,9 +982,47 @@ function BibliotecaVista({
    * poder señalar cuál está enfocado y ejecutarlo desde el manejador de
    * teclas: en la tele no hay dedo que los alcance.
    */
-  const botonesCabecera: Array<{ texto: string; onPress: () => void }> = [
-    ...(enInicio || estado.lateral ? [{ texto: 'Buscar', onPress: abrirBuscador }] : []),
-    ...(enInicio ? [{ texto: 'Actualizar', onPress: onActualizar }] : []),
+  /**
+   * Lo que cuelga del círculo del perfil.
+   *
+   * Todo lo que es "de este usuario" vive aquí y no en la barra: cinco
+   * botones de texto arriba tapaban contenido y no se leían de lejos.
+   */
+  const opcionesPerfil: Array<{ texto: string; onPress: () => void }> = [
+    { texto: 'Editar nombre', onPress: () => setNombreNuevo(perfil.nombre) },
+    { texto: 'Cambiar color', onPress: () => void siguienteColor() },
+    { texto: 'Cambiar de perfil', onPress: onCambiarPerfil },
+    { texto: 'Actualizar catálogo', onPress: onActualizar },
+    { texto: 'Cerrar sesión', onPress: onCerrarSesion },
+  ];
+
+  /**
+   * Las pestañas del inicio, delante de los iconos en el recorrido del mando.
+   *
+   * Van en el mismo índice que los botones —izquierda y derecha los recorren
+   * todos seguidos— porque para quien maneja el mando es una sola fila, por
+   * mucho que se dibujen en dos sitios de la barra.
+   */
+  const pestanasCabecera: Array<{ clave: string; nombre: string; onPress: () => void; activa: boolean }> =
+    estado.inicio
+      ? [
+          ...MODOS_INICIO.map((opcion) => ({
+            clave: opcion.modo,
+            nombre: opcion.nombre,
+            activa: estado.inicio!.modo === opcion.modo,
+            onPress: () => void presentador.current?.elegirModo(opcion.modo).then(setEstado),
+          })),
+          {
+            clave: 'directo',
+            nombre: 'TV en directo',
+            activa: false,
+            onPress: () => void presentador.current?.irADirecto().then(setEstado),
+          },
+        ]
+      : [];
+
+  const botonesCabecera: Array<{ texto: string; onPress: () => void; perfil?: true }> = [
+    { texto: '⌕', onPress: abrirBuscador },
     ...(estado.lateral
       ? [
           {
@@ -675,14 +1036,101 @@ function BibliotecaVista({
           },
         ]
       : []),
-    ...(enInicio ? [{ texto: perfil.nombre, onPress: onCambiarPerfil }] : []),
-    ...(enInicio ? [{ texto: 'Cerrar sesión', onPress: onCerrarSesion }] : []),
+    {
+      texto: inicialDe(perfil.nombre),
+      perfil: true as const,
+      onPress: () => {
+        setFocoPerfil(0);
+        setVerPerfil(true);
+      },
+    },
   ];
+
+  /**
+   * La cabecera: el título a la izquierda, la lupa y el perfil a la derecha.
+   *
+   * Se arma como variable porque en el inicio va dentro de la lista —para que
+   * se desplace con ella— y en el resto de pantallas encima, fija.
+   */
+  const cabecera = (
+<View style={estilos.cabecera}>
+          <View style={estilos.tituloBloque}>
+            {/* En el inicio no va ninguno: lo dicen las pestañas, y el
+                subtítulo se comía el sitio de la portada. */}
+            {estado.inicio ? null : <Text style={estilos.titulo}>{estado.titulo}</Text>}
+            {enInicio && !estado.inicio ? (
+              <Text style={estilos.subtitulo}>
+                {cuenta.nombre} · {cantidad(medicion.entradas, 'ficha', 'fichas')} ·{' '}
+                {medicion.via === 'guardada'
+                  ? `guardadas ${frescura(medicion.dias)}`
+                  : `traídas del panel en ${(medicion.total / 1000).toFixed(0)} s`}
+              </Text>
+            ) : null}
+          </View>
+          {/*
+            El selector de sección, centrado. Cambia la portada y los
+            carruseles sin cambiar de pantalla: la forma se mantiene y uno no
+            se pierde. TV en directo sí es otra pantalla —tiene parrilla y
+            vista previa—, así que entra en vez de filtrar.
+          */}
+          {pestanasCabecera.length > 0 ? (
+            <View style={estilos.pestanas}>
+              {pestanasCabecera.map((pestana, indice) => (
+                <Pressable
+                  key={pestana.clave}
+                  focusable={false}
+                  style={[estilos.pestana, enCabecera && focoCabecera === indice && estilos.pestanaEnfocada]}
+                  onPress={pestana.onPress}
+                >
+                  <Text style={[estilos.pestanaTexto, pestana.activa && estilos.pestanaTextoActiva]}>
+                    {pestana.nombre}
+                  </Text>
+                  {/* La sección en la que estás se marca con una raya debajo,
+                      no con un fondo: la barra es transparente y un recuadro
+                      relleno vuelve a taparlo todo. */}
+                  {pestana.activa ? <View style={estilos.pestanaRaya} /> : null}
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
+          {botonesCabecera.length > 0 ? (
+            <View style={estilos.botonera}>
+              {botonesCabecera.map((boton, indice) => (
+                <Pressable
+                  key={boton.texto}
+                  /*
+                    El foco del sistema no entra aquí a propósito: en esta
+                    pantalla el recorrido lo lleva la aplicación, y si Android
+                    además entregase el OK al botón, cada pulsación contaría dos
+                    veces. Eso hacía que los ajustes se abrieran y se cerraran
+                    en el mismo golpe.
+                  */
+                  focusable={false}
+                  style={[
+                    boton.perfil ? estilos.avatar : estilos.botonCabecera,
+                    boton.perfil && { backgroundColor: perfil.color },
+                    enCabecera &&
+                      focoCabecera === pestanasCabecera.length + indice &&
+                      (boton.perfil ? estilos.avatarEnfocado : estilos.botonCabeceraEnfocado),
+                  ]}
+                  onPress={boton.onPress}
+                >
+                  <Text style={boton.perfil ? estilos.avatarTexto : estilos.iconoCabecera}>{boton.texto}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+  );
 
   /** La barra de categorías, temporadas o grupos. Solo en las pantallas que la tienen. */
   const barraLateral = estado.lateral ? (
     <View style={[estilos.barra, estado.lateral.dentro && estilos.barraEnfocada]}>
       <FlatList
+        focusable={false}
+        isTVSelectable={false}
+        scrollEnabled={DESPLAZA_EL_DEDO}
         ref={barra}
         data={estado.lateral.opciones}
         keyExtractor={(opcion) => (opcion.favoritos ? 'favoritos' : (opcion.grupo ?? 'todas'))}
@@ -727,6 +1175,9 @@ function BibliotecaVista({
   const rejilla = (
     <View style={estilos.zonaLista}>
     <FlatList
+      focusable={false}
+      isTVSelectable={false}
+      scrollEnabled={DESPLAZA_EL_DEDO}
       ref={lista}
       data={estado.elementos}
       // Cambiar el número de columnas obliga a rehacer la lista entera.
@@ -793,43 +1244,72 @@ function BibliotecaVista({
       hasTVPreferredFocus
     >
     <View style={[estilos.pantalla, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
-      <View style={estilos.cabecera}>
-        <View style={estilos.tituloBloque}>
-          <Text style={estilos.titulo}>{estado.titulo}</Text>
-          {enInicio ? (
-            <Text style={estilos.subtitulo}>
-              {cuenta.nombre} · {cantidad(medicion.entradas, 'ficha', 'fichas')} ·{' '}
-              {medicion.via === 'guardada'
-                ? `guardadas ${frescura(medicion.dias)}`
-                : `traídas del panel en ${(medicion.total / 1000).toFixed(0)} s`}
-            </Text>
-          ) : null}
-        </View>
-        {botonesCabecera.length > 0 ? (
-          <View style={estilos.botonera}>
-            {botonesCabecera.map((boton, indice) => (
-              <Pressable
-                key={boton.texto}
-                /*
-                  El foco del sistema no entra aquí a propósito: en esta
-                  pantalla el recorrido lo lleva la aplicación, y si Android
-                  además entregase el OK al botón, cada pulsación contaría dos
-                  veces. Eso hacía que los ajustes se abrieran y se cerraran
-                  en el mismo golpe.
-                */
-                focusable={false}
-                style={[
-                  estilos.botonCabecera,
-                  enCabecera && focoCabecera === indice && estilos.botonCabeceraEnfocado,
-                ]}
-                onPress={boton.onPress}
-              >
-                <Text style={estilos.cerrarSesionTexto}>{boton.texto}</Text>
-              </Pressable>
-            ))}
+      {/*
+        La cabecera.
+
+        En el inicio **flota sobre la portada**, pegada al borde de arriba, y
+        por eso se pinta después que la lista: la portada llega hasta el borde
+        y si la cabecera fuera antes quedaría debajo de la imagen. Eso es
+        justo lo que pasó al hacerla a sangre y desaparecieron los botones.
+
+        En el resto de pantallas va donde siempre, ocupando su sitio.
+      */}
+      {estado.inicio ? null : cabecera}
+
+      {/*
+        El menú del perfil: todo lo que es "de este usuario", colgando del
+        círculo en vez de repartido por la barra de arriba.
+      */}
+      {verPerfil ? (
+        <View style={estilos.menuPerfil}>
+          <View style={estilos.menuCabecera}>
+            <View style={[estilos.avatarGrande, { backgroundColor: perfil.color }]}>
+              <Text style={estilos.avatarGrandeTexto}>{inicialDe(perfil.nombre)}</Text>
+            </View>
+            <Text style={estilos.menuNombre}>{perfil.nombre}</Text>
           </View>
-        ) : null}
-      </View>
+          {opcionesPerfil.map((opcion, indice) => (
+            <Pressable
+              key={opcion.texto}
+              focusable={false}
+              style={[estilos.menuOpcion, focoPerfil === indice && estilos.menuOpcionEnfocada]}
+              onPress={() => {
+                setVerPerfil(false);
+                opcion.onPress();
+              }}
+            >
+              <Text style={estilos.menuOpcionTexto}>{opcion.texto}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Escribir el nombre nuevo del perfil. */}
+      {nombreNuevo !== null ? (
+        <View style={estilos.menuPerfil}>
+          <Text style={estilos.menuNombre}>Nombre del perfil</Text>
+          <TextInput
+            style={estilos.campoNombre}
+            value={nombreNuevo}
+            onChangeText={setNombreNuevo}
+            autoFocus
+            onSubmitEditing={() => void guardarNombre()}
+          />
+          <Pressable focusable={false} style={estilos.menuOpcionEnfocada} onPress={() => void guardarNombre()}>
+            <Text style={estilos.menuOpcionTexto}>Guardar</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
+      {/*
+        La barra flota sobre la portada, así que hay que quitarla a mano
+        cuando el vídeo ocupa la pantalla: el reproductor se pinta por encima
+        de todo lo demás, pero esto va en su propia capa y se quedaba puesto
+        sobre la película.
+      */}
+      {estado.inicio && !(reproduciendo && aPantallaCompleta) ? (
+        <View style={estilos.cabeceraFlotante}>{cabecera}</View>
+      ) : null}
 
       {verAjustes && estado.lateral ? (
         <View style={estilos.ajustes}>
@@ -890,7 +1370,33 @@ function BibliotecaVista({
         />
       ) : null}
 
-      <View style={estilos.cuerpo}>
+      {/*
+        El inicio es su propia pantalla: una sola lista vertical de filas.
+
+        No pasa por el cuerpo de abajo —que es una fila horizontal pensada
+        para barra + rejilla + parrilla— porque aquí lo que hace falta es
+        justo lo contrario: que **todo baje junto**. Cuando eran dos bloques
+        con desplazamiento propio, en el teléfono el primero se comía la
+        pantalla y el menú no se veía.
+      */}
+      {estado.inicio ? (
+        <PantallaInicio
+          enCabecera={enCabecera}
+          inicio={estado.inicio}
+          onTurno={(siguiente) => setEstado(presentador.current!.rotarDestacado(siguiente))}
+          onTocar={(fila, columna) => {
+            const instancia = presentador.current;
+            if (!instancia) return;
+            instancia.enfocarEnInicio(fila, columna);
+            void instancia.aceptar().then(({ estado: nuevo, reproducir }) => {
+              setEstado(nuevo);
+              if (reproducir) setReproduciendo(reproducir);
+            });
+          }}
+        />
+      ) : null}
+
+      <View style={[estilos.cuerpo, estado.inicio && estilos.cuerpoOculto]}>
         {/*
           En el directo la pantalla se parte por la mitad: la barra y la lista
           a un lado, la parrilla al otro. En el resto de pantallas la lista
@@ -960,6 +1466,563 @@ function BibliotecaVista({
  * descargan las que de verdad se miran. Mientras llega la imagen queda el
  * hueco en gris, para que la rejilla no baile.
  */
+/**
+ * La pantalla de inicio: una sola lista vertical de filas.
+ *
+ * Todo baja junto. Cada fila lleva su propio desplazamiento horizontal, que es
+ * lo natural en un carrusel, pero **el vertical es uno solo**: es la
+ * diferencia entre una pantalla que se recorre y varios bloques que se pelean
+ * por el alto, que era lo que dejaba el menú fuera de la vista en el teléfono.
+ */
+function PantallaInicio({
+  enCabecera,
+  inicio,
+  onTocar,
+  onTurno,
+}: {
+  /** El mando está arriba, en la lupa o el perfil. */
+  enCabecera: boolean;
+  inicio: Inicio;
+  onTocar: (fila: number, columna: number) => void;
+  /** La portada pasa a la siguiente sugerencia. */
+  onTurno: (siguiente: number) => void;
+}) {
+  const lista = useRef<FlatList<FilaInicio>>(null);
+  const { height: alto } = useWindowDimensions();
+
+  /*
+    El destacado ocupa la mayor parte de la pantalla, y por arriba se mete por
+    debajo de la cabecera. El tope es para que en un televisor de 4K no se
+    coma la fila de "seguir viendo", que tiene que asomar: es lo que invita a
+    bajar.
+  */
+  const altoDestacado = Math.min(470, Math.round(alto * 0.58)) + MARGEN_CABECERA;
+
+  useEffect(() => {
+    // Con el foco arriba hay que subir del todo: la cabecera va dentro de la
+    // lista, y `scrollToIndex` solo sabe llegar a las filas de datos.
+    if (enCabecera) {
+      lista.current?.scrollToOffset({ offset: 0, animated: true });
+      return;
+    }
+    /*
+      La portada es la primera fila, así que volver a ella es subir del todo.
+      `scrollToIndex` no vale aquí: dejaría su borde superior arriba y la
+      cabecera, que va por encima, taparía media portada.
+
+      Antes esto no hacía nada —para no desplazar nada al abrir— y era el
+      único sitio donde el foco se movía sin que la pantalla lo siguiera:
+      subiendo desde los carruseles, el botón de reproducir se quedaba fuera.
+    */
+    if (inicio.fila === 0) {
+      lista.current?.scrollToOffset({ offset: 0, animated: true });
+      return;
+    }
+    if (inicio.filas.length === 0) return;
+    lista.current?.scrollToIndex({
+      index: Math.min(inicio.fila, inicio.filas.length - 1),
+      animated: true,
+      viewPosition: 0.3,
+    });
+  }, [enCabecera, inicio.fila, inicio.filas.length]);
+
+  return (
+    <FlatList
+      focusable={false}
+      isTVSelectable={false}
+      scrollEnabled={DESPLAZA_EL_DEDO}
+      ref={lista}
+      style={estilos.inicioLista}
+      data={inicio.filas}
+      keyExtractor={(fila, indice) => `${fila.tipo}-${indice}`}
+      extraData={inicio}
+      showsVerticalScrollIndicator={false}
+      // Son pocas filas y `scrollToIndex` necesita que estén montadas.
+      initialNumToRender={8}
+      onScrollToIndexFailed={() => {}}
+      renderItem={({ item, index }) => {
+        const activa = index === inicio.fila;
+
+        if (item.tipo === 'destacado') {
+          return (
+            <Destacado
+              elementos={item.elementos}
+              indice={inicio.destacado}
+              alto={altoDestacado}
+              enfocado={activa}
+              onTurno={onTurno}
+              onTocar={() => onTocar(index, 0)}
+            />
+          );
+        }
+
+        return (
+          <Carrusel
+            titulo={item.titulo}
+            elementos={item.elementos}
+            activa={activa}
+            columna={inicio.columna}
+            onTocar={(columna) => onTocar(index, columna)}
+          />
+        );
+      }}
+    />
+  );
+}
+
+/**
+ * La película que preside el inicio.
+ *
+ * El degradado son capas oscuras superpuestas, no un degradado de verdad:
+ * React Native no los trae y la librería que los añade es un módulo nativo,
+ * que es justo lo que este proyecto lleva evitando desde el principio. A este
+ * tamaño no se distingue.
+ *
+ * El cartel va a la derecha y el texto a la izquierda porque el panel solo da
+ * carteles verticales, no arte apaisado: estirarlo a pantalla ancha lo
+ * deformaría.
+ */
+/**
+ * Las cinco estrellas de la nota, dibujadas.
+ *
+ * La media no es un carácter sino una estrella llena **recortada a la mitad**
+ * sobre una hueca. El carácter que existe para ella no está en la fuente de un
+ * televisor y salía como un cuadrado vacío, que es peor que no ponerla.
+ */
+function Estrellas({ valoracion }: { valoracion: number }) {
+  const medias = mediasEstrellas(valoracion);
+  if (medias === 0) return null;
+
+  return (
+    <View style={estilos.estrellas}>
+      {[0, 1, 2, 3, 4].map((posicion) => {
+        const llenas = medias - posicion * 2;
+        if (llenas >= 2) return <Text key={posicion} style={estilos.estrellaLlena}>★</Text>;
+        if (llenas <= 0) return <Text key={posicion} style={estilos.estrellaHueca}>☆</Text>;
+
+        return (
+          <View key={posicion}>
+            <Text style={estilos.estrellaHueca}>☆</Text>
+            <View style={estilos.estrellaMitad}>
+              <Text style={estilos.estrellaLlena}>★</Text>
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+/** Cuánto se queda cada sugerencia antes de dar paso a la siguiente. */
+const TURNO_PORTADA_MS = 8000;
+
+/** Lo que tarda el fundido entre una y otra. */
+const FUNDIDO_MS = 600;
+
+/**
+ * La portada del inicio, con sus sugerencias turnándose.
+ *
+ * **Lo único que se funde es la imagen.** La ficha —título, nota, sinopsis— se
+ * cambia de golpe, en el mismo momento en que empieza el fundido.
+ *
+ * Las dos formas anteriores se veían raras, y las dos por lo mismo: por
+ * fundir el texto. Apagar la portada entera y volver a encenderla deja un
+ * hueco sin nada en medio; cruzar las dos capas deja dos títulos
+ * superpuestos, y encima un bajón de luz, porque dos capas a media opacidad
+ * sobre fondo oscuro suman menos que una entera.
+ *
+ * De la que sale se pinta solo su imagen, quieta y entera debajo, y la nueva
+ * aparece encima. Así en ningún instante falta imagen ni sobra texto.
+ *
+ * El reloj lo lleva la vista y no el presentador porque es cosa de la
+ * animación: el presentador solo apunta cuál se está enseñando, para que
+ * aceptar reproduzca la correcta.
+ */
+function Destacado({
+  elementos,
+  indice,
+  alto,
+  enfocado,
+  onTurno,
+  onTocar,
+}: {
+  elementos: Elemento[];
+  indice: number;
+  alto: number;
+  enfocado: boolean;
+  onTurno: (siguiente: number) => void;
+  onTocar: () => void;
+}) {
+  /**
+   * Cuál de las dos capas se está viendo: 0 la de abajo, 1 la de arriba.
+   *
+   * **Las dos capas no se desmontan nunca.** Es lo que quita el fotograma en
+   * negro: antes, al cambiar de sugerencia, se montaba una imagen nueva y a
+   * la otra se le cambiaba la dirección a la vez, así que las dos estaban
+   * cargando al mismo tiempo y por un momento no había ninguna que pintar.
+   *
+   * Aquí la imagen nueva se le pone siempre a la capa que **no se está
+   * viendo**, tapada del todo por la otra, y solo cuando ya ha cargado se
+   * descubre. Cargar a escondidas y enseñar cuando está lista.
+   */
+  const capa = useRef(new Animated.Value(0)).current;
+  const [imagenes, setImagenes] = useState<{ abajo: string | null; arriba: string | null }>({
+    abajo: null,
+    arriba: null,
+  });
+  /** Cuál manda ahora mismo. */
+  const enArriba = useRef(false);
+  /** La que está cargando a escondidas, esperando a que se la descubra. */
+  const esperando = useRef<'abajo' | 'arriba' | null>(null);
+  const puesta = useRef<string | null>(null);
+
+  /*
+    El índice y la función de turno se leen de una referencia, no de las
+    dependencias del efecto.
+
+    Si el efecto dependiera de ellos, el reloj se rehace en cada pintado —y
+    `onTurno` llega como una función nueva cada vez—, así que nunca llegaba a
+    cumplir su tiempo. Se notaba en la pestaña "Todo", que al tener más
+    carruseles se repinta más: allí la portada no se turnaba jamás.
+  */
+  const actual = useRef(indice);
+  actual.current = indice;
+  const turno = useRef(onTurno);
+  turno.current = onTurno;
+
+  useEffect(() => {
+    if (elementos.length < 2) return;
+    const reloj = setInterval(() => turno.current(actual.current + 1), TURNO_PORTADA_MS);
+    return () => clearInterval(reloj);
+  }, [elementos.length]);
+
+  /** Descubre la capa que estaba cargando, fundiéndola sobre la otra. */
+  const descubrir = useCallback(
+    (cual: 'abajo' | 'arriba') => {
+      if (esperando.current !== cual) return;
+      esperando.current = null;
+      enArriba.current = cual === 'arriba';
+      Animated.timing(capa, {
+        toValue: cual === 'arriba' ? 1 : 0,
+        duration: FUNDIDO_MS,
+        useNativeDriver: true,
+      }).start();
+    },
+    [capa],
+  );
+
+  const elemento = elementos[Math.min(indice, elementos.length - 1)] ?? null;
+
+  /*
+    El relevo se prepara **durante el pintado**, no en un efecto: un efecto se
+    ejecuta cuando el pintado ya ha salido, y entonces se ve un fotograma con
+    la sugerencia a medio cambiar. Cambiar el estado aquí es lo que React
+    llama ajustarlo al vuelo —vuelve a pintar en el sitio, antes de enseñar
+    nada— y el guardia del `if` lo corta en la segunda pasada.
+  */
+  if (elemento && puesta.current !== elemento.id) {
+    const primera = puesta.current === null;
+    puesta.current = elemento.id;
+
+    if (primera) {
+      // La primera no se funde con nada: se pone abajo y se ve.
+      setImagenes({ abajo: elemento.logo, arriba: null });
+      esperando.current = null;
+    } else {
+      const destino = enArriba.current ? 'abajo' : 'arriba';
+      setImagenes((previas) => ({ ...previas, [destino]: elemento.logo }));
+      esperando.current = destino;
+    }
+  }
+
+  useEffect(() => {
+    if (!esperando.current) return;
+    const cual = esperando.current;
+    /*
+      Red de seguridad. Lo normal es que la descubra `onLoad` en cuanto la
+      imagen esté lista —del caché, al instante—, pero si esa imagen no llega
+      nunca (servidor caído, dirección rota) la portada se quedaría clavada
+      en la anterior para siempre.
+    */
+    const plazo = setTimeout(() => descubrir(cual), 2000);
+    return () => clearTimeout(plazo);
+  }, [imagenes, descubrir]);
+
+  if (!elemento) return null;
+
+  return (
+    <View style={[estilos.destacado, { height: alto }]}>
+      {/*
+        Las dos capas, siempre montadas. La de abajo se ve entera y la de
+        arriba se funde encima; cuál manda va turnándose, así que a la que le
+        toca cambiar de imagen siempre está tapada mientras carga.
+      */}
+      <View style={estilos.destacadoCapa} pointerEvents="none">
+        {imagenes.abajo ? (
+          <Image
+            source={{ uri: imagenes.abajo }}
+            style={estilos.destacadoImagen}
+            resizeMode="cover"
+            onLoad={() => descubrir('abajo')}
+          />
+        ) : null}
+      </View>
+
+      <Animated.View style={[estilos.destacadoCapa, { opacity: capa }]} pointerEvents="none">
+        {imagenes.arriba ? (
+          <Image
+            source={{ uri: imagenes.arriba }}
+            style={estilos.destacadoImagen}
+            resizeMode="cover"
+            onLoad={() => descubrir('arriba')}
+          />
+        ) : null}
+      </Animated.View>
+
+      {/*
+        Tres degradados: uno de lado, que despeja la izquierda para el texto;
+        otro abajo, que funde la imagen con la fila siguiente en vez de
+        cortarla en seco; y otro arriba, para que la barra flotante se lea.
+
+        Van fuera de las capas porque no cambian con la sugerencia: fundirlos
+        con ella sería fundir el velo del texto, y el texto no se funde.
+      */}
+      <View style={estilos.destacadoVelo} pointerEvents="none" />
+      <View style={estilos.destacadoPie} pointerEvents="none" />
+      <View style={estilos.destacadoTecho} pointerEvents="none" />
+
+      <View style={estilos.destacadoCapa} pointerEvents="box-none">
+        <View style={estilos.destacadoTexto}>
+          <Text style={estilos.destacadoEtiqueta}>Destacada</Text>
+          <Text style={estilos.destacadoNombre} numberOfLines={2}>
+            {elemento.titulo}
+          </Text>
+
+          <View style={estilos.destacadoDatos}>
+            {elemento.valoracion !== null ? (
+              <>
+                <Estrellas valoracion={elemento.valoracion} />
+                <Text style={estilos.destacadoNota}>{nota(elemento.valoracion)}</Text>
+              </>
+            ) : null}
+            {elemento.anio !== null ? <Text style={estilos.destacadoAnio}>{elemento.anio}</Text> : null}
+          </View>
+
+          {/* Lo que el panel no rellene simplemente no se pinta. */}
+          {elemento.resumen ? (
+            <Text style={estilos.destacadoSinopsis} numberOfLines={3}>
+              {elemento.resumen}
+            </Text>
+          ) : null}
+          {elemento.detalle ? (
+            <Text style={estilos.destacadoReparto} numberOfLines={1}>
+              {elemento.detalle}
+            </Text>
+          ) : null}
+
+          {/*
+            Reproducir es un botón de verdad, y **el único sitio que responde
+            al dedo**: con la portada entera pulsable, en la tablet arrancaba
+            la película al tocar la imagen sin querer.
+          */}
+          <Pressable
+            focusable={false}
+            onPress={onTocar}
+            style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}
+          >
+            <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
+          </Pressable>
+        </View>
+
+        {/* El género, en la esquina, donde no compite con el título. */}
+        {elemento.genero ? (
+          <Text style={estilos.destacadoGenero} numberOfLines={1}>
+            {elemento.genero}
+          </Text>
+        ) : null}
+      </View>
+
+      {/* Los puntitos, para saber cuántas hay y por cuál va. */}
+      {elementos.length > 1 ? (
+        <View style={estilos.destacadoPuntos} pointerEvents="none">
+          {elementos.map((una, posicion) => (
+            <View
+              key={una.id}
+              style={[estilos.destacadoPunto, posicion === indice && estilos.destacadoPuntoActivo]}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** Una fila horizontal de fichas: los carruseles y el menú de secciones. */
+function Carrusel({
+  titulo,
+  elementos,
+  activa,
+  columna,
+  onTocar,
+}: {
+  titulo: string;
+  elementos: Elemento[];
+  activa: boolean;
+  columna: number;
+  onTocar: (columna: number) => void;
+}) {
+  const lista = useRef<FlatList<Elemento>>(null);
+
+  useEffect(() => {
+    if (!activa || elementos.length === 0) return;
+    lista.current?.scrollToIndex({
+      index: Math.min(columna, elementos.length - 1),
+      animated: true,
+      viewPosition: 0.5,
+    });
+  }, [activa, columna, elementos.length]);
+
+  return (
+    <View style={estilos.filaZona}>
+      <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo}</Text>
+      <FlatList
+        focusable={false}
+        isTVSelectable={false}
+        scrollEnabled={DESPLAZA_EL_DEDO}
+        ref={lista}
+        horizontal
+        data={elementos}
+        keyExtractor={(elemento) => elemento.id}
+        extraData={`${activa}-${columna}`}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={estilos.filaLista}
+        initialNumToRender={8}
+        onScrollToIndexFailed={() => {}}
+        renderItem={({ item, index }) => (
+          <FichaDeFila item={item} enfocado={activa && index === columna} onTocar={() => onTocar(index)} />
+        )}
+      />
+    </View>
+  );
+}
+
+/**
+ * La línea que acompaña al título dentro de la carátula.
+ *
+ * Género, año y lo que traiga la ficha —en "Seguir viendo", el capítulo—.
+ * Lo que falte no deja hueco ni separador suelto: el panel rellena lo que
+ * quiere y aquí no se pinta una raya para nada.
+ */
+function pieDeFicha(elemento: Elemento): string {
+  return [elemento.genero, elemento.anio, elemento.detalle].filter(Boolean).join(' · ');
+}
+
+/**
+ * Una ficha de carrusel, que **crece al enfocarse**.
+ *
+ * El marco de tres píxeles se ve mal desde el sofá y el tamaño se ve siempre:
+ * por eso lo enfocado se agranda, como en cualquier televisor. Va animado
+ * sobre el hilo nativo (`useNativeDriver`) porque el JavaScript está ocupado
+ * pintando la fila cuando el foco se mueve, y sin eso el crecimiento llega a
+ * tirones.
+ *
+ * `zIndex` y `elevation` son para que la ficha crecida tape a la de al lado y
+ * no al revés: entre hermanos manda el orden de pintado, y la siguiente se
+ * dibuja después.
+ */
+function FichaDeFila({
+  item,
+  enfocado,
+  onTocar,
+}: {
+  item: Elemento;
+  enfocado: boolean;
+  onTocar: () => void;
+}) {
+  const escala = useRef(new Animated.Value(1)).current;
+
+  /*
+    Con el dedo **no hay foco**, así que no hay ficha que enseñar al enfocar:
+    en una tablet no se vería nunca ni el título ni el año ni la nota. Ahí se
+    enseñan siempre. Lo que cambia no es el aparato sino la forma de señalar:
+    en el televisor hay un sitio marcado y en la tablet, no.
+  */
+  const verFicha = enfocado || DESPLAZA_EL_DEDO;
+
+  useEffect(() => {
+    Animated.spring(escala, {
+      toValue: enfocado ? ESCALA_ENFOQUE : 1,
+      useNativeDriver: true,
+      friction: 9,
+      tension: 90,
+    }).start();
+  }, [enfocado, escala]);
+
+  return (
+    <Animated.View style={[estilos.fichaFilaCaja, enfocado && estilos.fichaFilaEncima, { transform: [{ scale: escala }] }]}>
+      <Pressable
+        focusable={false}
+        onPress={onTocar}
+        style={[estilos.fichaFila, enfocado && estilos.fichaFilaEnfocada]}
+      >
+        <View style={estilos.fichaCaratula}>
+          {item.logo ? (
+            <Image source={{ uri: item.logo }} style={estilos.fichaImagen} resizeMode="cover" />
+          ) : (
+            <View style={[estilos.fichaImagen, estilos.fichaSinImagen]}>
+              <Text style={estilos.fichaSinImagenTexto} numberOfLines={2}>
+                {item.titulo}
+              </Text>
+            </View>
+          )}
+          {/*
+            La ficha va **dentro** de la carátula y solo en la enfocada, sobre
+            un degradado que oscurece el pie de la imagen: en blanco sobre el
+            cartel a pelo, la mitad de las veces el texto cae encima de una
+            cara clara y no se lee.
+
+            Debajo no: con el texto fuera, la fila tenía que reservar un hueco
+            que estaba vacío en todas las fichas menos una.
+          */}
+          {verFicha ? (
+            <View style={estilos.fichaVelo} pointerEvents="none">
+              <Text style={estilos.fichaVeloTitulo} numberOfLines={2}>
+                {item.titulo}
+              </Text>
+              <View style={estilos.fichaVeloDatos}>
+                {item.valoracion !== null ? (
+                  <Text style={estilos.fichaVeloNota}>★ {nota(item.valoracion)}</Text>
+                ) : null}
+                {pieDeFicha(item) ? (
+                  <Text style={estilos.fichaVeloTexto} numberOfLines={1}>
+                    {pieDeFicha(item)}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+          {item.avance !== null ? (
+            <View style={estilos.fichaBarra}>
+              <View style={[estilos.fichaBarraVista, { width: `${Math.round(item.avance * 100)}%` }]} />
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/**
+ * La letra que va dentro del círculo del perfil.
+ *
+ * Hace las veces de foto sin traerse un selector de imágenes, que en Android
+ * es un módulo nativo. Con el color propio de cada perfil, cuatro personas se
+ * distinguen de un vistazo.
+ */
+function inicialDe(nombre: string): string {
+  return (nombre.trim()[0] ?? '?').toUpperCase();
+}
+
 function Ficha({
   elemento,
   enfocado,
@@ -1204,19 +2267,17 @@ function frescura(dias: number): string {
   return enteros === 1 ? 'ayer' : `hace ${enteros} días`;
 }
 
-const VERDE = '#35d07f';
-
 const estilos = StyleSheet.create({
   // La capa de fuera: sin márgenes, para que lo que se coloca con coordenadas
   // de pantalla —el reproductor— caiga donde debe.
   raiz: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
   },
   pantalla: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
-    paddingHorizontal: 32,
+    paddingHorizontal: MARGEN_PANTALLA,
   },
   centrado: {
     alignItems: 'center',
@@ -1224,12 +2285,12 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
   },
   espera: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 20,
   },
   errorArriba: {
     backgroundColor: 'rgba(255,107,107,0.15)',
-    color: '#ff6b6b',
+    color: ROJO,
     fontSize: 16,
     margin: 16,
     padding: 14,
@@ -1263,14 +2324,14 @@ const estilos = StyleSheet.create({
     borderColor: VERDE,
   },
   botonCabecera: {
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 8,
     borderWidth: 2,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   cerrarSesionTexto: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
   },
   cuerpo: {
@@ -1330,7 +2391,7 @@ const estilos = StyleSheet.create({
     backgroundColor: 'rgba(53,208,127,0.35)',
   },
   categoriaTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 17,
   },
   categoriaCuantos: {
@@ -1345,7 +2406,7 @@ const estilos = StyleSheet.create({
     padding: 16,
   },
   ajustesTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   ajustesSeparado: {
@@ -1379,11 +2440,11 @@ const estilos = StyleSheet.create({
     backgroundColor: VERDE,
   },
   opcionTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   opcionTextoActiva: {
-    color: '#06131c',
+    color: FONDO,
     fontWeight: '700',
   },
   campoBusqueda: {
@@ -1421,6 +2482,468 @@ const estilos = StyleSheet.create({
     height: 52,
     width: 72,
   },
+  iconoCabecera: {
+    color: TINTA_SUAVE,
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  avatar: {
+    alignItems: 'center',
+    borderColor: 'transparent',
+    borderRadius: 22,
+    borderWidth: 3,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  avatarEnfocado: {
+    borderColor: '#fff',
+  },
+  avatarTexto: {
+    color: FONDO,
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  avatarGrande: {
+    alignItems: 'center',
+    borderRadius: 26,
+    height: 52,
+    justifyContent: 'center',
+    width: 52,
+  },
+  avatarGrandeTexto: {
+    color: FONDO,
+    fontSize: 23,
+    fontWeight: '700',
+  },
+  menuPerfil: {
+    backgroundColor: '#0d2231',
+    borderRadius: 12,
+    elevation: 12,
+    gap: 6,
+    padding: 18,
+    position: 'absolute',
+    right: 24,
+    top: 78,
+    width: 300,
+    zIndex: 20,
+  },
+  menuCabecera: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 8,
+  },
+  menuNombre: {
+    color: '#fff',
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  menuOpcion: {
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  menuOpcionEnfocada: {
+    backgroundColor: 'rgba(53,208,127,0.2)',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  menuOpcionTexto: {
+    color: TINTA_SUAVE,
+    fontSize: 17,
+  },
+  campoNombre: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 8,
+    color: '#fff',
+    fontSize: 18,
+    padding: 14,
+  },
+  inicioLista: {
+    height: '100%',
+  },
+  cuerpoOculto: {
+    display: 'none',
+  },
+
+  cabeceraFlotante: {
+    // Un respiro arriba: pegada al borde, el recuadro de la lupa se cortaba.
+    paddingTop: 14,
+    /*
+      Flota sobre la portada, pegada al borde. Va la última en el árbol para
+      quedar por encima de la imagen, que llega hasta arriba del todo.
+    */
+    left: MARGEN_PANTALLA,
+    position: 'absolute',
+    right: MARGEN_PANTALLA,
+    top: 0,
+    zIndex: 10,
+  },
+  pestanas: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    /*
+      Centradas respecto a la pantalla, no repartidas entre los otros dos
+      bloques de la barra: si van en el flujo, los iconos de la derecha las
+      empujan y dejan de estar en el medio.
+    */
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  pestana: {
+    alignItems: 'center',
+    borderColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 2,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+  },
+  pestanaEnfocada: {
+    // El foco del mando sí lleva recuadro: la raya de abajo ya significa otra
+    // cosa —dónde estás—, y desde el sofá hacen falta las dos señales.
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderColor: '#fff',
+  },
+  pestanaTexto: {
+    color: TINTA_TENUE,
+    fontSize: 18,
+    letterSpacing: 0.2,
+  },
+  pestanaTextoActiva: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  pestanaRaya: {
+    backgroundColor: VERDE,
+    borderRadius: 2,
+    bottom: 0,
+    height: 3,
+    position: 'absolute',
+    width: 26,
+  },
+  destacadoPuntos: {
+    // Por debajo del botón: a la altura de antes se lo comía su borde.
+    bottom: 8,
+    flexDirection: 'row',
+    gap: 7,
+    left: MARGEN_PANTALLA,
+    position: 'absolute',
+  },
+  destacadoPunto: {
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    borderRadius: 3,
+    height: 6,
+    width: 6,
+  },
+  destacadoPuntoActivo: {
+    backgroundColor: VERDE,
+    width: 18,
+  },
+  destacadoGenero: {
+    bottom: 26,
+    // Doble margen: el hijo absoluto no hereda el `paddingHorizontal` del
+    // destacado, así que con uno solo el texto quedaba pegado al borde.
+    color: TINTA_TENUE,
+    fontSize: 14,
+    letterSpacing: 1,
+    position: 'absolute',
+    right: MARGEN_PANTALLA * 2,
+    textTransform: 'uppercase',
+  },
+  destacado: {
+    /*
+      A sangre: la imagen sale por los lados y por arriba, pasando por debajo
+      de la cabecera. Los márgenes negativos cancelan el `paddingHorizontal`
+      de la pantalla y el hueco que deja la cabecera encima.
+
+      No se recorta arriba porque la lista empieza ahí: el destacado es la
+      primera fila y la cabecera flota sobre ella.
+    */
+    justifyContent: 'flex-end',
+    marginBottom: 4,
+    marginTop: -MARGEN_CABECERA,
+    overflow: 'hidden',
+    paddingHorizontal: MARGEN_PANTALLA,
+  },
+  destacadoCapa: {
+    /*
+      Cada sugerencia se pinta entera en su capa —imagen, velos y ficha— para
+      poder cruzarlas. Se sale por los lados, cancelando el
+      `paddingHorizontal` del destacado, y lo devuelve dentro el texto: así la
+      imagen llega a los bordes y la ficha se queda en su margen.
+    */
+    bottom: 0,
+    justifyContent: 'flex-end',
+    left: -MARGEN_PANTALLA,
+    position: 'absolute',
+    right: -MARGEN_PANTALLA,
+    top: 0,
+  },
+  destacadoImagen: {
+    /*
+      Ocupa el rectángulo entero, saliéndose por los dos lados para cancelar
+      el `paddingHorizontal` del destacado. Antes iba recortada al 82 % por la
+      derecha, intentando que se perdiera por el borde, y lo que se veía era
+      justo el corte. Ahora no se recorta: se **degrada** por la izquierda y
+      por arriba, que es donde estorba al texto y a la barra.
+    */
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  destacadoVelo: {
+    bottom: 0,
+    experimental_backgroundImage:
+      `linear-gradient(to right, ${FONDO} 0%, rgba(${FONDO_RGB},0.92) 34%, rgba(${FONDO_RGB},0.55) 62%, rgba(${FONDO_RGB},0) 100%)`,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  destacadoTecho: {
+    experimental_backgroundImage:
+      `linear-gradient(to bottom, rgba(${FONDO_RGB},0.85) 0%, rgba(${FONDO_RGB},0.35) 60%, rgba(${FONDO_RGB},0) 100%)`,
+    height: MARGEN_CABECERA + 20,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  destacadoPie: {
+    // Funde el borde de abajo con el fondo, para que la fila siguiente no
+    // aparezca pegada a un corte recto.
+    bottom: 0,
+    experimental_backgroundImage:
+      `linear-gradient(to bottom, rgba(${FONDO_RGB},0) 0%, rgba(${FONDO_RGB},0.85) 65%, ${FONDO} 100%)`,
+    height: 120,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  destacadoTexto: {
+    gap: 7,
+    // El margen que la capa canceló para poder ir a sangre.
+    marginHorizontal: MARGEN_PANTALLA,
+    maxWidth: 620,
+    paddingBottom: 26,
+  },
+  destacadoEtiqueta: {
+    color: VERDE,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  destacadoNombre: {
+    color: '#fff',
+    fontSize: 32,
+    fontWeight: '700',
+  },
+  destacadoDatos: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  estrellas: {
+    flexDirection: 'row',
+    gap: 1,
+  },
+  estrellaLlena: {
+    color: '#f0c14a',
+    fontSize: 20,
+  },
+  estrellaHueca: {
+    color: '#6b7681',
+    fontSize: 20,
+  },
+  estrellaMitad: {
+    bottom: 0,
+    left: 0,
+    overflow: 'hidden',
+    position: 'absolute',
+    top: 0,
+    // La mitad justa: lo que asoma es media estrella llena sobre la hueca.
+    width: '50%',
+  },
+  destacadoNota: {
+    color: '#f0c14a',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  destacadoAnio: {
+    color: TINTA_TENUE,
+    fontSize: 16,
+  },
+  destacadoSinopsis: {
+    // Blanca y del tamaño del reparto: se lee bien y no se come la portada.
+    color: '#fff',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  destacadoReparto: {
+    color: TINTA_TENUE,
+    fontSize: 14,
+  },
+  destacadoBoton: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 3,
+    marginTop: 4,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  destacadoBotonEnfocado: {
+    backgroundColor: VERDE,
+    borderColor: '#fff',
+  },
+  destacadoBotonTexto: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+
+  filaZona: {
+    marginBottom: 14,
+    /*
+      La fila llega a los bordes de la pantalla, cancelando el margen que pone
+      `pantalla`, y el margen se devuelve dentro, en el relleno de la lista.
+
+      Es lo que arregla la primera carátula: una lista horizontal recorta lo
+      que se sale de ella, así que al crecer la de más a la izquierda perdía
+      su mitad. Ahora tiene por dónde crecer, y de paso lo que se va por la
+      derecha se pierde en el borde de la pantalla en vez de cortarse antes.
+    */
+    marginHorizontal: -MARGEN_PANTALLA,
+  },
+  filaTitulo: {
+    color: TINTA,
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 2,
+    // La fila se sale por los lados; el rótulo no.
+    marginLeft: MARGEN_PANTALLA,
+  },
+  filaTituloActivo: {
+    color: VERDE,
+  },
+  filaLista: {
+    gap: 16,
+    // Hueco por los cuatro lados para lo que crece: sin él, la ficha enfocada
+    // sale recortada por el borde de la fila.
+    paddingHorizontal: MARGEN_PANTALLA,
+    paddingVertical: 16,
+  },
+  fichaFilaCaja: {
+    width: 168,
+  },
+  fichaFilaEncima: {
+    elevation: 8,
+    zIndex: 2,
+  },
+  fichaFila: {
+    borderColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 3,
+    padding: 3,
+  },
+  fichaFilaEnfocada: {
+    borderColor: '#fff',
+  },
+  fichaVelo: {
+    bottom: 0,
+    experimental_backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0.72) 45%, rgba(0,0,0,0.94) 100%)`,
+    gap: 2,
+    justifyContent: 'flex-end',
+    left: 0,
+    padding: 8,
+    paddingTop: 26,
+    position: 'absolute',
+    right: 0,
+  },
+  fichaVeloTitulo: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  fichaVeloDatos: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  fichaVeloNota: {
+    color: '#f0c14a',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  fichaVeloTexto: {
+    color: '#d6dde4',
+    flexShrink: 1,
+    fontSize: 12,
+  },
+  fichaCaratula: {
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  fichaImagen: {
+    aspectRatio: 2 / 3,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    width: '100%',
+  },
+  fichaSinImagen: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 8,
+  },
+  fichaSinImagenTexto: {
+    color: TINTA_TENUE,
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  fichaBarra: {
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    bottom: 0,
+    height: 5,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  fichaBarraVista: {
+    backgroundColor: VERDE,
+    height: '100%',
+  },
+
+  seccionFicha: {
+    borderColor: 'transparent',
+    borderRadius: 10,
+    borderWidth: 3,
+    padding: 3,
+    width: 210,
+  },
+  seccionCaja: {
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  seccionTexto: {
+    color: '#fff',
+    fontSize: 21,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  seccionImagen: {
+    aspectRatio: 16 / 9,
+    backgroundColor: 'rgba(53,208,127,0.14)',
+    width: '100%',
+  },
+
   caratula: {
     borderColor: 'transparent',
     borderRadius: 10,
@@ -1467,7 +2990,7 @@ const estilos = StyleSheet.create({
     fontSize: 14,
   },
   caratulaTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
     marginTop: 6,
   },
@@ -1556,7 +3079,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   canalNombre: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     flex: 1,
     fontSize: 17,
   },
@@ -1591,7 +3114,7 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
   },
   tituloEpisodio: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 19,
     fontWeight: '600',
   },
@@ -1600,7 +3123,7 @@ const estilos = StyleSheet.create({
     gap: 12,
   },
   datoEpisodio: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 14,
   },
   notaEpisodio: {
@@ -1618,7 +3141,7 @@ const estilos = StyleSheet.create({
     borderColor: VERDE,
   },
   fichaTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 22,
   },
   textoEnfocado: {
@@ -1626,7 +3149,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   fichaDetalle: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 6,
   },

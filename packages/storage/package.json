@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./sincronizar": "./src/sincronizar.ts"
   },
   "dependencies": {
     "@m3u/core": "*",

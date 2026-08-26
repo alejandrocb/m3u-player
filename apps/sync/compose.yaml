@@ -1,0 +1,39 @@
+# Despliegue del servidor de sincronización.
+#
+#   docker compose -f apps/sync/compose.yaml up -d --build
+#
+# El contexto es la raíz del repositorio porque la imagen se lleva dentro
+# packages/core, packages/ui y packages/storage.
+
+# Sin esto, Compose toma el nombre de la carpeta —`sync`— y con él bautiza la
+# imagen y el volumen. En una máquina compartida con otras aplicaciones, un
+# proyecto llamado "sync" a secas se lo lleva cualquiera por delante; y cuando
+# el volumen ya tiene datos dentro, cambiarle el nombre es una migración.
+name: m3u-sync
+
+services:
+  sync:
+    build:
+      context: ../..
+      dockerfile: apps/sync/Dockerfile
+    container_name: m3u-sync
+    restart: unless-stopped
+    # Solo en la interfaz local, igual que hace aierp-prod con el 3200: el
+    # que da la cara a internet es Caddy, que además pone el TLS. Publicarlo
+    # en 0.0.0.0 sería servir en claro los tokens y las URLs del panel.
+    ports:
+      - '127.0.0.1:3300:3300'
+    volumes:
+      - m3u-sync-datos:/datos
+    environment:
+      DATOS: /datos
+      PUERTO: '3300'
+    # Sin acceso a nada que no necesite.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  m3u-sync-datos:

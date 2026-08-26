@@ -14,6 +14,8 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  FichaLarga,
+  EpisodioDeSerieFicha,
   EpisodioFicha,
   GrupoFicha,
   Pagina,
@@ -34,7 +36,8 @@ const DUENO: Record<'canal' | 'pelicula' | 'episodio', OwnerKind> = {
 };
 
 /** El criterio de orden que pide la interfaz, en el idioma del almacén. */
-function ordenDe(pagina: Pagina): { sort?: 'rating' | 'added' } {
+function ordenDe(pagina: Pagina): { sort?: 'rating' | 'added' | 'recomendada' } {
+  if (pagina.orden === 'recomendada') return { sort: 'recomendada' };
   if (pagina.orden === 'valoracion') return { sort: 'rating' };
   if (pagina.orden === 'reciente') return { sort: 'added' };
   return {};
@@ -78,6 +81,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           anio: pelicula.year,
           valoracion: pelicula.rating ?? null,
           logo: pelicula.logo,
+          genero: null,
         }));
     },
 
@@ -95,6 +99,8 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           anio: serie.year,
           valoracion: serie.rating ?? null,
           logo: serie.logo,
+          // El escritorio todavía no importa el género de las series.
+          genero: null,
         }));
     },
 
@@ -126,7 +132,34 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         anio: pelicula.year,
         valoracion: pelicula.rating ?? null,
         logo: pelicula.logo,
+        genero: null,
       }));
+    },
+
+    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
+      return store.episodesById(ids).map((episodio) => ({
+        id: episodio.id,
+        serieId: episodio.seriesId,
+        serieTitulo: episodio.seriesTitle,
+        serieLogo: episodio.seriesLogo,
+        temporada: episodio.season,
+        numero: episodio.episode,
+        titulo: episodio.title,
+      }));
+    },
+
+    async detalleDePelicula(): Promise<FichaLarga | null> {
+      // El escritorio todavía no habla con el panel: cuando tenga su propia
+      // carga, esto irá a `get_vod_info` igual que en Android.
+      return null;
+    },
+
+    async guardarGeneros(): Promise<void> {
+      // El escritorio no habla con el servidor de la casa todavía.
+    },
+
+    async detalleDeSerie(): Promise<FichaLarga | null> {
+      return null;
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
@@ -136,6 +169,8 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         anio: serie.year,
         valoracion: serie.rating ?? null,
         logo: serie.logo,
+        // El escritorio todavía no importa el género de las series.
+          genero: null,
       }));
     },
 

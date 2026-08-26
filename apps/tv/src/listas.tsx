@@ -11,17 +11,38 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 
 import type { Cuenta, GestorCuentas } from '@m3u/ui';
 import { hostDe } from '@m3u/ui';
+import { FONDO, ROJO, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
 
 interface Props {
   gestor: GestorCuentas;
   onConectar: (cuenta: Cuenta) => void;
   /** Para repintar cuando el gestor cambia por dentro. */
   onCambio: () => void;
+  /** Conectar el aparato con el servidor de casa, que reparte las listas. */
+  onEmparejar: () => void;
+  /**
+   * A qué casa está conectado este aparato, si es que lo está.
+   *
+   * Sin esto no había forma de saberlo desde la tele: emparejabas, todo iba
+   * bien, y la pantalla quedaba exactamente igual que antes —porque la lista
+   * que reparte el servidor suele ser la misma que ya tenías puesta a mano, y
+   * entonces no se añade nada—. Parecía que no había funcionado.
+   */
+  grupo: string | null;
+  /** Desconectar del servidor. Lo guardado en el aparato se queda. */
+  onDesemparejar: () => void;
 }
 
 type Modo = { tipo: 'lista' } | { tipo: 'alta' } | { tipo: 'edicion'; cuenta: Cuenta };
 
-export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
+export function PantallaListas({
+  gestor,
+  onConectar,
+  onCambio,
+  onEmparejar,
+  grupo,
+  onDesemparejar,
+}: Props) {
   const [modo, setModo] = useState<Modo>({ tipo: 'lista' });
   const [abierta, setAbierta] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -112,6 +133,30 @@ export function PantallaListas({ gestor, onConectar, onCambio }: Props) {
         primero={cuentas.length === 0}
         onPress={() => setModo({ tipo: 'alta' })}
       />
+
+      {/*
+        La vía corta, y la que se usa en los aparatos de la familia: en vez de
+        escribir la dirección del panel con el mando, el aparato enseña un
+        código y recibe las listas de su casa ya puestas.
+      */}
+      {grupo ? (
+        <View style={estilos.conectado}>
+          <Text style={estilos.conectadoTexto}>✓  Conectado a {grupo}</Text>
+          <Text style={estilos.detalle}>
+            El "seguir viendo" y los favoritos se comparten con los demás aparatos de esta casa.
+          </Text>
+          <View style={estilos.acciones}>
+            <Boton texto="Desconectar" peligro onPress={onDesemparejar} />
+          </View>
+        </View>
+      ) : (
+        <>
+          <Boton texto="⇄  Conectar con el servidor de casa" onPress={onEmparejar} />
+          <Text style={estilos.aviso}>
+            Comparte el "seguir viendo" y los favoritos con los demás aparatos, y trae sus listas.
+          </Text>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -207,11 +252,9 @@ function Boton({
   );
 }
 
-const VERDE = '#35d07f';
-
 const estilos = StyleSheet.create({
   pantalla: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
   },
   contenido: {
@@ -225,7 +268,7 @@ const estilos = StyleSheet.create({
     marginBottom: 10,
   },
   vacio: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 18,
   },
   ficha: {
@@ -251,7 +294,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   detalle: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 6,
   },
@@ -279,15 +322,15 @@ const estilos = StyleSheet.create({
     borderColor: '#fff',
   },
   botonTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   botonTextoPrincipal: {
-    color: '#06131c',
+    color: FONDO,
     fontWeight: '700',
   },
   etiqueta: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 8,
   },
@@ -304,8 +347,20 @@ const estilos = StyleSheet.create({
     color: '#5d6f7d',
     fontSize: 14,
   },
+  conectado: {
+    backgroundColor: 'rgba(53,208,127,0.12)',
+    borderColor: VERDE,
+    borderLeftWidth: 3,
+    borderRadius: 10,
+    padding: 18,
+  },
+  conectadoTexto: {
+    color: VERDE,
+    fontSize: 20,
+    fontWeight: '700',
+  },
   error: {
-    color: '#ff6b6b',
+    color: ROJO,
     fontSize: 16,
   },
 });

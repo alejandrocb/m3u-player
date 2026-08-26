@@ -13,7 +13,7 @@
   },
   "scripts": {
     "probe": "node tools/probe/src/index.ts",
-    "test": "node --test packages/*/test/*.test.ts",
+    "test": "node --test packages/*/test/*.test.ts apps/sync/test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
     "start:desktop": "electron apps/desktop",
     "bench": "node tools/probe/src/bench.ts"

@@ -18,11 +18,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { avanceDePrograma, programaActual, programasSiguientes } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 import type { Elemento, Programacion } from '@m3u/ui';
+import { TINTA, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
 
 /** Cuánto se espera antes de pedir, para no consultar en cada pulsación. */
 const ESPERA_MS = 350;
@@ -204,7 +205,15 @@ export function Parrilla({
       {siguientes.length > 0 ? (
         <>
           <Text style={estilos.rotulo}>A continuación</Text>
-          <ScrollView style={estilos.lista} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            style={estilos.lista}
+            showsVerticalScrollIndicator={false}
+            // Por lo mismo que las listas de App.tsx: en la tele el
+            // sistema la desplazaba sola al pulsar una flecha.
+            focusable={false}
+            isTVSelectable={false}
+            scrollEnabled={!Platform.isTV}
+          >
             {siguientes.map((programa) => (
               <View key={programa.desde.getTime()} style={estilos.fila}>
                 <Text style={estilos.horaFila}>{hora(programa.desde)}</Text>
@@ -219,8 +228,6 @@ export function Parrilla({
     </View>
   );
 }
-
-const VERDE = '#35d07f';
 
 const estilos = StyleSheet.create({
   columna: {
@@ -257,7 +264,7 @@ const estilos = StyleSheet.create({
     textAlign: 'center',
   },
   nombre: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 19,
     fontWeight: '700',
   },
@@ -269,7 +276,7 @@ const estilos = StyleSheet.create({
     justifyContent: 'space-between',
   },
   horaFuerte: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 13,
     fontVariant: ['tabular-nums'],
   },
@@ -284,7 +291,7 @@ const estilos = StyleSheet.create({
     height: '100%',
   },
   tituloPrograma: {
-    color: '#f2f6f9',
+    color: TINTA,
     fontSize: 17,
     fontWeight: '600',
   },
@@ -309,7 +316,7 @@ const estilos = StyleSheet.create({
     paddingVertical: 6,
   },
   horaFila: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 13,
     fontVariant: ['tabular-nums'],
     width: 42,

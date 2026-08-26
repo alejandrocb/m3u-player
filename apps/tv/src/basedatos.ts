@@ -19,6 +19,8 @@ import {
   COLUMNAS_MIGRADAS,
   CONTENT_TABLES,
   INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_CATALOGO_SQL,
+  RELLENOS_SQL,
   SCHEMA_FTS_SQL,
   SCHEMA_PERFILES_SQL,
   SCHEMA_SQL,
@@ -63,6 +65,10 @@ export function abrirBase(): { db: DB; conBusquedaRapida: boolean } {
 
   // Estos índices necesitan las columnas de arriba: por eso van los últimos.
   for (const indice of INDICES_TRAS_MIGRAR_SQL) db.executeSync(indice);
+
+  // Y las filas de antes de que existiera la sincronización necesitan fecha.
+  for (const relleno of RELLENOS_SQL) db.executeSync(relleno);
+  for (const relleno of RELLENOS_CATALOGO_SQL) db.executeSync(relleno);
 
   return { db, conBusquedaRapida };
 }
@@ -178,9 +184,21 @@ export function guardarCatalogo(
 
     for (const serie of library.series) {
       db.executeSync(
-        `INSERT INTO series (id, title, sort_title, year, rating, added, logo)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [serie.id, serie.title, fold(serie.title), serie.year, serie.rating, serie.added, serie.logo],
+        // El género de las series viene con el catálogo, así que se guarda al
+        // importar. El de las películas cuesta una petición por título y lo
+        // rellena el servidor por su cuenta.
+        `INSERT INTO series (id, title, sort_title, year, rating, added, logo, genre)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          serie.id,
+          serie.title,
+          fold(serie.title),
+          serie.year,
+          serie.rating,
+          serie.added,
+          serie.logo,
+          serie.genre,
+        ],
       );
       for (const grupo of serie.groups) {
         db.executeSync('INSERT OR IGNORE INTO item_group (kind, item_id, group_name) VALUES (?, ?, ?)', [

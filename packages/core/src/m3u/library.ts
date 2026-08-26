@@ -179,6 +179,8 @@ export function buildLibrary(entries: RawEntry[]): Library {
         rating: null,
         added: null,
         logo: draft.logo,
+        // Del M3U no sale género: ahí no hay más que el nombre de la entrada.
+        genre: null,
         groups: [...draft.groups],
         seasons,
       };

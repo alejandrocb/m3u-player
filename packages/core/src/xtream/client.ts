@@ -13,6 +13,7 @@ import type {
   XtreamLiveStream,
   XtreamSeries,
   XtreamSeriesInfo,
+  XtreamVodInfo,
   XtreamServerInfo,
   XtreamShortEpg,
   XtreamUserInfo,
@@ -131,6 +132,15 @@ export class XtreamClient {
     this.request<XtreamSeries[]>('get_series', categoryId ? { category_id: categoryId } : {});
 
   seriesInfo = (seriesId: number | string) => this.request<XtreamSeriesInfo>('get_series_info', { series_id: seriesId });
+
+  /**
+   * La ficha completa de una película: sinopsis, reparto e imagen apaisada.
+   *
+   * Es **una petición por película**, así que no vale para importar el
+   * catálogo —serían 18.000—. Se pide de una en una, para la que preside el
+   * inicio y para cuando haga falta enseñar una ficha de detalle.
+   */
+  vodInfo = (vodId: number | string) => this.request<XtreamVodInfo>('get_vod_info', { vod_id: vodId });
 
   /**
    * Programación de un canal: lo que echan ahora y lo que viene detrás.

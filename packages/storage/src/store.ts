@@ -12,12 +12,15 @@
 import { DatabaseSync } from 'node:sqlite';
 
 import type { Library, Variant } from '@m3u/core';
-import { fold } from '@m3u/core';
+import { filtroRecomendadaSQL, fold, ordenRecomendadaSQL } from '@m3u/core';
 
 import {
   CONTENT_TABLES,
   COLUMNAS_MIGRADAS,
   INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_CATALOGO_SQL,
+  RELLENOS_SQL,
+  SCHEMA_PERFILES_SQL,
   SCHEMA_FTS_SQL,
   SCHEMA_SQL,
   SCHEMA_VERSION,
@@ -72,6 +75,17 @@ export interface EpisodeRow {
   seconds: number | null;
 }
 
+/** Un episodio con lo justo de su serie para pintarlo fuera de ella. */
+export interface EpisodeOfSeriesRow {
+  id: number;
+  seriesId: string;
+  seriesTitle: string;
+  seriesLogo: string | null;
+  season: number;
+  episode: number;
+  title: string | null;
+}
+
 export interface SearchHit {
   kind: 'channel' | 'movie' | 'series';
   id: string;
@@ -98,7 +112,7 @@ export interface PageOptions {
    * `rating` pone arriba lo mejor valorado y `added` lo último que entró en
    * el catálogo; por defecto va por título.
    */
-  sort?: 'title' | 'rating' | 'added';
+  sort?: 'title' | 'rating' | 'added' | 'recomendada';
 }
 
 export class LibraryStore {
@@ -120,12 +134,18 @@ export class LibraryStore {
     // La búsqueda va aparte porque FTS5 es opcional en SQLite. La compilación
     // que trae Node lo incluye, así que aquí siempre debería crearse.
     db.exec(SCHEMA_FTS_SQL);
+    // Perfiles, historial y favoritos. Aquí todavía no hay interfaz que los
+    // use, pero las tablas se crean igual: son las que se sincronizan entre
+    // aparatos, y las migraciones de abajo dan por hecho que existen.
+    db.exec(SCHEMA_PERFILES_SQL);
     // Columnas añadidas después de la primera versión: `CREATE TABLE IF NOT
     // EXISTS` no toca una tabla que ya existe. La lista vive en el esquema,
     // que es lo que comparten escritorio y Android.
     for (const { tabla, columna, tipo } of COLUMNAS_MIGRADAS) ensureColumn(db, tabla, columna, tipo);
     // Estos índices necesitan las columnas de arriba: van los últimos.
     for (const indice of INDICES_TRAS_MIGRAR_SQL) db.exec(indice);
+    for (const relleno of RELLENOS_SQL) db.exec(relleno);
+    for (const relleno of RELLENOS_CATALOGO_SQL) db.exec(relleno);
 
     const store = new LibraryStore(db);
     store.#setMeta('schema_version', String(SCHEMA_VERSION));
@@ -311,19 +331,20 @@ export class LibraryStore {
     // Lo que no tiene el dato, al final: `NULL` no es un cero ni una fecha
     // antiquísima.
     const orden = ordenDe(sort);
+    const filtro = filtroDe(sort);
     const rows = group
       ? (this.#db
           .prepare(
             `SELECT m.id, m.title, m.year, m.rating, m.added, m.logo, m.tags
                FROM movie m
                JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
-              WHERE g.group_name = ?
-              ORDER BY ${orden.replace(/(rating|sort_title)/g, 'm.$1')} LIMIT ? OFFSET ?`,
+              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 'm.$1')}` : ''}
+              ORDER BY ${orden.replace(/\b(rating|sort_title|year|added)\b/g, 'm.$1')} LIMIT ? OFFSET ?`,
           )
           .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
           .prepare(
-            `SELECT id, title, year, rating, added, logo, tags FROM movie ORDER BY ${orden} LIMIT ? OFFSET ?`,
+            `SELECT id, title, year, rating, added, logo, tags FROM movie ${filtro ? `WHERE ${filtro}` : ''} ORDER BY ${orden} LIMIT ? OFFSET ?`,
           )
           .all(limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toMovie);
@@ -332,18 +353,19 @@ export class LibraryStore {
   series(options: PageOptions = {}): SeriesRow[] {
     const { limit = 100, offset = 0, group, sort } = options;
     const orden = ordenDe(sort);
+    const filtro = filtroDe(sort);
     const rows = group
       ? (this.#db
           .prepare(
             `SELECT s.id, s.title, s.year, s.rating, s.added, s.logo
                FROM series s
                JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
-              WHERE g.group_name = ?
-              ORDER BY ${orden.replace(/(rating|sort_title)/g, 's.$1')} LIMIT ? OFFSET ?`,
+              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 's.$1')}` : ''}
+              ORDER BY ${orden.replace(/\b(rating|sort_title|year|added)\b/g, 's.$1')} LIMIT ? OFFSET ?`,
           )
           .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
-          .prepare(`SELECT id, title, year, rating, added, logo FROM series ORDER BY ${orden} LIMIT ? OFFSET ?`)
+          .prepare(`SELECT id, title, year, rating, added, logo FROM series ${filtro ? `WHERE ${filtro}` : ''} ORDER BY ${orden} LIMIT ? OFFSET ?`)
           .all(limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toSeries);
   }
@@ -366,6 +388,38 @@ export class LibraryStore {
 
   channelsById(ids: string[]): ChannelRow[] {
     return enElOrdenPedido(ids, this.#porId('channel', ids).map(toChannel));
+  }
+
+  /**
+   * Episodios por identificador, con el título y la carátula de su serie.
+   *
+   * El salto a `series` va en la consulta porque quien pide esto —"seguir
+   * viendo"— solo tiene el id del episodio, y con eso no se puede pintar nada
+   * reconocible: lo que uno identifica es la carátula de la serie.
+   */
+  episodesById(ids: string[]): EpisodeOfSeriesRow[] {
+    if (ids.length === 0) return [];
+    const huecos = ids.map(() => '?').join(', ');
+    const filas = this.#db
+      .prepare(
+        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS series_title, s.logo AS series_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.id IN (${huecos})`,
+      )
+      .all(...ids) as Array<Record<string, unknown>>;
+
+    const fichas: EpisodeOfSeriesRow[] = filas.map((fila) => ({
+      id: Number(fila.id),
+      seriesId: fila.series_id as string,
+      seriesTitle: fila.series_title as string,
+      seriesLogo: (fila.series_logo as string) ?? null,
+      season: Number(fila.season),
+      episode: Number(fila.episode),
+      title: (fila.title as string) ?? null,
+    }));
+
+    const porClave = new Map(fichas.map((ficha) => [String(ficha.id), ficha]));
+    return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodeOfSeriesRow => ficha !== undefined);
   }
 
   #porId(tabla: 'movie' | 'series' | 'channel', ids: string[]): Array<Record<string, unknown>> {
@@ -503,9 +557,19 @@ function enElOrdenPedido<T extends { id: string }>(ids: string[], filas: T[]): T
 }
 
 function ordenDe(sort: PageOptions['sort']): string {
+  if (sort === 'recomendada') return ordenRecomendadaSQL();
   if (sort === 'rating') return 'rating IS NULL, rating DESC, sort_title';
   if (sort === 'added') return 'added IS NULL, added DESC, sort_title';
   return 'sort_title';
+}
+
+/**
+ * `recomendada` es el único orden que además **filtra**: deja fuera lo que no
+ * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte el
+ * proveedor, o copia de pase de prensa—. Los demás devuelven todo.
+ */
+function filtroDe(sort: PageOptions['sort']): string | null {
+  return sort === 'recomendada' ? filtroRecomendadaSQL() : null;
 }
 
 function toChannel(row: Record<string, unknown>): ChannelRow {

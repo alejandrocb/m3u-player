@@ -50,6 +50,10 @@ plataforma vive fuera.
 - **`packages/storage`** — persistencia en SQLite con `node:sqlite` (viene
   dentro de Node y de Electron 43; **no hay módulos nativos que compilar**, y no
   debe introducirse ninguno). Búsqueda global con FTS5.
+- **`apps/sync`** — el servidor del VPS: emparejamiento por código, grupos por
+  casa y el `POST /api/sync`. Sin dependencias, en un contenedor detrás de
+  Caddy. Cada grupo tiene su SQLite **con el mismo esquema que los aparatos**,
+  para poder usar el mismo código de fusión a los dos lados.
 - **`packages/ui`** — el comportamiento de la interfaz sin pintarla: pila de
   navegación, foco en rejilla y el puerto de datos que la vista consume. Sin
   dependencias de plataforma, como el core: **el destino es Android TV y
@@ -171,6 +175,134 @@ de parsear nada. Así que ahí:
 
 La importación completa tarda ~50 s contra el panel, casi todo en las 66
 peticiones, que van en fila. Paralelizarlas es la optimización pendiente.
+
+### Qué se recomienda: la nota sirve para descartar, no para ordenar
+
+En la lista real **la valoración está inflada**: hay cientos de películas con
+un 10 pelado, que no significa que sean buenas sino que no las ha valorado
+nadie. Así que el criterio de la portada y de la fila "Recomendadas" ordena
+por **año, luego por lo último que ha entrado, y luego por nota**, y usa la
+nota para filtrar: fuera lo que baje de 7 y fuera lo que llegue a 10.
+
+También quedan fuera las que llevan **"Screening"** en el título: son
+grabaciones de pase de prensa, previas al estreno, y se ven mal. Siguen en el
+catálogo —el sesgo del clasificador es no ocultar nada—, solo que no presiden
+el inicio.
+
+El criterio vive en `packages/core/src/recomendar.ts` porque lo aplican los
+dos lados: el aparato, cuando saca sus sugerencias por su cuenta, y el
+servidor de la casa, que las prepara una vez al día. Si cada uno usara el
+suyo, la portada cambiaría según quién la hubiera calculado. En SQL entra por
+`Orden = 'recomendada'`, que es **el único orden que además filtra**.
+
+### La portada del inicio: apaisada o no sale
+
+La carátula del proveedor es un cartel 2:3 y la portada es un rectángulo
+ancho. Recortando el cartel sale la cara del actor a pantalla completa y
+borrosa, y estirarlo es peor. La imagen que vale es `backdrop_path`, que viene
+en la ficha larga —`get_vod_info` en las películas, `get_series_info` en las
+series—, así que la regla es **sin imagen apaisada no hay sugerencia**: se
+pregunta por ocho candidatas y se cogen las cuatro primeras que la traigan. Si
+no la trae ninguna, el inicio arranca por "Seguir viendo".
+
+La ficha de una serie se pide **aparte de sus temporadas** aunque salgan de la
+misma respuesta: la portada quiere la ficha de cuatro series y no sus
+episodios, que es la parte gorda. Se guarda en las mismas cinco columnas que
+las películas (`plot`, `actors`, `backdrop`, `genre`, `detalle_pedido`).
+
+**Eso lo prepara el servidor**, una vez al día y por lista, no por aparato: es
+una petición por candidata y bastantes no sirven, así que multiplicado por los
+tres aparatos de la casa y por cada arranque salían muchas peticiones
+repetidas contra el panel para el mismo resultado. El VPS ya guarda las URLs de
+las listas, así que no expone ningún secreto nuevo.
+
+Y hace algo que un televisor no puede: **mide la imagen** antes de proponerla,
+leyendo las medidas de la cabecera del fichero con una petición `Range`
+(`apps/sync/src/imagen.ts`, sin dependencias: son JPEG, PNG, GIF y WebP). Hay
+paneles que meten el cartel vertical en el campo del fondo.
+
+Los identificadores se calculan con el mismo `slug(título-año)` de
+`@m3u/core`, y por eso valen para reproducir en el aparato. Aun así, el
+presentador comprueba que cada sugerencia exista en la base local antes de
+enseñarla: el catálogo del aparato puede ser de hace tres días.
+
+En la carátula enfocada van el título, el género, el año y la nota, **dentro de
+la imagen** y sobre un degradado oscuro: en blanco sobre el cartel a pelo, la
+mitad de las veces el texto cae encima de una cara clara. Debajo no, porque
+entonces la fila tiene que reservar un hueco que está vacío en todas las fichas
+menos una.
+
+**Con el dedo no hay foco**, así que la ficha de la carátula —que en el
+televisor solo se enseña en la enfocada— se enseña siempre en tablet y
+teléfono: si no, ahí no se vería nunca ni el título ni la nota. Lo que cambia
+no es el aparato sino la forma de señalar, y es la única diferencia que se
+permite entre plataformas: **una sola interfaz**, con lo que dependa de tener
+foco resuelto en el sitio donde se pinta. `DESPLAZA_EL_DEDO` (`!Platform.isTV`)
+es la que lo decide, la misma que ya desactivaba el desplazamiento del sistema.
+
+La portada solo responde al dedo **en el botón de reproducir**. Con la portada
+entera pulsable, en la tablet arrancaba la película al tocar la imagen sin
+querer.
+
+**El género de una serie viene con el catálogo** (`get_series` lo trae) y se
+guarda al importar. El de una película no: `get_vod_streams` da título, cartel,
+nota y año, y el género está en la ficha larga, una petición por título. Por eso
+lo averigua el servidor en la misma pasada diaria, para las cuarenta más
+recientes y las cuarenta mejor valoradas —que es justo lo que llena los
+carruseles del inicio—, y el aparato lo anota en su base con `guardarGeneros`.
+Lo que no coincida sale sin género y ya está.
+
+**El servidor manda datos, nunca interfaz, y nunca es imprescindible.** Si no
+contesta, si aún no ha preparado esa lista o si la casa no tiene servidor, el
+aparato saca sus portadas preguntando al panel como siempre. `GET
+/api/portadas` devuelve `[]` y no pasa nada.
+
+### Compartir el historial entre aparatos: nada se borra de verdad
+
+Dejar una película a medias en la tele y seguirla en la tablet exige compartir
+las cuatro tablas de perfil (`profile`, `progress`, `favorite`,
+`profile_setting`). Sale casi gratis porque **los identificadores salen del
+contenido**: `lola-pater-2017` es la misma película en los dos aparatos, así
+que sincronizar es mandar filas y no traducir nada.
+
+Las reglas, que hay que respetar al tocar cualquier escritura de perfil:
+
+- **Gana el cambio más reciente**, fila a fila. No se fusionan contenidos: el
+  minuto por el que ibas es el último que se anotó, no la media de dos. La
+  regla vive en `fusionar` (`packages/ui/src/sincronizacion.ts`) porque el
+  servidor tiene que aplicar **exactamente la misma**; si decidiera distinto,
+  cada aparato acabaría con una versión creyendo que están de acuerdo.
+- **Ningún `DELETE`.** Una baja marca `deleted = 1` y deja la fila de lápida.
+  Borrarla no deja nada que contar, y el otro aparato la volvería a subir:
+  quitas algo de favoritos y al día siguiente ha vuelto.
+- **Toda escritura sella `updated` y `origin`.** La fecha decide quién gana y
+  el aparato desempata los empates al milisegundo, que es lo que garantiza que
+  los dos lleguen a la misma conclusión decidiendo por separado.
+- Las lecturas filtran `deleted = 0`. Es fácil olvidarlo al añadir una
+  consulta y el síntoma es contenido fantasma.
+- No hay registro de cambios aparte: las propias tablas lo son, y se pide "lo
+  posterior a esta fecha". El SQL genérico está en
+  `packages/storage/src/sincronizar.ts`, contra `SINCRONIZADAS` del esquema:
+  añadir una tabla al reparto es una línea allí.
+
+**Hay dos marcas de agua, y no son intercambiables.** La de subida va en la
+fecha del cambio (`updated`, el reloj del aparato) y la de bajada en el sello
+de recepción del servidor (`recibido`, el reloj del VPS). Confundirlas se traga
+cambios enteros: si la tele anota algo el martes y no se conecta hasta el
+lunes, la tablet —cuya marca ya va por el domingo— nunca vería ese cambio si
+las novedades se pidieran por su fecha. `recibido` es la única columna que el
+servidor tiene de más, y la pone `sellarRecepcion` sobre lo que de verdad se
+escribió.
+
+El emparejamiento es por código corto: el aparato enseña `K7M2-P4XR` y tú lo
+apruebas en la web. **El código no vale para llevarse el token**; para eso hay
+un secreto largo que el aparato guarda y nunca muestra. Si fuera el mismo, quien
+adivinara el código de la pantalla entraría en el grupo. El token se entrega una
+sola vez y de él solo queda la huella.
+
+Lo que esta regla **no** arregla es un reloj mal puesto: un aparato adelantado
+gana siempre. Es la contrapartida de fechar en el origen, y el servidor
+debería desconfiar de lo que llegue muy por delante de su hora.
 
 ### El invariante del dominio: fusionar variantes de calidad
 
@@ -308,11 +440,34 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   no salen hasta que Metro monta el bundle. Para comprobar la app de Android:
   `cd apps/tv` y `npx.cmd tsc --noEmit -p tsconfig.json`,
   aunque hoy saca ruido de los tipos de React Native contra `packages/core`.
+- **En release, `console.log` sí llega a logcat.** Se puede depurar en la tele
+  con `adb logcat -s ReactNativeJS:V`, y los fallos de JavaScript salen
+  enteros en `adb logcat -b crash`.
+- **React Native 0.80+ trae degradados de verdad**, con
+  `experimental_backgroundImage` y sintaxis CSS. No hace falta
+  `react-native-linear-gradient` ni ningún otro módulo nativo. Simular un
+  degradado con bandas de color no vale: dos rectángulos con opacidades
+  distintas siempre dejan costura, y se ven como franjas.
 - **Los emojis del reproductor los pinta Android con su paleta.** ⏪ y ⏩ salían
   con el fondo naranja del emoji del sistema, imposible de quitar por estilo.
   Los iconos se dibujan con vistas en `apps/tv/src/iconos.tsx`: un triángulo es
   una caja de tamaño cero con un solo borde relleno.
 
+- **Los colores viven en `apps/tv/src/tema.ts`.** React Native no tiene hojas
+  de estilo —ni cascada, ni selectores, ni herencia—, así que lo único que se
+  puede compartir entre pantallas son los valores. Antes el verde estaba
+  copiado a mano en cinco ficheros y el fondo, escrito dentro de cada
+  degradado. Los degradados se montan con plantilla (`FONDO_RGB`) porque
+  `experimental_backgroundImage` es texto CSS y ahí hacen falta las
+  componentes sueltas.
+- **Una regex escrita desde un heredoc puede llegar rota y en silencio.**
+  `store.ts` tenía `/\b(rating|sort_title)\b/` con **retrocesos de verdad**
+  (0x08) en vez de `\b`: el heredoc se comió las barras invertidas al
+  escribir el fichero. La regex no casaba nunca, así que el prefijo de tabla
+  no se ponía y la consulta con `JOIN` quedaba ambigua. No lo cazó nadie
+  porque el escritorio es un prototipo y esa ruta no se prueba. Los ficheros
+  con barras invertidas se escriben con la herramienta de escritura, no
+  redirigiendo un heredoc.
 - **Regex construidas con plantillas**: dentro de `` ` ` ``, `\b` es un carácter
   de retroceso y `\s` se queda en `s`. Usa `String.raw`. Costó dos bugs
   silenciosos en `normalize.ts`.
@@ -333,6 +488,27 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   quedan puestas para siempre. Se deja `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`
   a propósito: sin él no habría forma de salir de la aplicación en una tablet
   sin botones físicos.
+- **Hooks detrás de un `return` temprano cierran la aplicación.** Es el fallo
+  que más veces ha caído aquí: cuatro, en `PantallaPerfiles`, `PantallaListas`
+  y dos en `BibliotecaVista`. React exige el mismo número de hooks en cada
+  pintado, y `if (!estado) return <Espera/>` se los salta en el primero. El
+  síntoma es `Rendered more hooks than during the previous render` y la app
+  cerrándose al entrar. **Todo `useState`, `useEffect`, `useCallback` y
+  `useRef` va arriba del componente**, aunque solo lo use algo que está 400
+  líneas más abajo.
+- **`adb push` puede fallar en silencio y `pm install` decir "Success".**
+  Instala el fichero que ya estuviera en `/data/local/tmp`, o sea el APK
+  anterior, y te pasas media hora buscando en el código un fallo que no
+  existe. Hay que **comparar el tamaño enviado con el local** antes de
+  instalar: `adb shell wc -c < /data/local/tmp/app-release.apk`.
+- **Instalar no reinicia la app.** Si estaba abierta, sigue corriendo el
+  JavaScript viejo. `adb shell am force-stop com.m3utv` después de instalar.
+- **En Git Bash, las rutas del aparato se convierten a rutas de Windows.**
+  `adb push algo /data/local/tmp/` acaba enviando a `C:/Program Files/Git/data/...`.
+  Hace falta `MSYS_NO_PATHCONV=1` delante, o usar PowerShell.
+- **Ver la pantalla del aparato ahorra iteraciones**: `adb shell screencap -p
+  /sdcard/x.png` y `adb pull`. Ojo con redirigir la salida de `exec-out` en
+  PowerShell, que le mete BOM y corrompe el PNG.
 - **MIUI bloquea `adb install`** con `INSTALL_FAILED_USER_RESTRICTED` aunque la
   depuración USB esté activa: hace falta además "Instalar vía USB" en las
   opciones de desarrollador, y Xiaomi lo vuelve a desactivar por su cuenta. El
@@ -373,11 +549,39 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
 - **`node:sqlite` devuelve objetos sin prototipo.** El almacén los convierte a
   objetos normales antes de devolverlos; mantén esa costumbre o `deepEqual`
   fallará en los tests.
+- **`cast` es palabra reservada de SQL.** SQLite deja crear la columna con
+  `ALTER TABLE`, pero `SELECT plot, cast, backdrop` no se puede parsear y la
+  consulta revienta. Costó un buen rato porque el error se lo tragaba un
+  `try/catch` de más arriba y la portada salía sin sinopsis, sin decir nada.
+  La columna se llama `actors`. Al añadir cualquier columna, comprobar que el
+  nombre no es una palabra reservada.
+- **La ficha larga de una película** —sinopsis, reparto e imagen apaisada—
+  **no viene con el catálogo**: `get_vod_streams` da título, cartel, nota y
+  año. Lo demás está en `get_vod_info`, que es una petición por película:
+  inviable para 18.000, pero se pide para la que preside el inicio y se
+  guarda. Medido contra el panel real: sinopsis, reparto y fondo, los tres.
+  El identificador de panel de una película **no se guarda al importar**; sale
+  del último tramo de la URL de su variante (`/movie/usuario/clave/12345.mkv`).
+- **La media estrella (U+2BE8) no está en la fuente de un televisor** y sale
+  como un cuadrado. Se dibuja: una estrella llena recortada al 50 % sobre una
+  hueca. Es el mismo motivo por el que los iconos del reproductor son vistas.
 - **FTS5 se rompe con la puntuación del usuario.** `toMatchQuery` entrecomilla
   palabra a palabra; no pases texto crudo a `MATCH`.
 - **`.probe-cache/` contiene la lista real con las credenciales del panel en
   cada URL**, y `.probe-cache/test-url.txt` también. Está en `.gitignore`. Al
   imprimir cualquier URL, redáctala como hacen `probe` y `main.mjs`.
+- **La dirección del servidor de sincronización no va en el repositorio**, que
+  es público. Metro resuelve el módulo inventado `servidor-sync` a
+  `apps/tv/servidor.local.js` si existe y a `servidor.ejemplo.js` si no, con un
+  `resolveRequest` en `metro.config.js`. Al clonar en un equipo nuevo hay que
+  crear el local (`cp apps/tv/servidor.ejemplo.js apps/tv/servidor.local.js`) o
+  la app pedirá la dirección a mano al emparejar.
+- **La MAC no sirve para identificar un aparato en Android.**
+  `getMacAddress()` devuelve `02:00:00:00:00:00` desde Android 6, leerla de
+  `/sys/class/net/` está cerrado desde Android 10, y encima el sistema la
+  aleatoriza por red. El identificador se lo inventa el propio aparato
+  (`idDeAparato`, en la tabla `meta`) y sobrevive a reinicios y
+  actualizaciones, no a borrar los datos.
 
 ## Estado y siguiente paso
 
@@ -387,3 +591,9 @@ El README lleva la tabla de estado y las cifras medidas contra la lista real
 Pendiente: el árbitro de conexión, la interfaz y la descarga a disco. Del
 reproductor solo queda decidir qué hacer con el redimensionado de la ventana
 transparente.
+
+Compartir el historial entre aparatos está terminado de punta a punta: el
+modelo, el servidor (`apps/sync`, ver su README), el cliente (`ClienteSync`) y
+la pantalla de emparejamiento. Falta **probarlo contra el VPS de verdad** y
+decidir cada cuánto conviene sincronizar —ahora son dos minutos mientras la
+biblioteca está abierta, más una vez al conectar—.

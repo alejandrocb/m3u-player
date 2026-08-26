@@ -89,7 +89,17 @@ export interface XtreamEpisode {
 
 export interface XtreamSeriesInfo {
   seasons?: unknown[];
-  info?: { name?: string; cover?: string; plot?: string; releaseDate?: string };
+  info?: {
+    name?: string;
+    /** El cartel, vertical. Para el fondo del inicio no sirve. */
+    cover?: string;
+    plot?: string;
+    releaseDate?: string;
+    cast?: string;
+    genre?: string;
+    /** Imagen apaisada, en una lista, igual que en las películas. */
+    backdrop_path?: string[];
+  };
   /** Clave = número de temporada. */
   episodes?: Record<string, XtreamEpisode[]>;
 }
@@ -122,4 +132,36 @@ export interface XtreamEpgListing {
 
 export interface XtreamShortEpg {
   epg_listings?: XtreamEpgListing[];
+}
+
+/**
+ * Lo que devuelve `get_vod_info` de una película.
+ *
+ * Todo opcional porque cada panel rellena lo que quiere: hay listas donde la
+ * sinopsis viene siempre y otras donde no viene nunca. La interfaz omite lo
+ * que falte en vez de dejar huecos.
+ */
+export interface XtreamVodInfo {
+  info?: {
+    plot?: string;
+    cast?: string;
+    director?: string;
+    genre?: string;
+    releasedate?: string;
+    release_date?: string;
+    rating?: string | number;
+    /** La nota ya sobre cinco, si el panel la da. */
+    rating_5based?: string | number;
+    duration?: string;
+    duration_secs?: number;
+    /** Imagen apaisada, en una lista de una sola entrada. */
+    backdrop_path?: string[];
+    movie_image?: string;
+    youtube_trailer?: string;
+  };
+  movie_data?: {
+    stream_id?: number;
+    name?: string;
+    container_extension?: string;
+  };
 }

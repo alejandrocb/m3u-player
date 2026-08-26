@@ -31,6 +31,7 @@ import type { Programa } from '@m3u/core';
 
 import { hora } from './parrilla';
 import type { Caja } from './parrilla';
+import { FONDO, TINTA_SUAVE, VERDE } from './tema';
 
 import {
   IconoAnterior,
@@ -747,8 +748,6 @@ function Pastilla({ texto, onPress, activo }: { texto: string; onPress: () => vo
   );
 }
 
-const VERDE = '#35d07f';
-
 const estilos = StyleSheet.create({
   capa: {
     ...StyleSheet.absoluteFillObject,
@@ -934,7 +933,7 @@ const estilos = StyleSheet.create({
     fontSize: 14,
   },
   falloTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
     fontWeight: '700',
     textAlign: 'center',
@@ -974,7 +973,7 @@ const estilos = StyleSheet.create({
     fontSize: 15,
   },
   pastillaTextoActivo: {
-    color: '#06131c',
+    color: FONDO,
     fontWeight: '700',
   },
   // En la vista previa solo la ruedecita: la caja entera taparía el recuadro.
