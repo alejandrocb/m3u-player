@@ -11,6 +11,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 
 import type { Cuenta, GestorCuentas } from '@m3u/ui';
 import { hostDe } from '@m3u/ui';
+import { FONDO, ROJO, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
 
 interface Props {
   gestor: GestorCuentas;
@@ -251,11 +252,9 @@ function Boton({
   );
 }
 
-const VERDE = '#35d07f';
-
 const estilos = StyleSheet.create({
   pantalla: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
   },
   contenido: {
@@ -269,7 +268,7 @@ const estilos = StyleSheet.create({
     marginBottom: 10,
   },
   vacio: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 18,
   },
   ficha: {
@@ -295,7 +294,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   detalle: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 6,
   },
@@ -323,15 +322,15 @@ const estilos = StyleSheet.create({
     borderColor: '#fff',
   },
   botonTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   botonTextoPrincipal: {
-    color: '#06131c',
+    color: FONDO,
     fontWeight: '700',
   },
   etiqueta: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 8,
   },
@@ -361,7 +360,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   error: {
-    color: '#ff6b6b',
+    color: ROJO,
     fontSize: 16,
   },
 });

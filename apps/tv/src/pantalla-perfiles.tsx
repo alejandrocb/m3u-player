@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { AlmacenPerfiles, Perfil } from '@m3u/ui';
+import { FONDO, TINTA_SUAVE, VERDE } from './tema';
 
 interface Props {
   almacen: AlmacenPerfiles;
@@ -158,7 +159,7 @@ export function PantallaPerfiles({ almacen, onElegir }: Props) {
 
 const estilos = StyleSheet.create({
   pantalla: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
   },
   contenido: {
@@ -170,7 +171,7 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
   },
   espera: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 20,
   },
   titulo: {
@@ -202,12 +203,12 @@ const estilos = StyleSheet.create({
     width: 120,
   },
   inicial: {
-    color: '#06131c',
+    color: FONDO,
     fontSize: 48,
     fontWeight: '700',
   },
   nombre: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 20,
     marginTop: 10,
   },
@@ -218,7 +219,7 @@ const estilos = StyleSheet.create({
     paddingVertical: 14,
   },
   botonPrincipal: {
-    backgroundColor: '#35d07f',
+    backgroundColor: VERDE,
   },
   // Con mando no hay puntero: el enfocado tiene que cantar desde el sofá.
   botonEnfocado: {
@@ -227,11 +228,11 @@ const estilos = StyleSheet.create({
     transform: [{ scale: 1.04 }],
   },
   botonTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   botonTextoPrincipal: {
-    color: '#06131c',
+    color: FONDO,
     fontSize: 18,
     fontWeight: '700',
   },

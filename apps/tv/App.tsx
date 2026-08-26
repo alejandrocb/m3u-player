@@ -42,6 +42,7 @@ import type {
   Inicio,
   OpcionLateral,
   Perfil,
+  PortadaRemota,
   Programacion,
   Reproducible,
 } from '@m3u/ui';
@@ -61,6 +62,19 @@ import {
 } from '@m3u/ui';
 
 import { almacenDeCuentas } from './src/almacen';
+import {
+  ESCALA_ENFOQUE,
+  FONDO,
+  FONDO_RGB,
+  MARGEN_CABECERA,
+  MARGEN_PANTALLA,
+  ROJO,
+  SUPERFICIE,
+  TINTA,
+  TINTA_SUAVE,
+  TINTA_TENUE,
+  VERDE,
+} from './src/tema';
 import { almacenDeSync } from './src/almacen-sync';
 import { cargarCatalogo } from './src/carga';
 import type { Avance, Medicion } from './src/carga';
@@ -96,18 +110,6 @@ const ESPERA_VISTA_PREVIA_MS = 1000;
  * tele.
  */
 const DESPLAZA_EL_DEDO = !Platform.isTV;
-
-/**
- * El margen lateral de la pantalla, en un sitio del que poder restarlo.
- *
- * El destacado va a sangre —tiene que llegar a los bordes— y para eso cancela
- * este margen con uno negativo. Antes estaba escrito a mano en `estilos` y no
- * había forma de referirlo.
- */
-const MARGEN_PANTALLA = 32;
-
-/** Lo que ocupa la cabecera: el destacado se mete por debajo de ella. */
-const MARGEN_CABECERA = 96;
 
 /** Cada cuánto se sincroniza mientras la biblioteca está abierta. */
 const CADA_SINCRONIZACION_MS = 2 * 60 * 1000;
@@ -162,6 +164,9 @@ function Raiz() {
    * perfiles. Por eso lo lee de `perfiles.current` en cada llamada en vez de
    * quedárselo: cuando toque sincronizar de verdad, ya estará.
    */
+  /** Lo que el servidor haya preparado para presidir el inicio. */
+  const [portadas, setPortadas] = useState<PortadaRemota[]>([]);
+
   const sync = useRef<ClienteSync>(
     new ClienteSync({
       almacen: almacenDeSync,
@@ -247,6 +252,27 @@ function Raiz() {
       else setFase({ tipo: 'listas' });
     })();
   }, [conectar]);
+
+  /*
+    Las sugerencias del inicio, preparadas por el servidor de la casa.
+
+    Se piden al arrancar, mientras se elige lista y perfil, para que ya estén
+    cuando se abra la biblioteca: llegando después, el presentador se rehace y
+    el inicio se monta dos veces. La pantalla nunca espera por ellas —si el
+    servidor no contesta, o esta casa no tiene, el presentador saca las suyas
+    preguntando al panel como siempre—.
+  */
+  useEffect(() => {
+    let vigente = true;
+    void (async () => {
+      const preparadas = await sync.current.portadas();
+      console.log(`[portadas] ${preparadas.length} del servidor`);
+      if (vigente && preparadas.length > 0) setPortadas(preparadas);
+    })();
+    return () => {
+      vigente = false;
+    };
+  }, []);
 
   // Mientras se está viendo la biblioteca, se sincroniza de vez en cuando.
   useEffect(() => {
@@ -359,6 +385,7 @@ function Raiz() {
       onCambiarPerfil={() => setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion })}
       onActualizar={() => conectar(fase.cuenta, true)}
       sincronizado={sincronizado}
+      portadas={portadas}
       onSincronizar={() => void sincronizar()}
       onCambioPerfil={(nuevo) =>
         setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
@@ -387,6 +414,7 @@ function BibliotecaVista({
   onCambiarPerfil,
   onActualizar,
   sincronizado,
+  portadas,
   onSincronizar,
   onCambioPerfil,
 }: {
@@ -396,6 +424,8 @@ function BibliotecaVista({
   perfil: Perfil;
   cuenta: Cuenta;
   medicion: Medicion;
+  /** Las sugerencias preparadas por el servidor, si las hay. */
+  portadas: PortadaRemota[];
   onCerrarSesion: () => void;
   onCambiarPerfil: () => void;
   onActualizar: () => void;
@@ -420,8 +450,6 @@ function BibliotecaVista({
   const [cajaVista, setCajaVista] = useState<Caja | null>(null);
   /** El mando está sobre la vista previa, no sobre la lista de canales. */
   const [focoEnVideo, setFocoEnVideo] = useState(false);
-  /** La barra de arriba solo se ve estando arriba del todo del inicio. */
-  const [arribaDelInicio, setArribaDelInicio] = useState(true);
 
   const [verAjustes, setVerAjustes] = useState(false);
   /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
@@ -530,13 +558,15 @@ function BibliotecaVista({
         },
       },
     });
+    // Antes de cargar: si llegan después, el inicio se monta dos veces.
+    instancia.usarPortadas(portadas);
     presentador.current = instancia;
     instancia.cargar().then(setEstado);
     // `ajustes.orden` no está entre las dependencias a propósito: cambiarlo se
     // aplica sobre el presentador vivo, no rehaciéndolo. Las columnas sí
     // obligan a rehacerlo porque la rejilla se monta con ellas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [biblioteca, perfiles, perfil, ajustes.columnas]);
+  }, [biblioteca, perfiles, perfil, ajustes.columnas, portadas]);
 
   /**
    * El canal sobre el que está el foco, si es que hay uno.
@@ -1043,16 +1073,16 @@ function BibliotecaVista({
                 <Pressable
                   key={pestana.clave}
                   focusable={false}
-                  style={[
-                    estilos.pestana,
-                    pestana.activa && estilos.pestanaActiva,
-                    enCabecera && focoCabecera === indice && estilos.pestanaEnfocada,
-                  ]}
+                  style={[estilos.pestana, enCabecera && focoCabecera === indice && estilos.pestanaEnfocada]}
                   onPress={pestana.onPress}
                 >
                   <Text style={[estilos.pestanaTexto, pestana.activa && estilos.pestanaTextoActiva]}>
                     {pestana.nombre}
                   </Text>
+                  {/* La sección en la que estás se marca con una raya debajo,
+                      no con un fondo: la barra es transparente y un recuadro
+                      relleno vuelve a taparlo todo. */}
+                  {pestana.activa ? <View style={estilos.pestanaRaya} /> : null}
                 </Pressable>
               ))}
             </View>
@@ -1265,9 +1295,7 @@ function BibliotecaVista({
         </View>
       ) : null}
 
-      {estado.inicio && (arribaDelInicio || enCabecera) ? (
-        <View style={estilos.cabeceraFlotante}>{cabecera}</View>
-      ) : null}
+      {estado.inicio ? <View style={estilos.cabeceraFlotante}>{cabecera}</View> : null}
 
       {verAjustes && estado.lateral ? (
         <View style={estilos.ajustes}>
@@ -1342,7 +1370,6 @@ function BibliotecaVista({
           enCabecera={enCabecera}
           inicio={estado.inicio}
           onTurno={(siguiente) => setEstado(presentador.current!.rotarDestacado(siguiente))}
-          onDesplazar={setArribaDelInicio}
           onTocar={(fila, columna) => {
             const instancia = presentador.current;
             if (!instancia) return;
@@ -1438,7 +1465,6 @@ function PantallaInicio({
   inicio,
   onTocar,
   onTurno,
-  onDesplazar,
 }: {
   /** El mando está arriba, en la lupa o el perfil. */
   enCabecera: boolean;
@@ -1446,8 +1472,6 @@ function PantallaInicio({
   onTocar: (fila: number, columna: number) => void;
   /** La portada pasa a la siguiente sugerencia. */
   onTurno: (siguiente: number) => void;
-  /** Cuánto se ha bajado, para esconder la barra al alejarse de arriba. */
-  onDesplazar: (arriba: boolean) => void;
 }) {
   const lista = useRef<FlatList<FilaInicio>>(null);
   const { height: alto } = useWindowDimensions();
@@ -1488,10 +1512,6 @@ function PantallaInicio({
       keyExtractor={(fila, indice) => `${fila.tipo}-${indice}`}
       extraData={inicio}
       showsVerticalScrollIndicator={false}
-      // La barra de arriba solo se enseña estando arriba del todo: bajando
-      // estorba, y con el mando hay que volver a subir de todas formas.
-      onScroll={(evento) => onDesplazar(evento.nativeEvent.contentOffset.y < 40)}
-      scrollEventThrottle={80}
       // Son pocas filas y `scrollToIndex` necesita que estén montadas.
       initialNumToRender={8}
       onScrollToIndexFailed={() => {}}
@@ -1602,18 +1622,32 @@ function Destacado({
 }) {
   const opacidad = useRef(new Animated.Value(1)).current;
 
+  /*
+    El índice y la función de turno se leen de una referencia, no de las
+    dependencias del efecto.
+
+    Si el efecto dependiera de ellos, el reloj se rehace en cada pintado —y
+    `onTurno` llega como una función nueva cada vez—, así que nunca llegaba a
+    cumplir los cinco segundos. Se notaba en la pestaña "Todo", que al tener
+    más carruseles se repinta más: allí la portada no se turnaba jamás.
+  */
+  const actual = useRef(indice);
+  actual.current = indice;
+  const turno = useRef(onTurno);
+  turno.current = onTurno;
+
   useEffect(() => {
     if (elementos.length < 2) return;
 
     const reloj = setInterval(() => {
       Animated.timing(opacidad, { toValue: 0, duration: FUNDIDO_MS, useNativeDriver: true }).start(() => {
-        onTurno(indice + 1);
+        turno.current(actual.current + 1);
         Animated.timing(opacidad, { toValue: 1, duration: FUNDIDO_MS, useNativeDriver: true }).start();
       });
     }, TURNO_PORTADA_MS);
 
     return () => clearInterval(reloj);
-  }, [elementos.length, indice, onTurno, opacidad]);
+  }, [elementos.length, opacidad]);
 
   const elemento = elementos[Math.min(indice, elementos.length - 1)];
   if (!elemento) return null;
@@ -1731,34 +1765,79 @@ function Carrusel({
         contentContainerStyle={estilos.filaLista}
         initialNumToRender={8}
         onScrollToIndexFailed={() => {}}
-        renderItem={({ item, index }) => {
-          const enfocado = activa && index === columna;
-          return (
-            <Pressable
-              focusable={false}
-              onPress={() => onTocar(index)}
-              style={[estilos.fichaFila, enfocado && estilos.fichaFilaEnfocada]}
-            >
-              <View style={estilos.fichaCaratula}>
-                {item.logo ? (
-                  <Image
-                    source={{ uri: item.logo }}
-                    style={estilos.fichaImagen}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View style={[estilos.fichaImagen, estilos.fichaSinImagen]}>
-                    <Text style={estilos.fichaSinImagenTexto} numberOfLines={2}>
-                      {item.titulo}
-                    </Text>
-                  </View>
-                )}
-                {item.avance !== null ? (
-                  <View style={estilos.fichaBarra}>
-                    <View style={[estilos.fichaBarraVista, { width: `${Math.round(item.avance * 100)}%` }]} />
-                  </View>
-                ) : null}
-              </View>
+        renderItem={({ item, index }) => (
+          <FichaDeFila item={item} enfocado={activa && index === columna} onTocar={() => onTocar(index)} />
+        )}
+      />
+    </View>
+  );
+}
+
+/**
+ * Una ficha de carrusel, que **crece al enfocarse**.
+ *
+ * El marco de tres píxeles se ve mal desde el sofá y el tamaño se ve siempre:
+ * por eso lo enfocado se agranda, como en cualquier televisor. Va animado
+ * sobre el hilo nativo (`useNativeDriver`) porque el JavaScript está ocupado
+ * pintando la fila cuando el foco se mueve, y sin eso el crecimiento llega a
+ * tirones.
+ *
+ * `zIndex` y `elevation` son para que la ficha crecida tape a la de al lado y
+ * no al revés: entre hermanos manda el orden de pintado, y la siguiente se
+ * dibuja después.
+ */
+function FichaDeFila({
+  item,
+  enfocado,
+  onTocar,
+}: {
+  item: Elemento;
+  enfocado: boolean;
+  onTocar: () => void;
+}) {
+  const escala = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.spring(escala, {
+      toValue: enfocado ? ESCALA_ENFOQUE : 1,
+      useNativeDriver: true,
+      friction: 9,
+      tension: 90,
+    }).start();
+  }, [enfocado, escala]);
+
+  return (
+    <Animated.View style={[estilos.fichaFilaCaja, enfocado && estilos.fichaFilaEncima, { transform: [{ scale: escala }] }]}>
+      <Pressable
+        focusable={false}
+        onPress={onTocar}
+        style={[estilos.fichaFila, enfocado && estilos.fichaFilaEnfocada]}
+      >
+        <View style={estilos.fichaCaratula}>
+          {item.logo ? (
+            <Image source={{ uri: item.logo }} style={estilos.fichaImagen} resizeMode="cover" />
+          ) : (
+            <View style={[estilos.fichaImagen, estilos.fichaSinImagen]}>
+              <Text style={estilos.fichaSinImagenTexto} numberOfLines={2}>
+                {item.titulo}
+              </Text>
+            </View>
+          )}
+          {item.avance !== null ? (
+            <View style={estilos.fichaBarra}>
+              <View style={[estilos.fichaBarraVista, { width: `${Math.round(item.avance * 100)}%` }]} />
+            </View>
+          ) : null}
+        </View>
+        {/*
+          El título, solo bajo la ficha enfocada: con todos puestos la fila es
+          una lista de letra pequeña y el cartel ya dice lo que es. El hueco se
+          reserva siempre —alto fijo— para que al mover el foco no cambie el
+          alto de la fila y las carátulas no den un salto.
+        */}
+        <View style={estilos.fichaPie}>
+          {enfocado ? (
+            <>
               <Text style={estilos.fichaNombre} numberOfLines={1}>
                 {item.titulo}
               </Text>
@@ -1767,11 +1846,11 @@ function Carrusel({
                   {item.detalle}
                 </Text>
               ) : null}
-            </Pressable>
-          );
-        }}
-      />
-    </View>
+            </>
+          ) : null}
+        </View>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -2030,17 +2109,15 @@ function frescura(dias: number): string {
   return enteros === 1 ? 'ayer' : `hace ${enteros} días`;
 }
 
-const VERDE = '#35d07f';
-
 const estilos = StyleSheet.create({
   // La capa de fuera: sin márgenes, para que lo que se coloca con coordenadas
   // de pantalla —el reproductor— caiga donde debe.
   raiz: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
   },
   pantalla: {
-    backgroundColor: '#06131c',
+    backgroundColor: FONDO,
     flex: 1,
     paddingHorizontal: MARGEN_PANTALLA,
   },
@@ -2050,12 +2127,12 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
   },
   espera: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 20,
   },
   errorArriba: {
     backgroundColor: 'rgba(255,107,107,0.15)',
-    color: '#ff6b6b',
+    color: ROJO,
     fontSize: 16,
     margin: 16,
     padding: 14,
@@ -2089,14 +2166,14 @@ const estilos = StyleSheet.create({
     borderColor: VERDE,
   },
   botonCabecera: {
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 8,
     borderWidth: 2,
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
   cerrarSesionTexto: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
   },
   cuerpo: {
@@ -2156,7 +2233,7 @@ const estilos = StyleSheet.create({
     backgroundColor: 'rgba(53,208,127,0.35)',
   },
   categoriaTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 17,
   },
   categoriaCuantos: {
@@ -2171,7 +2248,7 @@ const estilos = StyleSheet.create({
     padding: 16,
   },
   ajustesTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   ajustesSeparado: {
@@ -2205,11 +2282,11 @@ const estilos = StyleSheet.create({
     backgroundColor: VERDE,
   },
   opcionTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
   },
   opcionTextoActiva: {
-    color: '#06131c',
+    color: FONDO,
     fontWeight: '700',
   },
   campoBusqueda: {
@@ -2248,7 +2325,7 @@ const estilos = StyleSheet.create({
     width: 72,
   },
   iconoCabecera: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 24,
     lineHeight: 26,
   },
@@ -2265,7 +2342,7 @@ const estilos = StyleSheet.create({
     borderColor: '#fff',
   },
   avatarTexto: {
-    color: '#06131c',
+    color: FONDO,
     fontSize: 19,
     fontWeight: '700',
   },
@@ -2277,7 +2354,7 @@ const estilos = StyleSheet.create({
     width: 52,
   },
   avatarGrandeTexto: {
-    color: '#06131c',
+    color: FONDO,
     fontSize: 23,
     fontWeight: '700',
   },
@@ -2316,7 +2393,7 @@ const estilos = StyleSheet.create({
     paddingVertical: 12,
   },
   menuOpcionTexto: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 17,
   },
   campoNombre: {
@@ -2361,25 +2438,35 @@ const estilos = StyleSheet.create({
     right: 0,
   },
   pestana: {
+    alignItems: 'center',
     borderColor: 'transparent',
-    borderRadius: 20,
+    borderRadius: 8,
     borderWidth: 2,
     paddingHorizontal: 18,
     paddingVertical: 8,
   },
-  pestanaActiva: {
-    backgroundColor: 'rgba(255,255,255,0.14)',
-  },
   pestanaEnfocada: {
+    // El foco del mando sí lleva recuadro: la raya de abajo ya significa otra
+    // cosa —dónde estás—, y desde el sofá hacen falta las dos señales.
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderColor: '#fff',
   },
   pestanaTexto: {
-    color: '#8fa3b3',
-    fontSize: 17,
+    color: TINTA_TENUE,
+    fontSize: 18,
+    letterSpacing: 0.2,
   },
   pestanaTextoActiva: {
     color: '#fff',
     fontWeight: '700',
+  },
+  pestanaRaya: {
+    backgroundColor: VERDE,
+    borderRadius: 2,
+    bottom: 0,
+    height: 3,
+    position: 'absolute',
+    width: 26,
   },
   destacadoPuntos: {
     bottom: 26,
@@ -2402,7 +2489,7 @@ const estilos = StyleSheet.create({
     bottom: 26,
     // Doble margen: el hijo absoluto no hereda el `paddingHorizontal` del
     // destacado, así que con uno solo el texto quedaba pegado al borde.
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 14,
     letterSpacing: 1,
     position: 'absolute',
@@ -2420,7 +2507,6 @@ const estilos = StyleSheet.create({
     */
     justifyContent: 'flex-end',
     marginBottom: 4,
-    marginHorizontal: -MARGEN_PANTALLA,
     marginTop: -MARGEN_CABECERA,
     overflow: 'hidden',
     paddingHorizontal: MARGEN_PANTALLA,
@@ -2433,32 +2519,35 @@ const estilos = StyleSheet.create({
     top: 0,
   },
   destacadoImagen: {
-    height: '100%',
+    /*
+      Ocupa el rectángulo entero, saliéndose por los dos lados para cancelar
+      el `paddingHorizontal` del destacado. Antes iba recortada al 82 % por la
+      derecha, intentando que se perdiera por el borde, y lo que se veía era
+      justo el corte. Ahora no se recorta: se **degrada** por la izquierda y
+      por arriba, que es donde estorba al texto y a la barra.
+    */
+    bottom: 0,
+    left: -MARGEN_PANTALLA,
     position: 'absolute',
-    // Negativo para salirse del `paddingHorizontal` del propio destacado: así
-    // la imagen llega al borde de la pantalla y se pierde por la derecha, en
-    // vez de cortarse con un margen a la vista.
     right: -MARGEN_PANTALLA,
-    // Ancha de verdad: con la imagen apaisada del panel llena casi todo, y el
-    // degradado se encarga de despejar la izquierda.
-    width: '82%',
+    top: 0,
   },
   destacadoVelo: {
     bottom: 0,
     experimental_backgroundImage:
-      'linear-gradient(to right, #06131c 0%, #06131c 30%, rgba(6,19,28,0.70) 56%, rgba(6,19,28,0) 92%)',
-    left: 0,
+      `linear-gradient(to right, ${FONDO} 0%, rgba(${FONDO_RGB},0.92) 34%, rgba(${FONDO_RGB},0.55) 62%, rgba(${FONDO_RGB},0) 100%)`,
+    left: -MARGEN_PANTALLA,
     position: 'absolute',
-    right: 0,
+    right: -MARGEN_PANTALLA,
     top: 0,
   },
   destacadoTecho: {
     experimental_backgroundImage:
-      'linear-gradient(to bottom, rgba(6,19,28,0.85) 0%, rgba(6,19,28,0.35) 60%, rgba(6,19,28,0) 100%)',
+      `linear-gradient(to bottom, rgba(${FONDO_RGB},0.85) 0%, rgba(${FONDO_RGB},0.35) 60%, rgba(${FONDO_RGB},0) 100%)`,
     height: MARGEN_CABECERA + 20,
-    left: 0,
+    left: -MARGEN_PANTALLA,
     position: 'absolute',
-    right: 0,
+    right: -MARGEN_PANTALLA,
     top: 0,
   },
   destacadoPie: {
@@ -2466,11 +2555,11 @@ const estilos = StyleSheet.create({
     // aparezca pegada a un corte recto.
     bottom: 0,
     experimental_backgroundImage:
-      'linear-gradient(to bottom, rgba(6,19,28,0) 0%, rgba(6,19,28,0.85) 65%, #06131c 100%)',
+      `linear-gradient(to bottom, rgba(${FONDO_RGB},0) 0%, rgba(${FONDO_RGB},0.85) 65%, ${FONDO} 100%)`,
     height: 120,
-    left: 0,
+    left: -MARGEN_PANTALLA,
     position: 'absolute',
-    right: 0,
+    right: -MARGEN_PANTALLA,
   },
   destacadoTexto: {
     gap: 7,
@@ -2521,7 +2610,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   destacadoAnio: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
   },
   destacadoSinopsis: {
@@ -2530,7 +2619,7 @@ const estilos = StyleSheet.create({
     lineHeight: 23,
   },
   destacadoReparto: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 14,
   },
   destacadoBoton: {
@@ -2554,30 +2643,43 @@ const estilos = StyleSheet.create({
   },
 
   filaZona: {
-    marginBottom: 20,
+    marginBottom: 14,
   },
   filaTitulo: {
-    color: '#8fa3b3',
-    fontSize: 17,
-    fontWeight: '600',
-    marginBottom: 8,
+    color: TINTA,
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 2,
   },
   filaTituloActivo: {
     color: VERDE,
   },
   filaLista: {
-    gap: 13,
+    gap: 16,
+    // Hueco arriba y abajo para lo que crece: sin él, la ficha enfocada sale
+    // recortada por el borde de la fila.
+    paddingVertical: 16,
     paddingRight: 20,
+  },
+  fichaFilaCaja: {
+    width: 168,
+  },
+  fichaFilaEncima: {
+    elevation: 8,
+    zIndex: 2,
   },
   fichaFila: {
     borderColor: 'transparent',
     borderRadius: 8,
     borderWidth: 3,
     padding: 3,
-    width: 126,
   },
   fichaFilaEnfocada: {
     borderColor: '#fff',
+  },
+  fichaPie: {
+    height: 42,
+    justifyContent: 'flex-start',
   },
   fichaCaratula: {
     borderRadius: 6,
@@ -2594,7 +2696,7 @@ const estilos = StyleSheet.create({
     padding: 8,
   },
   fichaSinImagenTexto: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 13,
     textAlign: 'center',
   },
@@ -2611,13 +2713,14 @@ const estilos = StyleSheet.create({
     height: '100%',
   },
   fichaNombre: {
-    color: '#dfe7ee',
-    fontSize: 14,
+    color: TINTA,
+    fontSize: 15,
+    fontWeight: '600',
     marginTop: 6,
   },
   filaFichaDetalle: {
-    color: '#5d6f7d',
-    fontSize: 12,
+    color: TINTA_TENUE,
+    fontSize: 13,
   },
 
   seccionFicha: {
@@ -2689,7 +2792,7 @@ const estilos = StyleSheet.create({
     fontSize: 14,
   },
   caratulaTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 18,
     marginTop: 6,
   },
@@ -2778,7 +2881,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   canalNombre: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     flex: 1,
     fontSize: 17,
   },
@@ -2813,7 +2916,7 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
   },
   tituloEpisodio: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 19,
     fontWeight: '600',
   },
@@ -2822,7 +2925,7 @@ const estilos = StyleSheet.create({
     gap: 12,
   },
   datoEpisodio: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 14,
   },
   notaEpisodio: {
@@ -2840,7 +2943,7 @@ const estilos = StyleSheet.create({
     borderColor: VERDE,
   },
   fichaTitulo: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 22,
   },
   textoEnfocado: {
@@ -2848,7 +2951,7 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   fichaDetalle: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 6,
   },

@@ -23,6 +23,7 @@ import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, 
 import { avanceDePrograma, programaActual, programasSiguientes } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 import type { Elemento, Programacion } from '@m3u/ui';
+import { TINTA, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
 
 /** Cuánto se espera antes de pedir, para no consultar en cada pulsación. */
 const ESPERA_MS = 350;
@@ -228,8 +229,6 @@ export function Parrilla({
   );
 }
 
-const VERDE = '#35d07f';
-
 const estilos = StyleSheet.create({
   columna: {
     // Poco menos de la mitad: le sobra para el vídeo y el programa, y lo que
@@ -265,7 +264,7 @@ const estilos = StyleSheet.create({
     textAlign: 'center',
   },
   nombre: {
-    color: '#dfe7ee',
+    color: TINTA_SUAVE,
     fontSize: 19,
     fontWeight: '700',
   },
@@ -277,7 +276,7 @@ const estilos = StyleSheet.create({
     justifyContent: 'space-between',
   },
   horaFuerte: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 13,
     fontVariant: ['tabular-nums'],
   },
@@ -292,7 +291,7 @@ const estilos = StyleSheet.create({
     height: '100%',
   },
   tituloPrograma: {
-    color: '#f2f6f9',
+    color: TINTA,
     fontSize: 17,
     fontWeight: '600',
   },
@@ -317,7 +316,7 @@ const estilos = StyleSheet.create({
     paddingVertical: 6,
   },
   horaFila: {
-    color: '#8fa3b3',
+    color: TINTA_TENUE,
     fontSize: 13,
     fontVariant: ['tabular-nums'],
     width: 42,

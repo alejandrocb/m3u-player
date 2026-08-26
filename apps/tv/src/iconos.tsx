@@ -13,9 +13,7 @@
  */
 
 import { StyleSheet, View } from 'react-native';
-
-/** Color de todos los iconos: el vídeo va detrás y el velo ya da contraste. */
-const TINTA = '#f2f6f9';
+import { TINTA } from './tema';
 
 interface Props {
   /** Alto del icono en píxeles independientes. El ancho sale de él. */
