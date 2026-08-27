@@ -93,13 +93,13 @@ function asegurarColumna(db: DB, tabla: string, columna: string, tipo: string): 
   console.log(`[base] columna añadida: ${tabla}.${columna}`);
 }
 
-function meta(db: DB, clave: string): string | null {
+export function meta(db: DB, clave: string): string | null {
   const filas = db.executeSync('SELECT value FROM meta WHERE key = ?', [clave]).rows ?? [];
   const valor = (filas[0] as { value?: string } | undefined)?.value;
   return valor ?? null;
 }
 
-function ponerMeta(db: DB, clave: string, valor: string): void {
+export function ponerMeta(db: DB, clave: string, valor: string): void {
   db.executeSync(
     'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     [clave, valor],

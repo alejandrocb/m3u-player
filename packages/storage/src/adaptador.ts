@@ -27,6 +27,7 @@ import type {
 } from '@m3u/ui';
 
 import type { LibraryStore, OwnerKind } from './store.ts';
+import { leerClaveDeEpisodio } from '@m3u/core';
 
 /** Traduce las clases que usa la interfaz a las del almacén. */
 const DUENO: Record<'canal' | 'pelicula' | 'episodio', OwnerKind> = {
@@ -44,6 +45,14 @@ function ordenDe(pagina: Pagina): { sort?: 'rating' | 'added' | 'recomendada' } 
 }
 
 export function bibliotecaDesde(store: LibraryStore): Biblioteca {
+  /** De la clave de un episodio al número de fila con el que se guardó. */
+  const episodioDeClave = (clave: string): string | null => {
+    const donde = leerClaveDeEpisodio(clave);
+    if (!donde) return null;
+    const episodio = store.episodeAt(donde.serieId, donde.temporada, donde.numero);
+    return episodio ? String(episodio.id) : null;
+  };
+
   return {
     async grupos(): Promise<GrupoFicha[]> {
       return store.groups().map((grupo) => ({ nombre: grupo.name, canales: grupo.channels }));
@@ -136,16 +145,26 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       }));
     },
 
-    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
-      return store.episodesById(ids).map((episodio) => ({
-        id: episodio.id,
-        serieId: episodio.seriesId,
-        serieTitulo: episodio.seriesTitle,
-        serieLogo: episodio.seriesLogo,
-        temporada: episodio.season,
-        numero: episodio.episode,
-        titulo: episodio.title,
-      }));
+    async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
+      const fichas: EpisodioDeSerieFicha[] = [];
+      for (const clave of claves) {
+        const donde = leerClaveDeEpisodio(clave);
+        if (!donde) continue;
+
+        const episodio = store.episodeAt(donde.serieId, donde.temporada, donde.numero);
+        if (!episodio) continue;
+
+        fichas.push({
+          clave,
+          serieId: episodio.seriesId,
+          serieTitulo: episodio.seriesTitle,
+          serieLogo: episodio.seriesLogo,
+          temporada: episodio.season,
+          numero: episodio.episode,
+          titulo: episodio.title,
+        });
+      }
+      return fichas;
     },
 
     async detalleDePelicula(): Promise<FichaLarga | null> {
@@ -218,7 +237,12 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
     },
 
     async variantes(clase, id): Promise<Variante[]> {
-      return store.variants(DUENO[clase], id).map((variante) => ({
+      // En un episodio lo que llega es su clave; las variantes se guardan
+      // contra el número de fila, así que hay que traducir.
+      const dueno = clase === 'episodio' ? episodioDeClave(id) : id;
+      if (dueno === null) return [];
+
+      return store.variants(DUENO[clase], dueno).map((variante) => ({
         url: variante.url,
         calidad: variante.quality,
       }));

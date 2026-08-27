@@ -124,16 +124,20 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
         ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }]
         : [];
     },
-    async episodiosPorId(ids: string[]) {
-      return ids.map((id) => ({
-        id: Number(id),
-        serieId: 'dw',
-        serieTitulo: 'Doctor Who',
-        serieLogo: null,
-        temporada: 1,
-        numero: Number(id),
-        titulo: `Episodio ${id}`,
-      }));
+    async episodiosPorClave(claves: string[]) {
+      // La clave es `serie:sTeN`, la misma en todos los aparatos.
+      return claves.map((clave) => {
+        const numero = Number(clave.split('e').pop());
+        return {
+          clave,
+          serieId: 'dw',
+          serieTitulo: 'Doctor Who',
+          serieLogo: null,
+          temporada: 1,
+          numero,
+          titulo: `Episodio ${numero}`,
+        };
+      });
     },
     async canalesPorId(ids: string[]): Promise<CanalFicha[]> {
       return ids.map((id) => ({ id, nombre: '24 Horas', grupo: 'NOTICIAS', logo: null }));
@@ -674,7 +678,14 @@ function aMedias(): Array<{
 }> {
   return [
     { clase: 'pelicula', itemId: 'p1', titulo: 'Película 1', segundos: 1800, duracion: 5400, visto: '2026-08-26T21:00:00.000Z' },
-    { clase: 'episodio', itemId: '7', titulo: 'Doctor Who', segundos: 600, duracion: 2400, visto: '2026-08-25T21:00:00.000Z' },
+    {
+      clase: 'episodio',
+      itemId: 'dw:s1e7',
+      titulo: 'Doctor Who',
+      segundos: 600,
+      duracion: 2400,
+      visto: '2026-08-25T21:00:00.000Z',
+    },
   ];
 }
 
@@ -888,7 +899,22 @@ test('aceptar en una fila reproduce lo que haya debajo del foco', async () => {
   await presentador.mover('derecha');
   const episodio = await presentador.aceptar();
   assert.equal(episodio.reproducir?.clase, 'episodio');
-  assert.equal(episodio.reproducir?.id, '7');
+  // La clave del contenido, que es lo que significa lo mismo en otro aparato.
+  assert.equal(episodio.reproducir?.id, 'dw:s1e7');
+});
+
+test('un episodio de dentro de la serie también se reproduce por su clave', async () => {
+  // Es el otro sitio donde se anota el avance de un capítulo, y tiene que
+  // guardar exactamente la misma clave que "seguir viendo": si no, el mismo
+  // capítulo quedaría con dos entradas en el historial.
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+  await entrarEn(presentador, 'series');
+  await presentador.aceptar(); // Doctor Who
+
+  const { reproducir } = await presentador.aceptar();
+  assert.equal(reproducir?.clase, 'episodio');
+  assert.equal(reproducir?.id, 'dw:s1e1');
 });
 
 test('una serie de un carrusel se abre, no se reproduce', async () => {

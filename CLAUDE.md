@@ -265,6 +265,16 @@ las cuatro tablas de perfil (`profile`, `progress`, `favorite`,
 contenido**: `lola-pater-2017` es la misma película en los dos aparatos, así
 que sincronizar es mandar filas y no traducir nada.
 
+**Ojo con el episodio: su número de fila no significa nada fuera del aparato.**
+Los episodios no se importan con el catálogo —se piden al abrir cada serie—,
+así que el `id` que les da SQLite depende de en qué orden haya abierto series
+cada aparato. El historial guardaba ese número y por eso una serie a medias en
+la tele no aparecía en la tablet, y podía aparecer **otro capítulo**: el que
+tuviera ese número allí. El avance viaja con `claveDeEpisodio`
+(`doctor-who-2005:s1e7`), y las URLs se buscan traduciendo esa clave a la fila
+local. Es el mismo principio que el resto: **los identificadores salen del
+contenido**.
+
 Las reglas, que hay que respetar al tocar cualquier escritura de perfil:
 
 - **Gana el cambio más reciente**, fila a fila. No se fusionan contenidos: el

@@ -19,6 +19,8 @@ import type { Ajustes, AlmacenPerfiles, Avance, Cambio, ClaseMedio, Favorito, Pe
 import { ajustesDesde, claveDeMedio, colorLibre, idDePerfil, proporcionVista } from '@m3u/ui';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 import { aplicarCambios, cambiosDesde } from '@m3u/storage/sincronizar';
+import { claveDeEpisodio, leerClaveDeEpisodio } from '@m3u/core';
+import { meta, ponerMeta } from './basedatos';
 
 type Fila = Record<string, unknown>;
 
@@ -69,8 +71,90 @@ function aAvance(fila: Fila): Avance {
   };
 }
 
+/**
+ * Pasa el historial de episodios del número de fila a la clave del contenido.
+ *
+ * Los episodios se piden al abrir cada serie, así que el número que les da
+ * SQLite depende de en qué orden haya abierto series **este** aparato. El
+ * historial se guardaba con ese número, y por eso una serie a medias en la
+ * tele no aparecía en la tablet: allí ese número era otro capítulo, o no era
+ * ninguno.
+ *
+ * La conversión solo la puede hacer cada aparato con su propia base, que es
+ * la única que sabe a qué episodio apuntaba cada número. Lo que no se pueda
+ * resolver —una serie que ya no está— se entierra: apuntaba a algo que aquí no
+ * existe y en otro aparato apuntaría a cualquier cosa.
+ *
+ * Se hace una vez y queda anotado en `meta`.
+ */
+function migrarClavesDeEpisodio(db: DB, aparato: string): void {
+  if (meta(db, 'claves-de-episodio') === 'hecho') return;
+
+  const viejas = filas(
+    db,
+    "SELECT profile_id, item_id, seconds, duration, title FROM progress WHERE kind = 'episodio' AND deleted = 0",
+  );
+
+  let convertidas = 0;
+  db.executeSync('BEGIN IMMEDIATE');
+  try {
+    for (const fila of viejas) {
+      const itemId = String(fila.item_id);
+      // Lo que ya es una clave no se toca: la migración tiene que poder
+      // repetirse sin estropear nada.
+      if (leerClaveDeEpisodio(itemId)) continue;
+
+      const episodio = filas(db, 'SELECT series_id, season, episode FROM episode WHERE id = ?', [
+        Number(itemId),
+      ])[0];
+
+      if (episodio) {
+        const clave = claveDeEpisodio(
+          episodio.series_id as string,
+          Number(episodio.season),
+          Number(episodio.episode),
+        );
+        db.executeSync(
+          `INSERT INTO progress (profile_id, kind, item_id, seconds, duration, title, updated, deleted, origin)
+           VALUES (?, 'episodio', ?, ?, ?, ?, ?, 0, ?)
+           ON CONFLICT(profile_id, kind, item_id) DO UPDATE SET
+             seconds = excluded.seconds, duration = excluded.duration, title = excluded.title,
+             updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+          [
+            fila.profile_id as string,
+            clave,
+            Number(fila.seconds ?? 0),
+            Number(fila.duration ?? 0),
+            (fila.title as string) ?? null,
+            ahora(),
+            aparato,
+          ],
+        );
+        convertidas += 1;
+      }
+
+      // La vieja se entierra siempre: como clave no significa nada fuera de
+      // este aparato, dejarla viva solo sirve para confundir a los demás.
+      db.executeSync(
+        `UPDATE progress SET deleted = 1, updated = ?, origin = ?
+          WHERE profile_id = ? AND kind = 'episodio' AND item_id = ?`,
+        [ahora(), aparato, fila.profile_id as string, itemId],
+      );
+    }
+    db.executeSync('COMMIT');
+  } catch (error) {
+    db.executeSync('ROLLBACK');
+    console.warn('[perfiles] no se pudo migrar el historial de episodios', error);
+    return;
+  }
+
+  ponerMeta(db, 'claves-de-episodio', 'hecho');
+  console.log(`[perfiles] historial de episodios: ${convertidas} de ${viejas.length} con clave nueva`);
+}
+
 export function perfilesEnBase(db: DB): AlmacenPerfiles {
   const aparato = idDeAparato(db);
+  migrarClavesDeEpisodio(db, aparato);
 
   const listar = (): Perfil[] =>
     filas(db, 'SELECT id, name, color, created FROM profile WHERE deleted = 0 ORDER BY created').map(aPerfil);

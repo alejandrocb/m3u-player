@@ -422,6 +422,31 @@ export class LibraryStore {
     return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodeOfSeriesRow => ficha !== undefined);
   }
 
+  /**
+   * Un episodio por serie, temporada y número, que es como lo identifica el
+   * historial. El número de fila no vale: se lo inventa cada aparato.
+   */
+  episodeAt(seriesId: string, season: number, episode: number): EpisodeOfSeriesRow | null {
+    const fila = this.#db
+      .prepare(
+        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS series_title, s.logo AS series_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.series_id = ? AND e.season = ? AND e.episode = ?`,
+      )
+      .get(seriesId, season, episode) as Record<string, unknown> | undefined;
+    if (!fila) return null;
+
+    return {
+      id: Number(fila.id),
+      seriesId: fila.series_id as string,
+      seriesTitle: fila.series_title as string,
+      seriesLogo: (fila.series_logo as string) ?? null,
+      season: Number(fila.season),
+      episode: Number(fila.episode),
+      title: (fila.title as string) ?? null,
+    };
+  }
+
   #porId(tabla: 'movie' | 'series' | 'channel', ids: string[]): Array<Record<string, unknown>> {
     if (ids.length === 0) return [];
     const huecos = ids.map(() => '?').join(', ');

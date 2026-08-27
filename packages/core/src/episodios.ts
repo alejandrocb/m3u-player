@@ -17,6 +17,38 @@
 
 import { fold, tidy } from './normalize.ts';
 
+/**
+ * Con qué se identifica un episodio **fuera de este aparato**.
+ *
+ * Los episodios no se importan con el catálogo: se piden al abrir cada serie,
+ * así que el número de fila que les da SQLite depende de en qué orden haya
+ * abierto series cada aparato. Usarlo para el historial es lo que hacía que
+ * una serie a medias en la tele no apareciera en la tablet —y, peor, que
+ * pudiera aparecer **otro capítulo**, el que tuviera ese número allí—.
+ *
+ * Así que el avance viaja con una clave sacada del contenido, como todo lo
+ * demás en la biblioteca: la serie y el código del capítulo.
+ */
+export function claveDeEpisodio(serieId: string, temporada: number, numero: number): string {
+  return `${serieId}:s${temporada}e${numero}`;
+}
+
+/** Lo contrario: de la clave a la serie y el capítulo. `null` si no lo es. */
+export function leerClaveDeEpisodio(
+  clave: string,
+): { serieId: string; temporada: number; numero: number } | null {
+  // El identificador de una serie es un `slug`, así que no lleva dos puntos:
+  // el primero que aparezca es el que separa.
+  const corte = clave.indexOf(':');
+  if (corte <= 0) return null;
+
+  const codigo = /^s(\d+)e(\d+)$/.exec(clave.slice(corte + 1));
+  if (!codigo) return null;
+
+  return { serieId: clave.slice(0, corte), temporada: Number(codigo[1]), numero: Number(codigo[2]) };
+}
+
+
 /** SxxExx, 1x01, "S01 E01"... tal y como lo escriben los distintos paneles. */
 const CODIGO = /\b[sS]\s*\d{1,4}\s*[eExX]\s*\d{1,5}\b|\b\d{1,3}x\d{1,3}\b/;
 

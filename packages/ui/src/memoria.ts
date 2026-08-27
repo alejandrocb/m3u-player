@@ -10,7 +10,7 @@
  */
 
 import type { Episode, Library, Season, Series } from '@m3u/core';
-import { esRecomendable } from '@m3u/core';
+import { esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
 
 import type {
   Ambito,
@@ -212,21 +212,26 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         }));
     },
 
-    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
-      // Los episodios ya están numerados en `porId`, que es el equivalente al
-      // rowid que les da SQLite: se busca por ahí y no recorriendo series.
+    async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
       const encontrados: EpisodioDeSerieFicha[] = [];
-      for (const id of ids) {
-        const indexado = porId.get(Number(id));
-        if (!indexado) continue;
+      for (const clave of claves) {
+        const donde = leerClaveDeEpisodio(clave);
+        if (!donde) continue;
+
+        const serie = library.series.find((una) => una.id === donde.serieId);
+        const episodio = serie?.seasons
+          .find((temporada) => temporada.number === donde.temporada)
+          ?.episodes.find((uno) => uno.episode === donde.numero);
+        if (!serie || !episodio) continue;
+
         encontrados.push({
-          id: indexado.id,
-          serieId: indexado.serie.id,
-          serieTitulo: indexado.serie.title,
-          serieLogo: indexado.serie.logo,
-          temporada: indexado.episodio.season,
-          numero: indexado.episodio.episode,
-          titulo: indexado.episodio.title,
+          clave,
+          serieId: serie.id,
+          serieTitulo: serie.title,
+          serieLogo: serie.logo,
+          temporada: episodio.season,
+          numero: episodio.episode,
+          titulo: episodio.title,
         });
       }
       return encontrados;

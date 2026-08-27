@@ -78,7 +78,13 @@ export interface TemporadaFicha {
 
 /** Un episodio con lo justo de su serie para poder pintarlo fuera de ella. */
 export interface EpisodioDeSerieFicha {
-  id: number;
+  /**
+   * La clave con la que viaja entre aparatos: `serie:sTeN`.
+   *
+   * Y no el número de fila de la base, que cada aparato reparte a su manera
+   * según en qué orden haya abierto series. Lo cuenta `claveDeEpisodio`.
+   */
+  clave: string;
   serieId: string;
   serieTitulo: string;
   /** Carátula de la serie: es la que se reconoce de un vistazo. */
@@ -200,14 +206,18 @@ export interface Biblioteca {
   peliculasPorId(ids: string[]): Promise<PeliculaFicha[]>;
   seriesPorId(ids: string[]): Promise<SerieFicha[]>;
   /**
-   * Episodios sueltos por su identificador, **con los datos de su serie**.
+   * Episodios sueltos por su clave, **con los datos de su serie**.
    *
-   * Lo pide "seguir viendo": el historial solo guarda el id del episodio, y
+   * Lo pide "seguir viendo": el historial solo guarda la clave del episodio, y
    * con eso no se puede pintar una ficha decente. Lo que uno reconoce es la
    * carátula de la serie y "S01E03", no el título del capítulo, así que hace
    * falta el salto a `series` que aquí ya viene hecho.
+   *
+   * Lo que el aparato no tenga —una serie que aún no ha abierto nunca— no
+   * sale. Es lo mismo que hace con una película que el proveedor haya
+   * quitado del catálogo.
    */
-  episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]>;
+  episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]>;
   /**
    * La ficha larga de una película, pidiéndola al panel la primera vez.
    *
@@ -241,6 +251,12 @@ export interface Biblioteca {
   buscar(texto: string, ambito?: Ambito): Promise<Resultado[]>;
   /** Cuántas fichas hay en cada sección, para pintar los contadores del inicio. */
   totales(): Promise<{ canales: number; peliculas: number; series: number; episodios: number }>;
-  /** Calidades disponibles, de mejor a peor. La primera es la que se reproduce. */
+  /**
+   * Calidades disponibles, de mejor a peor. La primera es la que se reproduce.
+   *
+   * En un episodio el identificador es su **clave** (`serie:sTeN`), no el
+   * número de fila: es lo que guarda el historial y lo que viaja entre
+   * aparatos.
+   */
   variantes(clase: 'canal' | 'pelicula' | 'episodio', id: string): Promise<Variante[]>;
 }

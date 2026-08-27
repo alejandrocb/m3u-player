@@ -10,7 +10,7 @@
 import type { DB } from '@op-engineering/op-sqlite';
 
 import type { Season } from '@m3u/core';
-import { fold, filtroRecomendadaSQL, ordenRecomendadaSQL } from '@m3u/core';
+import { claveDeEpisodio, filtroRecomendadaSQL, fold, leerClaveDeEpisodio, ordenRecomendadaSQL } from '@m3u/core';
 import type {
   Ambito,
   Biblioteca,
@@ -108,6 +108,21 @@ function panelIdsDePelicula(db: DB, id: string): number[] {
  */
 function filtroDe(orden: Pagina['orden'], prefijo = ''): string | null {
   return orden === 'recomendada' ? filtroRecomendadaSQL(prefijo) : null;
+}
+
+type SitioDeEpisodio = { serieId: string; temporada: number; numero: number };
+
+/** De la clave de un episodio al número de fila con el que se guardaron sus URLs. */
+function filaDeEpisodio(db: DB, clave: string): string | null {
+  const sitio = leerClaveDeEpisodio(clave);
+  if (!sitio) return null;
+
+  const fila = filas(db, 'SELECT id FROM episode WHERE series_id = ? AND season = ? AND episode = ?', [
+    sitio.serieId,
+    sitio.temporada,
+    sitio.numero,
+  ])[0];
+  return fila ? String(fila.id) : null;
 }
 
 /** SQL devuelve un `IN` en el orden que quiere; el perfil los quiere por fecha. */
@@ -379,19 +394,31 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       );
     },
 
-    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
-      if (ids.length === 0) return [];
-      const huecos = ids.map(() => '?').join(', ');
-      // El salto a `series` va aquí y no en quien llama: lo que hace falta
-      // para pintar un episodio fuera de su serie es la carátula de la serie.
+    async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
+      const donde = claves
+        .map((clave) => ({ clave, sitio: leerClaveDeEpisodio(clave) }))
+        .filter((una): una is { clave: string; sitio: SitioDeEpisodio } => una.sitio !== null);
+      if (donde.length === 0) return [];
+
+      /*
+        Un `OR` por episodio en vez de un `IN`: la clave son tres columnas y
+        SQLite no admite tuplas en un `IN`. Son doce como mucho —los que caben
+        en "seguir viendo"—, así que no hay nada que optimizar.
+
+        El salto a `series` va aquí y no en quien llama: lo que hace falta para
+        pintar un episodio fuera de su serie es la carátula de la serie.
+      */
+      const condicion = donde.map(() => '(e.series_id = ? AND e.season = ? AND e.episode = ?)').join(' OR ');
+      const params = donde.flatMap(({ sitio }) => [sitio.serieId, sitio.temporada, sitio.numero]);
+
       const encontrados = filas(
         db,
-        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+        `SELECT e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
            FROM episode e JOIN series s ON s.id = e.series_id
-          WHERE e.id IN (${huecos})`,
-        ids,
+          WHERE ${condicion}`,
+        params,
       ).map((fila): EpisodioDeSerieFicha => ({
-        id: Number(fila.id),
+        clave: claveDeEpisodio(fila.series_id as string, Number(fila.season), Number(fila.episode)),
         serieId: fila.series_id as string,
         serieTitulo: fila.serie as string,
         serieLogo: (fila.serie_logo as string) ?? null,
@@ -400,8 +427,11 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         titulo: (fila.title as string) ?? null,
       }));
 
-      const porClave = new Map(encontrados.map((ficha) => [String(ficha.id), ficha]));
-      return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
+      // En el orden en que se pidieron, que es el del historial.
+      const porClave = new Map(encontrados.map((ficha) => [ficha.clave, ficha]));
+      return claves
+        .map((clave) => porClave.get(clave))
+        .filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
     },
 
     async detalleDePelicula(id: string): Promise<FichaLarga | null> {
@@ -521,10 +551,20 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
     async variantes(clase, id): Promise<Variante[]> {
       const dueno = clase === 'canal' ? 'channel' : clase === 'pelicula' ? 'movie' : 'episode';
+      /*
+        De un episodio llega su clave, y las variantes se guardan contra el
+        número de fila: hay que traducir. Si esa serie todavía no se ha abierto
+        en este aparato no hay fila que valga, y entonces no hay nada que
+        reproducir —eso lo resuelve abrir la serie, que es cuando se piden sus
+        episodios al panel—.
+      */
+      const owner = clase === 'episodio' ? filaDeEpisodio(db, id) : id;
+      if (owner === null) return [];
+
       return filas(
         db,
         'SELECT url, quality FROM variant WHERE owner_kind = ? AND owner_id = ? ORDER BY rank DESC',
-        [dueno, id],
+        [dueno, owner],
       ).map((fila) => ({ url: fila.url as string, calidad: (fila.quality as string) ?? null }));
     },
   };

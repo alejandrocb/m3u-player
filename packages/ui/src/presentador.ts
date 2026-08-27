@@ -18,7 +18,7 @@ import type { PortadaRemota } from './cliente-sync.ts';
 import type { Biblioteca, FichaLarga, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
-import { esRecomendable } from '@m3u/core';
+import { claveDeEpisodio, esRecomendable } from '@m3u/core';
 
 /** Qué reproducir cuando el usuario acepta sobre una ficha. */
 export interface Reproducible {
@@ -503,10 +503,10 @@ export class Presentador {
 
     const [peliculas, episodios] = await Promise.all([
       this.#biblioteca.peliculasPorId(idsDe('pelicula')),
-      this.#biblioteca.episodiosPorId(idsDe('episodio')),
+      this.#biblioteca.episodiosPorClave(idsDe('episodio')),
     ]);
     const porPelicula = new Map(peliculas.map((ficha) => [ficha.id, ficha]));
-    const porEpisodio = new Map(episodios.map((ficha) => [String(ficha.id), ficha]));
+    const porEpisodio = new Map(episodios.map((ficha) => [ficha.clave, ficha]));
 
     const elementos: Elemento[] = [];
     for (const avance of avances) {
@@ -537,7 +537,7 @@ export class Presentador {
         if (!ficha) continue;
         const codigo = `T${ficha.temporada} E${ficha.numero}`;
         elementos.push({
-          id: `continuar:episodio:${ficha.id}`,
+          id: `continuar:episodio:${ficha.clave}`,
           // El nombre de la serie es lo que se busca con la vista; el capítulo
           // concreto va debajo, que es el orden en que uno lo lee.
           titulo: ficha.serieTitulo,
@@ -550,7 +550,7 @@ export class Presentador {
           favorito: false,
           accion: {
             tipo: 'reproducir',
-            medio: { clase: 'episodio', id: String(ficha.id), titulo: `${ficha.serieTitulo} ${codigo}` },
+            medio: { clase: 'episodio', id: ficha.clave, titulo: `${ficha.serieTitulo} ${codigo}` },
           },
         });
       }
@@ -1405,7 +1405,13 @@ export class Presentador {
               favorito: false,
               accion: {
                 tipo: 'reproducir',
-                medio: { clase: 'episodio', id: String(episodio.id), titulo: nombre },
+                // La clave, no el número de fila: es lo que se guarda en el
+                // historial y lo único que significa lo mismo en la tablet.
+                medio: {
+                  clase: 'episodio',
+                  id: claveDeEpisodio(pantalla.serieId, episodio.temporada, episodio.numero),
+                  titulo: nombre,
+                },
               },
             };
           }),
