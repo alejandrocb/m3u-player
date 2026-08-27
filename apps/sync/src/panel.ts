@@ -385,6 +385,18 @@ export class Panel {
    * que dentro de tres meses sepas qué era "el que revoqué en agosto". Y sin
    * token, no vuelve a entrar.
    */
+  /**
+   * Le cambia el nombre a un aparato.
+   *
+   * El nombre no es decoración: es lo que ve la gente cuando la aplicación
+   * dice "se ha parado porque has empezado a ver algo en TV Salón". Sin poder
+   * cambiarlo, un aparato aprobado con prisa se queda para siempre llamándose
+   * como su código de emparejamiento.
+   */
+  renombrarAparato(id: string, nombre: string): void {
+    this.#ejecutar('UPDATE aparato SET nombre = ? WHERE id = ?', [nombre.trim() || 'Aparato', id]);
+  }
+
   revocar(id: string): void {
     this.#ejecutar("UPDATE aparato SET estado = 'revocado', token = NULL, espera = NULL WHERE id = ?", [id]);
   }

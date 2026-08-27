@@ -165,7 +165,14 @@ function bloqueGrupo(grupo: Grupo, aparatos: Aparato[], listas: Lista[], anfitri
           .map(
             (aparato) => `
         <tr>
-          <td>${escapar(aparato.nombre)}</td>
+          <td>
+            <form method="post" action="/aparato/nombre" class="linea">
+              <input type="hidden" name="id" value="${escapar(aparato.id)}">
+              <input name="nombre" value="${escapar(aparato.nombre)}" aria-label="Nombre del aparato">
+              <button type="submit">Guardar</button>
+            </form>
+            <div class="suave">${escapar(aparato.apodo ?? 'aparato sin identificar')}</div>
+          </td>
           <td class="suave">${escapar(ESTADOS[aparato.estado])}</td>
           <td class="suave">${escapar(cuandoFue(aparato.ultima))}</td>
           <td>${
