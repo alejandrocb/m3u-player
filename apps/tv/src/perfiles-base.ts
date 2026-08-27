@@ -15,8 +15,25 @@
 
 import type { DB } from '@op-engineering/op-sqlite';
 
-import type { Ajustes, AlmacenPerfiles, Avance, Cambio, ClaseMedio, Favorito, Perfil } from '@m3u/ui';
-import { ajustesDesde, claveDeMedio, colorLibre, idDePerfil, proporcionVista } from '@m3u/ui';
+import type {
+  Ajustes,
+  AlmacenPerfiles,
+  Avance,
+  Cambio,
+  ClaseMedio,
+  Favorito,
+  Perfil,
+  Reproduccion,
+} from '@m3u/ui';
+import {
+  CLAVE_REPRODUCCION,
+  ajustesDesde,
+  claveDeMedio,
+  colorLibre,
+  idDePerfil,
+  proporcionVista,
+  reproduccionDesde,
+} from '@m3u/ui';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 import { aplicarCambios, cambiosDesde } from '@m3u/storage/sincronizar';
 import { claveDeEpisodio, leerClaveDeEpisodio } from '@m3u/core';
@@ -158,6 +175,17 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
 
   const listar = (): Perfil[] =>
     filas(db, 'SELECT id, name, color, created FROM profile WHERE deleted = 0 ORDER BY created').map(aPerfil);
+
+  /** Escribe un ajuste del perfil, sellando la fila como cualquier otra. */
+  const guardarSetting = (perfilId: string, clave: string, valor: string): void => {
+    db.executeSync(
+      `INSERT INTO profile_setting (profile_id, key, value, updated, deleted, origin)
+       VALUES (?, ?, ?, ?, 0, ?)
+       ON CONFLICT(profile_id, key) DO UPDATE SET
+         value = excluded.value, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+      [perfilId, clave, valor, ahora(), aparato],
+    );
+  };
 
   /** Da de baja una fila sin quitarla de en medio. */
   const enterrar = (tabla: string, donde: string, params: Valor[]): void => {
@@ -324,14 +352,22 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       return ajustesDesde(guardados);
     },
 
+    async anunciarReproduccion(perfilId: string, reproduccion: Reproduccion | null): Promise<void> {
+      // Vacío en vez de lápida: no es una baja, es "aquí ya no suena nada", y
+      // el otro aparato tiene que verlo igual que ve el anuncio.
+      guardarSetting(perfilId, CLAVE_REPRODUCCION, reproduccion ? JSON.stringify(reproduccion) : '');
+    },
+
+    async reproduccion(perfilId: string): Promise<Reproduccion | null> {
+      const fila = filas(db, 'SELECT value FROM profile_setting WHERE profile_id = ? AND key = ? AND deleted = 0', [
+        perfilId,
+        CLAVE_REPRODUCCION,
+      ])[0];
+      return reproduccionDesde(fila?.value as string | undefined);
+    },
+
     async guardarAjuste(perfilId: string, clave: string, valor: string): Promise<void> {
-      db.executeSync(
-        `INSERT INTO profile_setting (profile_id, key, value, updated, deleted, origin)
-         VALUES (?, ?, ?, ?, 0, ?)
-         ON CONFLICT(profile_id, key) DO UPDATE SET
-           value = excluded.value, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
-        [perfilId, clave, valor, ahora(), aparato],
-      );
+      guardarSetting(perfilId, clave, valor);
     },
 
     async favoritos(perfilId: string): Promise<Favorito[]> {

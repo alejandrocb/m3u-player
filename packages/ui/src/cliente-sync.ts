@@ -20,6 +20,13 @@ export interface EstadoSync {
   token: string;
   grupo: { id: string; nombre: string } | null;
   /**
+   * Cómo se llama este aparato en la casa: "TV Salón".
+   *
+   * Se lo pone quien lo aprueba en la web, y hace falta para poder decir en
+   * los demás **dónde** ha empezado a ver algo esta persona.
+   */
+  aparato?: string;
+  /**
    * Hasta dónde se ha subido, en fechas de cambio **de este aparato**.
    *
    * Son dos marcas y no una porque están en escalas distintas: lo que queda
@@ -189,6 +196,7 @@ export class ClienteSync {
     const datos = (await respuesta.json()) as {
       estado?: string;
       token?: string;
+      aparato?: { id: string; nombre: string | null };
       grupo?: { id: string; nombre: string } | null;
       listas?: ListaRemota[];
     };
@@ -198,6 +206,7 @@ export class ClienteSync {
       servidor: limpiar(servidor),
       token: datos.token,
       grupo: datos.grupo ?? null,
+      aparato: datos.aparato?.nombre ?? undefined,
       // Desde cero las dos: un aparato recién emparejado se trae todo lo que
       // haya en su casa.
       subida: '',

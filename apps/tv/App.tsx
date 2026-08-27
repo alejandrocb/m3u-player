@@ -115,6 +115,16 @@ const DESPLAZA_EL_DEDO = !Platform.isTV;
 const CADA_SINCRONIZACION_MS = 2 * 60 * 1000;
 
 /**
+ * Y cada cuánto mientras algo se está reproduciendo.
+ *
+ * Mucho más seguido: es lo que decide cuánto tarda en callarse el aparato de
+ * la otra habitación cuando esta persona empieza algo aquí. Dos minutos sería
+ * inútil; doce segundos se nota como "casi al momento" y sigue siendo una
+ * petición pequeña.
+ */
+const LATIDO_REPRODUCIENDO_MS = 12 * 1000;
+
+/**
  * Lo que se espera a la sincronización antes de entrar.
  *
  * Sincronizar es un lujo, no un requisito: si el servidor tarda o no está, se
@@ -144,6 +154,8 @@ function Raiz() {
   const [version, setVersion] = useState(0);
   /** A qué casa está conectado el aparato, para poder decirlo en pantalla. */
   const [casa, setCasa] = useState<string | null>(null);
+  /** Cómo se llama este aparato en la casa: "TV Salón". Lo pone quien lo aprueba. */
+  const [nombreAparato, setNombreAparato] = useState<string | null>(null);
   /**
    * Sube cada vez que una sincronización trae algo de otro aparato.
    *
@@ -259,7 +271,9 @@ function Raiz() {
     (async () => {
       const abierto = await GestorCuentas.abrir(almacenDeCuentas);
       gestor.current = abierto;
-      setCasa((await sync.current.estado())?.grupo?.nombre ?? null);
+      const emparejado = await sync.current.estado();
+      setCasa(emparejado?.grupo?.nombre ?? null);
+      setNombreAparato(emparejado?.aparato ?? null);
       // Sesión abierta de la vez anterior: se entra directo, sin preguntar.
       if (abierto.activa) await conectar(abierto.activa);
       else setFase({ tipo: 'listas' });
@@ -399,6 +413,7 @@ function Raiz() {
       onActualizar={() => conectar(fase.cuenta, true)}
       sincronizado={sincronizado}
       preparado={preparado}
+      aparato={nombreAparato}
       onSincronizar={() => void sincronizar()}
       onCambioPerfil={(nuevo) =>
         setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
@@ -428,6 +443,7 @@ function BibliotecaVista({
   onActualizar,
   sincronizado,
   preparado,
+  aparato,
   onSincronizar,
   onCambioPerfil,
 }: {
@@ -439,6 +455,8 @@ function BibliotecaVista({
   medicion: Medicion;
   /** Lo que el servidor haya preparado para el inicio, si hay servidor. */
   preparado: Preparado;
+  /** El nombre de este aparato en la casa, para poder decir dónde suena algo. */
+  aparato: string | null;
   onCerrarSesion: () => void;
   onCambiarPerfil: () => void;
   onActualizar: () => void;
@@ -459,6 +477,9 @@ function BibliotecaVista({
   const estrecha = anchoPantalla < 700;
   const [estado, setEstado] = useState<EstadoPantalla | null>(null);
   const [reproduciendo, setReproduciendo] = useState<Reproducible | null>(null);
+  /** Puesto cuando esta persona ha empezado algo en otro aparato y aquí se para. */
+  const [interrumpido, setInterrumpido] = useState<string | null>(null);
+
   /**
    * false mientras el vídeo va en la columna de la parrilla.
    *
@@ -556,7 +577,9 @@ function BibliotecaVista({
       // De aquí sale la barrita de "lo llevas por la mitad".
       avances: (medios) => perfiles.avancesDe(perfil.id, medios),
       // Y de aquí la fila de "seguir viendo" del inicio.
-      seguirViendo: () => perfiles.seguirViendo(perfil.id, 12),
+      // De más a propósito: el presentador deja una sola fila por serie, así
+      // que pedir doce justas dejaría la fila a medias.
+      seguirViendo: () => perfiles.seguirViendo(perfil.id, 40),
       // Y de aquí los corazones y el grupo de favoritos, que son de cada uno.
       favoritos: {
         listar: async (clase) =>
@@ -594,6 +617,92 @@ function BibliotecaVista({
     // obligan a rehacerlo porque la rejilla se monta con ellas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [biblioteca, perfiles, perfil, ajustes.columnas, preparado]);
+
+  /*
+    Un perfil es una persona, y una persona no ve dos cosas a la vez.
+
+    Al empezar algo aquí se anuncia —con el nombre de este aparato— en los
+    ajustes del perfil, que viajan con la sincronización. Al parar se borra el
+    anuncio. Y si al sincronizar aparece el anuncio de **otro** aparato, aquí
+    se corta y se explica por qué: la última persona que le ha dado a
+    reproducir manda, que es lo que uno espera.
+
+    Con `max_connections` a 1 esto además es lo que libera la ranura del panel
+    para el aparato nuevo; el árbitro que espere a que se libere de verdad
+    todavía está por hacer.
+  */
+  useEffect(() => {
+    if (!reproduciendo) return;
+
+    void (async () => {
+      await perfiles.anunciarReproduccion(perfil.id, {
+        aparato: aparato ?? 'otro aparato',
+        titulo: reproduciendo.titulo,
+        desde: new Date().toISOString(),
+      });
+      onSincronizar();
+    })();
+
+    return () => {
+      void (async () => {
+        /*
+          Al parar se borra el anuncio —si no, el siguiente aparato en abrir la
+          aplicación se creería interrumpido por algo que ya no suena— pero
+          **solo si el anuncio sigue siendo el nuestro**.
+
+          Si lo que nos ha parado es que esta persona ha empezado algo en otro
+          sitio, el anuncio que hay puesto es el de ese otro aparato: borrarlo
+          sería justo lo contrario de lo que queremos.
+        */
+        const anuncio = await perfiles.reproduccion(perfil.id);
+        if (anuncio && anuncio.aparato !== (aparato ?? 'otro aparato')) return;
+
+        await perfiles.anunciarReproduccion(perfil.id, null);
+        onSincronizar();
+      })();
+    };
+    // Solo al empezar y al terminar de reproducir, no en cada repintado.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reproduciendo?.clase, reproduciendo?.id, perfil.id, aparato]);
+
+  /*
+    Mientras algo suena se sincroniza mucho más a menudo.
+
+    Es el latido que hace que "para lo de la otra habitación" tarde segundos y
+    no minutos. Fuera de la reproducción no hace falta: el "seguir viendo" no
+    tiene prisa.
+  */
+  useEffect(() => {
+    if (!reproduciendo) return;
+    const reloj = setInterval(onSincronizar, LATIDO_REPRODUCIENDO_MS);
+    return () => clearInterval(reloj);
+  }, [reproduciendo, onSincronizar]);
+
+  /* Y al recibir el anuncio de otro aparato, aquí se para. */
+  useEffect(() => {
+    if (!reproduciendo) return;
+    let vigente = true;
+
+    void (async () => {
+      const anuncio = await perfiles.reproduccion(perfil.id);
+      if (!vigente || !anuncio || anuncio.aparato === (aparato ?? 'otro aparato')) return;
+
+      setReproduciendo(null);
+      setAPantallaCompleta(false);
+      setInterrumpido(anuncio.aparato);
+    })();
+
+    return () => {
+      vigente = false;
+    };
+  }, [sincronizado, reproduciendo, perfiles, perfil.id, aparato]);
+
+  /** El aviso de "te has ido a ver a otro sitio" se quita solo. */
+  useEffect(() => {
+    if (!interrumpido) return;
+    const reloj = setTimeout(() => setInterrumpido(null), 6000);
+    return () => clearTimeout(reloj);
+  }, [interrumpido]);
 
   /**
    * El canal sobre el que está el foco, si es que hay uno.
@@ -1494,6 +1603,14 @@ function BibliotecaVista({
       {avisoSalida ? (
         <View style={estilos.aviso}>
           <Text style={estilos.avisoTexto}>Pulsa atrás otra vez para salir</Text>
+        </View>
+      ) : null}
+
+      {interrumpido ? (
+        <View style={estilos.aviso}>
+          <Text style={estilos.avisoTexto}>
+            Se ha parado: {perfil.nombre} ha empezado a ver algo en {interrumpido}
+          </Text>
         </View>
       ) : null}
     </View>

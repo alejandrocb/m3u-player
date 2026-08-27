@@ -722,6 +722,35 @@ test('lo empezado va justo detrás de la portada', async () => {
   assert.equal(indiceDe(estado, 'Seguir viendo'), 1, 'lo primero después de la portada');
 });
 
+test('de una serie solo sale por dónde vas, no cada capítulo', async () => {
+  // Una serie se ve en orden: lo que hace falta es el último capítulo tocado,
+  // no los cuatro anteriores llenando la fila con la misma carátula.
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    seguirViendo: async () => [
+      {
+        clase: 'episodio',
+        itemId: 'dw:s1e7',
+        titulo: 'Doctor Who',
+        segundos: 600,
+        duracion: 2400,
+        visto: '2026-08-25T21:00:00.000Z',
+      },
+      {
+        clase: 'episodio',
+        itemId: 'dw:s1e6',
+        titulo: 'Doctor Who',
+        segundos: 2000,
+        duracion: 2400,
+        visto: '2026-08-24T21:00:00.000Z',
+      },
+    ],
+  });
+
+  const fila = filaDe(await presentador.cargar(), 'Seguir viendo');
+  assert.equal(fila?.elementos.length, 1);
+  assert.equal(fila?.elementos[0]?.detalle, 'T1 E7 · Episodio 7', 'el último que se tocó');
+});
+
 test('seguir viendo se filtra por la pestaña', async () => {
   // En Películas no pinta nada un capítulo a medias, y en Series tampoco una
   // película.

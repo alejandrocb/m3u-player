@@ -107,6 +107,40 @@ En el reproductor de directo eso reemplaza a la línea de tiempo: donde iría
 "0:00 / 0:00" van la hora de inicio, el título del programa y la hora de fin,
 con la barra marcando por dónde va.
 
+### Un perfil es una persona: solo suena en un sitio
+
+Si esta persona empieza algo en la tablet, lo que estuviera sonando en la tele
+**se para**, y la tele explica por qué: "ha empezado a ver algo en Tablet del
+salón". Manda el último que le da a reproducir, que es lo que uno espera.
+
+Va por `profile_setting`, con la clave `reproduciendo`: un ajuste más del
+perfil, así que **viaja con la sincronización sin ninguna tubería nueva**. El
+que empieza escribe el anuncio con el nombre de su aparato; el que lo recibe,
+si está reproduciendo y el anuncio es de otro, corta.
+
+Dos detalles que no son opcionales:
+
+- **Al parar solo se borra el anuncio si sigue siendo el nuestro.** Si lo que
+  nos ha parado es que la persona se fue a otro aparato, el anuncio puesto es
+  el de ese otro: borrarlo sería lo contrario de lo que se quiere.
+- **Mientras algo suena se sincroniza cada doce segundos** en vez de cada dos
+  minutos. Es lo que hace que el otro aparato se calle en segundos y no en
+  minutos; fuera de la reproducción no hace falta, el "seguir viendo" no tiene
+  prisa.
+
+Con `max_connections` a 1 esto además libera la ranura del panel para el
+aparato que acaba de empezar. Lo que falta es que ese espere a que se libere
+de verdad —el panel tarda ~30 s— en vez de comerse un 403: eso es el árbitro
+de conexión, que sigue pendiente.
+
+### En "seguir viendo", una fila por serie
+
+Una serie se ve en orden, así que lo que hace falta es **por dónde vas**, no
+la lista de los últimos cuatro capítulos: eso llena la fila con la misma
+carátula repetida y esconde lo demás. El historial viene de lo más reciente a
+lo más viejo, así que el primero de cada serie es el bueno. Por eso quien
+llama pide más avances de los que caben: el recorte por serie se hace después.
+
 ### Los favoritos son un grupo más
 
 Cada perfil tiene los suyos y salen en la barra de las tres secciones, entre
@@ -264,6 +298,13 @@ las cuatro tablas de perfil (`profile`, `progress`, `favorite`,
 `profile_setting`). Sale casi gratis porque **los identificadores salen del
 contenido**: `lola-pater-2017` es la misma película en los dos aparatos, así
 que sincronizar es mandar filas y no traducir nada.
+
+**Al entrar en una casa, el aparato adopta sus perfiles.** Los perfiles son del
+grupo: al aprobar el alta queda la señal `adoptar` y, al conectar con la lista,
+el aparato vacía los suyos y se trae los del grupo. `vaciarLoLocal` **borra de
+verdad**, y es la única excepción a la regla de no borrar nunca: enterrar sería
+peor, porque las lápidas viajan y el identificador de un perfil sale de su
+nombre, así que enterrar "alejandro" aquí enterraría el de la casa.
 
 **Ojo con el episodio: su número de fila no significa nada fuera del aparato.**
 Los episodios no se importan con el catálogo —se piden al abrir cada serie—,

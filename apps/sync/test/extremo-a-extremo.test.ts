@@ -127,6 +127,17 @@ async function emparejar(casa: Casa, quien: Aparato, grupoId: string): Promise<v
   assert.equal((await quien.cliente.estado())?.adoptar, false, 'y solo se hace una vez');
 }
 
+/** Anuncia que este aparato está reproduciendo, como hace la aplicación. */
+function anuncia(quien: Aparato, aparato: string, cuando: string): void {
+  quien.base.ejecutar(
+    `INSERT INTO profile_setting (profile_id, key, value, updated, deleted, origin)
+     VALUES ('ana', 'reproduciendo', ?, ?, 0, ?)
+     ON CONFLICT(profile_id, key) DO UPDATE SET
+       value = excluded.value, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+    [JSON.stringify({ aparato, titulo: 'Lola Pater', desde: cuando }), cuando, quien.nombre],
+  );
+}
+
 /** Anota por dónde va una película, como hace el reproductor. */
 function verHasta(quien: Aparato, segundos: number, cuando: string): void {
   quien.base.ejecutar(
@@ -281,6 +292,52 @@ test('lo quitado de favoritos no reaparece desde el otro aparato', async () => {
     await tele.cliente.sincronizar();
     await tablet.cliente.sincronizar();
     assert.equal(cuantos(tablet), 0);
+  } finally {
+    tele.cerrar();
+    tablet.cerrar();
+    await casa.cerrar();
+  }
+});
+
+test('el aviso de "estoy reproduciendo" llega al otro aparato', async () => {
+  /*
+    Un perfil es una persona, y una persona no ve dos cosas a la vez: cuando
+    empieza algo en la tablet, la tele tiene que enterarse para callarse. El
+    aviso viaja por donde viaja todo lo del perfil, así que aquí se comprueba
+    que llega y que dice **desde qué aparato**, que es lo que se le enseña a
+    quien está mirando.
+  */
+  const casa = await montar();
+  const tele = aparato('tele', casa.url);
+  const tablet = aparato('tablet', casa.url);
+  try {
+    const grupo = casa.panel.crearGrupo('Casa Triana');
+    await emparejar(casa, tele, grupo.id);
+    await emparejar(casa, tablet, grupo.id);
+
+    anuncia(tablet, 'Tablet del salón', '2026-08-27T21:00:00.000Z');
+    await tablet.cliente.sincronizar();
+    await tele.cliente.sincronizar();
+
+    const puesto = tele.base.filas(
+      "SELECT value FROM profile_setting WHERE profile_id = 'ana' AND key = 'reproduciendo'",
+    )[0];
+    assert.equal(JSON.parse(String(puesto?.value)).aparato, 'Tablet del salón');
+
+    // Y al parar se borra: el valor vacío también viaja, porque una lápida
+    // aquí significaría "este ajuste ya no existe" y no "no suena nada".
+    anuncia(tablet, 'Tablet del salón', '2026-08-27T21:30:00.000Z');
+    tablet.base.ejecutar(
+      "UPDATE profile_setting SET value = '', updated = ? WHERE profile_id = 'ana' AND key = 'reproduciendo'",
+      ['2026-08-27T21:31:00.000Z'],
+    );
+    await tablet.cliente.sincronizar();
+    await tele.cliente.sincronizar();
+
+    const vacio = tele.base.filas(
+      "SELECT value FROM profile_setting WHERE profile_id = 'ana' AND key = 'reproduciendo'",
+    )[0];
+    assert.equal(vacio?.value, '');
   } finally {
     tele.cerrar();
     tablet.cerrar();

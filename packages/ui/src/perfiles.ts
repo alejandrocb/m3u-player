@@ -38,6 +38,37 @@ export interface Avance {
   visto: string;
 }
 
+/**
+ * Lo que este perfil está viendo, y dónde.
+ *
+ * Un perfil es una persona, y una persona no ve dos cosas a la vez: cuando
+ * empieza algo en un aparato, lo que estuviera sonando en otro se para. Para
+ * eso hace falta que los aparatos sepan quién está reproduciendo, y viaja por
+ * donde ya viaja todo lo del perfil.
+ */
+export interface Reproduccion {
+  /** El nombre del aparato en la casa: "TV Salón". Es lo que se le enseña a quien mira. */
+  aparato: string;
+  titulo: string;
+  /** Cuándo empezó, en ISO. Desempata dos anuncios casi simultáneos. */
+  desde: string;
+}
+
+/** La clave con la que se guarda en los ajustes del perfil. */
+export const CLAVE_REPRODUCCION = 'reproduciendo';
+
+/** Lee un anuncio guardado, que puede venir de otro aparato o estar vacío. */
+export function reproduccionDesde(valor: string | null | undefined): Reproduccion | null {
+  if (!valor) return null;
+  try {
+    const leido = JSON.parse(valor) as Partial<Reproduccion>;
+    if (!leido.aparato || !leido.desde) return null;
+    return { aparato: leido.aparato, titulo: leido.titulo ?? '', desde: leido.desde };
+  } catch {
+    return null;
+  }
+}
+
 export interface Favorito {
   clase: ClaseMedio;
   itemId: string;
@@ -92,6 +123,17 @@ export interface AlmacenPerfiles {
    */
   avancesDe(perfilId: string, medios: Array<{ clase: ClaseMedio; id: string }>): Promise<Record<string, number>>;
   olvidarAvance(perfilId: string, clase: ClaseMedio, itemId: string): Promise<void>;
+
+  /**
+   * Anuncia lo que este perfil está viendo aquí, o lo borra al parar.
+   *
+   * Se guarda como un ajuste más del perfil, así que **viaja con la
+   * sincronización** sin ninguna tubería nueva: el aparato que reciba un
+   * anuncio de otro sabrá que le toca callarse.
+   */
+  anunciarReproduccion(perfilId: string, reproduccion: Reproduccion | null): Promise<void>;
+  /** Lo último que se anunció para este perfil, venga de donde venga. */
+  reproduccion(perfilId: string): Promise<Reproduccion | null>;
 
   /** Preferencias del perfil: columnas de la rejilla, orden... */
   ajustes(perfilId: string): Promise<Ajustes>;

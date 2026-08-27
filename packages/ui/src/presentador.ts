@@ -18,7 +18,7 @@ import type { PortadaRemota } from './cliente-sync.ts';
 import type { Biblioteca, FichaLarga, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
-import { claveDeEpisodio, esRecomendable } from '@m3u/core';
+import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
 
 /** Qué reproducir cuando el usuario acepta sobre una ficha. */
 export interface Reproducible {
@@ -180,6 +180,15 @@ const CANDIDATAS = 8;
 
 /** Cuántas fichas lleva cada carrusel del inicio. */
 const CARRUSEL = 20;
+
+/**
+ * Cuántas caben en "seguir viendo" **después** de dejar una por serie.
+ *
+ * Quien llama pide unas cuantas más de la cuenta, porque el recorte por serie
+ * se hace aquí: si se pidieran doce y cinco fueran capítulos de la misma,
+ * quedarían ocho.
+ */
+const EN_CONTINUAR = 12;
 
 /** Cuántos nombres del reparto caben en una línea sin cansar. */
 const REPARTO_VISIBLE = 3;
@@ -490,12 +499,33 @@ export class Presentador {
       Se filtra por la pestaña: en Películas no pinta nada un capítulo a
       medias, y en Series tampoco una película. En "Todo" salen los dos.
     */
-    const avances = historial.filter((avance) => {
+    const filtrados = historial.filter((avance) => {
       if (avance.clase === 'canal') return false;
       if (modo === 'peliculas') return avance.clase === 'pelicula';
       if (modo === 'series') return avance.clase === 'episodio' || avance.clase === 'serie';
       return true;
     });
+
+    /*
+      Una fila por serie, no una por capítulo.
+
+      Una serie se ve en orden, así que lo que hace falta es **por dónde vas**,
+      no la lista de los cuatro últimos capítulos: eso llena "seguir viendo" de
+      la misma carátula repetida y esconde lo demás. El historial viene de lo
+      más reciente a lo más viejo, así que el primero de cada serie es el
+      último que se tocó.
+    */
+    const series = new Set<string>();
+    const avances = filtrados
+      .filter((avance) => {
+        if (avance.clase !== 'episodio') return true;
+        const serieId = leerClaveDeEpisodio(avance.itemId)?.serieId;
+        if (!serieId) return true;
+        if (series.has(serieId)) return false;
+        series.add(serieId);
+        return true;
+      })
+      .slice(0, EN_CONTINUAR);
     if (avances.length === 0) return null;
 
     const idsDe = (clase: ClaseMedio): string[] =>
