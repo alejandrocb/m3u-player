@@ -539,25 +539,18 @@ function favoritosFalsos(iniciales: Array<{ clase: ClaseMedio; id: string }> = [
   };
 }
 
-test('sin puerto de favoritos no aparece su grupo', async () => {
-  const presentador = new Presentador(bibliotecaFalsa());
-  await presentador.cargar();
-  const estado = await entrarEn(presentador, 'peliculas');
-
-  assert.equal(
-    estado.lateral?.opciones.some((opcion) => opcion.favoritos),
-    false,
-  );
-});
-
-test('las tres secciones traen el grupo de favoritos', async () => {
+test('la barra lateral solo lleva "todas" y las categorías del proveedor', async () => {
+  // Lo marcado tiene su propia pestaña arriba, Mi Lista: en la barra se
+  // mezclaba con las categorías, que son otra cosa.
   const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
   await presentador.cargar();
   const estado = await entrarEn(presentador, 'peliculas');
 
-  // Va el segundo, justo detrás de "todas" y antes de lo del proveedor.
-  assert.equal(estado.lateral?.opciones[1]?.nombre, 'Favoritos');
-  assert.equal(estado.lateral?.opciones[1]?.favoritos, true);
+  assert.match(estado.lateral?.opciones[0]?.nombre ?? '', /^Todas/);
+  assert.ok(
+    !estado.lateral?.opciones.some((opcion) => opcion.nombre === 'Favoritos'),
+    'ya no hay grupo de favoritos en la barra',
+  );
 });
 
 test('la pulsación larga marca y desmarca', async () => {
@@ -584,35 +577,6 @@ test('el corazón sale ya puesto en lo que estaba guardado', async () => {
     estado.elementos.map((elemento) => elemento.favorito),
     [false, true, false],
   );
-});
-
-test('el grupo de favoritos enseña lo marcado, y nada más', async () => {
-  const presentador = new Presentador(bibliotecaFalsa(), {
-    favoritos: favoritosFalsos([{ clase: 'pelicula', id: 'p2' }]),
-  });
-  await presentador.cargar();
-  await entrarEn(presentador, 'peliculas');
-
-  const estado = await presentador.elegirCategoria(null, { favoritos: true });
-  assert.equal(estado.titulo, 'Favoritos');
-  assert.deepEqual(
-    estado.elementos.map((elemento) => elemento.titulo),
-    ['Película 2'],
-  );
-  // Y no se pagina: son los que sean.
-  assert.equal(estado.hayMas, false);
-});
-
-test('quitar de favoritos dentro del grupo saca la ficha de la lista', async () => {
-  const presentador = new Presentador(bibliotecaFalsa(), {
-    favoritos: favoritosFalsos([{ clase: 'pelicula', id: 'p0' }]),
-  });
-  await presentador.cargar();
-  await entrarEn(presentador, 'peliculas');
-  await presentador.elegirCategoria(null, { favoritos: true });
-
-  const estado = await presentador.alternarFavorito(0);
-  assert.equal(estado.elementos.length, 0, 'si no, queda una ficha sin corazón en Favoritos');
 });
 
 test('una serie se marca por su ficha, no por lo que reproduce', async () => {

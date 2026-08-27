@@ -1306,26 +1306,18 @@ function BibliotecaVista({
         scrollEnabled={DESPLAZA_EL_DEDO}
         ref={barra}
         data={estado.lateral.opciones}
-        keyExtractor={(opcion) => (opcion.favoritos ? 'favoritos' : (opcion.grupo ?? 'todas'))}
+        keyExtractor={(opcion) => opcion.grupo ?? 'todas'}
         extraData={estado.lateral}
         renderItem={({ item, index }) => {
-          // El grupo de favoritos no tiene nombre de categoría, así que se
-          // compara por su marca y no por `grupo`, que es null.
-          const activa = item.favoritos
-            ? estado.lateral!.enFavoritos
-            : !estado.lateral!.enFavoritos && item.grupo === estado.lateral!.activa;
+          const activa = item.grupo === estado.lateral!.activa;
           const enfocada = estado.lateral!.dentro && index === estado.lateral!.foco;
           return (
             <Pressable
               style={[estilos.categoria, activa && estilos.categoriaActiva, enfocada && estilos.categoriaEnfocada]}
-              onPress={() =>
-                presentador.current
-                  ?.elegirCategoria(item.grupo, { favoritos: item.favoritos })
-                  .then(setEstado)
-              }
+              onPress={() => presentador.current?.elegirCategoria(item.grupo).then(setEstado)}
             >
               <Text style={[estilos.categoriaTexto, activa && estilos.textoEnfocado]} numberOfLines={2}>
-                {item.favoritos ? '♥  Favoritos' : item.nombre}
+                {item.nombre}
               </Text>
               {item.cuantos !== null ? (
                 <Text style={estilos.categoriaCuantos}>{numero(item.cuantos)}</Text>

@@ -16,9 +16,9 @@ export type Pantalla =
   // lo elegido a la derecha. `grupo` es lo que hay marcado en la barra; sin
   // ello, todo. `favoritos` es el grupo propio de cada perfil, que no viene
   // del proveedor y por eso no cabe en `grupo`.
-  | { tipo: 'directo'; grupo?: string; favoritos?: true }
-  | { tipo: 'peliculas'; grupo?: string; favoritos?: true }
-  | { tipo: 'series'; grupo?: string; favoritos?: true }
+  | { tipo: 'directo'; grupo?: string }
+  | { tipo: 'peliculas'; grupo?: string }
+  | { tipo: 'series'; grupo?: string }
   // Igual: temporadas a la izquierda, episodios de la marcada a la derecha.
   | { tipo: 'serie'; serieId: string; titulo: string; temporada?: number }
   // El buscador hereda dónde se abrió: en una categoría busca solo ahí.
@@ -103,7 +103,7 @@ export function claveDe(pantalla: Pantalla): string {
     case 'directo':
     case 'peliculas':
     case 'series':
-      return `${pantalla.tipo}:${pantalla.favoritos ? '♥' : (pantalla.grupo ?? '')}`;
+      return `${pantalla.tipo}:${pantalla.grupo ?? ''}`;
     default:
       return pantalla.tipo;
   }

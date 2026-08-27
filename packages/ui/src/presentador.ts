@@ -78,7 +78,6 @@ export interface OpcionLateral {
    * este perfil ha marcado", y coincidiría con una categoría del panel que se
    * llamara igual.
    */
-  favoritos?: true;
 }
 
 /**
@@ -93,10 +92,8 @@ export interface OpcionLateral {
  */
 export interface Lateral {
   opciones: OpcionLateral[];
-  /** Categoría en uso; null es "Todas" —o el grupo de favoritos—. */
+  /** Categoría en uso; `null` es "Todas". */
   activa: string | null;
-  /** true cuando lo que se está viendo es el grupo de favoritos. */
-  enFavoritos: boolean;
   foco: number;
   /** true cuando el foco está en la barra y no en la rejilla. */
   dentro: boolean;
@@ -1138,7 +1135,7 @@ export class Presentador {
       const opcion = lateral.opciones[lateral.foco];
       if (opcion) {
         return {
-          estado: await this.elegirCategoria(opcion.grupo, { favoritos: opcion.favoritos }),
+          estado: await this.elegirCategoria(opcion.grupo),
           reproducir: null,
         };
       }
@@ -1186,7 +1183,7 @@ export class Presentador {
     opcion: OpcionLateral,
     { conservarBarra = false } = {},
   ): Promise<EstadoPantalla> {
-    const estado = await this.elegirCategoria(opcion.grupo, { favoritos: opcion.favoritos });
+    const estado = await this.elegirCategoria(opcion.grupo);
     if (conservarBarra && this.#lateral) {
       this.#lateral.dentro = true;
       return { ...estado, lateral: this.#lateral };
@@ -1194,7 +1191,7 @@ export class Presentador {
     return estado;
   }
 
-  async elegirCategoria(grupo: string | null, opciones: { favoritos?: boolean } = {}): Promise<EstadoPantalla> {
+  async elegirCategoria(grupo: string | null): Promise<EstadoPantalla> {
     const pantalla = this.#navegador.actual;
 
     if (pantalla.tipo === 'serie') {
@@ -1204,13 +1201,7 @@ export class Presentador {
       if (!Number.isFinite(temporada)) return this.estado();
       this.#navegador.reemplazar({ ...pantalla, temporada });
     } else if (pantalla.tipo === 'directo' || pantalla.tipo === 'peliculas' || pantalla.tipo === 'series') {
-      this.#navegador.reemplazar(
-        opciones.favoritos
-          ? { tipo: pantalla.tipo, favoritos: true }
-          : grupo
-            ? { tipo: pantalla.tipo, grupo }
-            : { tipo: pantalla.tipo },
-      );
+      this.#navegador.reemplazar(grupo ? { tipo: pantalla.tipo, grupo } : { tipo: pantalla.tipo });
     } else {
       return this.estado();
     }
@@ -1240,12 +1231,6 @@ export class Presentador {
     );
 
     // Estando dentro del grupo de favoritos, quitar uno tiene que sacarlo de
-    // la lista: si no, se queda una ficha sin corazón en "Favoritos".
-    const pantalla = this.#navegador.actual;
-    const enGrupoFavoritos =
-      (pantalla.tipo === 'directo' || pantalla.tipo === 'peliculas' || pantalla.tipo === 'series') &&
-      pantalla.favoritos === true;
-    if (!favorito && enGrupoFavoritos) return this.cargar();
     return this.estado();
   }
 
@@ -1373,19 +1358,18 @@ export class Presentador {
         : conGrupos
           ? (pantalla.grupo ?? null)
           : null;
-    const enFavoritos = conGrupos && pantalla.favoritos === true;
+
     const foco = Math.max(
       0,
       opciones.findIndex((opcion) =>
-        enFavoritos ? opcion.favoritos === true : !opcion.favoritos && opcion.grupo === activa,
+        opcion.grupo === activa,
       ),
     );
     // Se conserva si el foco estaba en la barra: recargar por elegir categoría
     // no debe sacarlo de ahí a mitad de recorrido.
     this.#lateral = {
       opciones,
-      activa: enFavoritos ? null : activa,
-      enFavoritos,
+      activa,
       foco,
       dentro: this.#lateral?.dentro ?? false,
     };
@@ -1426,12 +1410,16 @@ export class Presentador {
     return null;
   }
 
-  /** "Todas" y "Favoritos" van siempre las primeras, antes de lo del proveedor. */
+  /**
+   * "Todas" va siempre la primera, antes de lo del proveedor.
+   *
+   * Lo marcado ya no vive aquí: tiene su propia pestaña arriba, Mi Lista.
+   * Tenerlo en los dos sitios era el mismo contenido por dos caminos, y en la
+   * barra lateral se mezclaba con las categorías del proveedor, que son otra
+   * cosa.
+   */
   #conCabeceras(todas: string, categorias: OpcionLateral[]): OpcionLateral[] {
-    const cabeceras: OpcionLateral[] = [{ grupo: null, nombre: todas, cuantos: null }];
-    // Sin puerto de favoritos no hay perfil detrás, así que tampoco grupo.
-    if (this.#favoritos) cabeceras.push({ grupo: null, nombre: 'Favoritos', cuantos: null, favoritos: true });
-    return [...cabeceras, ...categorias];
+    return [{ grupo: null, nombre: todas, cuantos: null }, ...categorias];
   }
 
   async #contenido(
@@ -1447,20 +1435,16 @@ export class Presentador {
         return { titulo: 'Biblioteca', hayMas: false, elementos: [] };
 
       case 'directo': {
-        // Sin grupo elegido se enseña el primero: una rejilla con los 482
-        // canales de golpe no dice nada, y la barra ya está a la izquierda.
         // Sin grupo elegido salen todos, igual que en películas y series: lo
         // que marca la barra y lo que se ve tienen que coincidir.
-        const canales = pantalla.favoritos
-          ? await this.#biblioteca.canalesPorId(await this.#idsFavoritos('canal'))
-          : pantalla.grupo
-            ? await this.#biblioteca.canalesDeGrupo(pantalla.grupo)
-            : await this.#biblioteca.canales(pagina);
+        const canales = pantalla.grupo
+          ? await this.#biblioteca.canalesDeGrupo(pantalla.grupo)
+          : await this.#biblioteca.canales(pagina);
 
         return {
-          titulo: pantalla.favoritos ? 'Favoritos' : (pantalla.grupo ?? 'TV en directo'),
+          titulo: pantalla.grupo ?? 'TV en directo',
           // Solo se pagina el listado completo: un grupo cabe entero.
-          hayMas: !pantalla.favoritos && !pantalla.grupo && canales.length === pagina.limite,
+          hayMas: !pantalla.grupo && canales.length === pagina.limite,
           elementos: canales.map((canal) => ({
             id: canal.id,
             titulo: canal.nombre,
@@ -1479,13 +1463,11 @@ export class Presentador {
       case 'peliculas': {
         // Los favoritos son pocos y ya vienen ordenados por cuándo se
         // marcaron: no se paginan ni se reordenan.
-        const peliculas = pantalla.favoritos
-          ? await this.#biblioteca.peliculasPorId(await this.#idsFavoritos('pelicula'))
-          : await this.#biblioteca.peliculas({ ...pagina, grupo: pantalla.grupo });
+        const peliculas = await this.#biblioteca.peliculas({ ...pagina, grupo: pantalla.grupo });
 
         return {
-          titulo: pantalla.favoritos ? 'Favoritos' : (pantalla.grupo ?? 'Películas'),
-          hayMas: !pantalla.favoritos && peliculas.length === pagina.limite,
+          titulo: pantalla.grupo ?? 'Películas',
+          hayMas: peliculas.length === pagina.limite,
           elementos: peliculas.map((pelicula) => ({
             id: pelicula.id,
             titulo: pelicula.titulo,
@@ -1505,13 +1487,11 @@ export class Presentador {
       }
 
       case 'series': {
-        const series = pantalla.favoritos
-          ? await this.#biblioteca.seriesPorId(await this.#idsFavoritos('serie'))
-          : await this.#biblioteca.series({ ...pagina, grupo: pantalla.grupo });
+        const series = await this.#biblioteca.series({ ...pagina, grupo: pantalla.grupo });
 
         return {
-          titulo: pantalla.favoritos ? 'Favoritos' : (pantalla.grupo ?? 'Series'),
-          hayMas: !pantalla.favoritos && series.length === pagina.limite,
+          titulo: pantalla.grupo ?? 'Series',
+          hayMas: series.length === pagina.limite,
           elementos: series.map((serie) => ({
             id: serie.id,
             titulo: serie.titulo,

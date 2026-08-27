@@ -56,9 +56,9 @@ test('dos temporadas de la misma serie recuerdan focos distintos', () => {
   assert.equal(nav.focoGuardado(), 5);
 });
 
-test('el grupo de favoritos no se confunde con una categoría', () => {
+test('cada categoría recuerda su propio foco', () => {
   const nav = new Navegador();
-  nav.entrar({ tipo: 'peliculas', favoritos: true });
+  nav.entrar({ tipo: 'peliculas' });
   nav.recordarFoco(3);
   nav.reemplazar({ tipo: 'peliculas', grupo: 'Estrenos' });
   assert.equal(nav.focoGuardado(), 0, 'cada una recuerda el suyo');
