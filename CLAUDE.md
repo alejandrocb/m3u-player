@@ -62,6 +62,41 @@ plataforma vive fuera.
 - **`apps/desktop`** — Electron + mpv. JavaScript (`.mjs`), sin bundler todavía.
 - **`tools/probe`** — diagnóstico y medición contra la lista real del usuario.
 
+### El inicio es la pantalla, y las pestañas lo filtran
+
+Arriba hay cinco: **Todo, Películas, Series, TV en directo y Mi Lista**. Las
+cinco pintan lo mismo —filas de fichas— y solo cambian qué filas. La rejilla
+completa, con su barra de categorías, sigue siendo otra pantalla: se llega
+**aceptando sobre la pestaña que ya está puesta**, la primera pulsación filtra
+y la segunda entra. Mi Lista no tiene rejilla detrás.
+
+Las filas de cada pestaña:
+
+- **Películas y series**: novedades, recomendadas y luego **una fila por
+  categoría del proveedor** —acción, comedia, terror—, ocho como mucho.
+- **TV en directo**: una fila por grupo de canales y **todos los canales**. Un
+  grupo de canales es una lista corta y cerrada, así que aquí no se recorta:
+  esconder uno sería esconder un canal.
+- **Mi Lista**: lo marcado, por clases, con su propio selector de tipo.
+
+**El selector de Mi Lista va dentro de la lista, como una fila más**, y no en
+otra barra. Así se recorre con el mando igual que las carátulas —arriba,
+abajo, izquierda, derecha— sin inventar otro sitio donde pueda estar el foco.
+Por eso existe la acción `filtrar` junto a `reproducir` y `entrar`.
+
+**El orden de las filas por categoría lo decide el perfil.** Cada
+reproducción suma uno a las categorías de lo que se pone, en la tabla
+`affinity`, que se sincroniza como el resto: lo que ves en la tele ordena
+también el inicio de la tablet. Sin datos todavía, mandan las categorías con
+más contenido. Se cuentan reproducciones y no fichas abiertas: mirar no es
+ver.
+
+Las categorías salen de las **del proveedor** y no del género de verdad:
+`get_vod_info` da el género pero cuesta una petición por título, así que solo
+lo tenemos de un puñado; las categorías vienen con el catálogo y están todas.
+Dicen casi lo mismo, solo que a gritos —"PELICULAS ACCION"—, y por eso el
+rótulo se limpia con `nombreDeCategoria`.
+
 ### Las cuatro pantallas tienen la misma forma
 
 TV en directo, películas, series y el interior de una serie son **la misma
@@ -141,11 +176,16 @@ carátula repetida y esconde lo demás. El historial viene de lo más reciente a
 lo más viejo, así que el primero de cada serie es el bueno. Por eso quien
 llama pide más avances de los que caben: el recorte por serie se hace después.
 
-### Los favoritos son un grupo más
+### Mi Lista: lo marcado tiene su pestaña
 
-Cada perfil tiene los suyos y salen en la barra de las tres secciones, entre
-"todas" y las categorías del proveedor. Se marcan **manteniendo pulsado** sobre
-la ficha —el toque normal ya reproduce o entra— y el corazón se queda puesto.
+Cada perfil tiene la suya. Se marca **manteniendo pulsado** sobre la ficha —el
+toque normal ya reproduce o entra, y con el mando es el OK largo—, se puede
+hacer **en cualquier sitio**: en la rejilla y en las filas del inicio, sea
+película, serie o canal.
+
+Ya no es un grupo de la barra lateral. Tenerlo en los dos sitios era el mismo
+contenido por dos caminos, y en la barra se mezclaba con las categorías del
+proveedor, que son otra cosa.
 
 Lo que se marca es la película, el canal o **la serie entera**: un episodio
 suelto no, porque lo que uno guarda es la serie.
