@@ -134,7 +134,11 @@ function anuncia(quien: Aparato, aparato: string, cuando: string): void {
      VALUES ('ana', 'reproduciendo', ?, ?, 0, ?)
      ON CONFLICT(profile_id, key) DO UPDATE SET
        value = excluded.value, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
-    [JSON.stringify({ aparato, titulo: 'Lola Pater', desde: cuando }), cuando, quien.nombre],
+    [
+      JSON.stringify({ aparato: quien.nombre, nombre: aparato, titulo: 'Lola Pater', desde: cuando }),
+      cuando,
+      quien.nombre,
+    ],
   );
 }
 
@@ -322,7 +326,8 @@ test('el aviso de "estoy reproduciendo" llega al otro aparato', async () => {
     const puesto = tele.base.filas(
       "SELECT value FROM profile_setting WHERE profile_id = 'ana' AND key = 'reproduciendo'",
     )[0];
-    assert.equal(JSON.parse(String(puesto?.value)).aparato, 'Tablet del salón');
+    assert.equal(JSON.parse(String(puesto?.value)).nombre, 'Tablet del salón');
+    assert.equal(JSON.parse(String(puesto?.value)).aparato, 'tablet', 'el identificador, que es lo que compara');
 
     // Y al parar se borra: el valor vacío también viaja, porque una lápida
     // aquí significaría "este ajuste ya no existe" y no "no suena nada".
@@ -341,6 +346,24 @@ test('el aviso de "estoy reproduciendo" llega al otro aparato', async () => {
   } finally {
     tele.cerrar();
     tablet.cerrar();
+    await casa.cerrar();
+  }
+});
+
+test('el servidor le recuerda a cada aparato cómo se llama en la casa', async () => {
+  // Hace falta para poder decir "ha empezado a ver algo en TV Salón", y viaja
+  // en cada sincronización y no solo en el alta: los aparatos emparejados
+  // antes de que esto existiera no van a volver a darse de alta.
+  const casa = await montar();
+  const tele = aparato('tele', casa.url);
+  try {
+    const grupo = casa.panel.crearGrupo('Casa Triana');
+    await emparejar(casa, tele, grupo.id);
+
+    await tele.cliente.sincronizar();
+    assert.equal((await tele.cliente.estado())?.aparato, 'tele');
+  } finally {
+    tele.cerrar();
     await casa.cerrar();
   }
 });

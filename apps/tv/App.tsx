@@ -209,6 +209,10 @@ function Raiz() {
       // Solo se repinta si ha bajado algo: subir es cosa nuestra y no cambia
       // lo que se está viendo en pantalla.
       if (hecho && hecho.bajados > 0) setSincronizado((n) => n + 1);
+      // El servidor devuelve cómo se llama este aparato en la casa. Se refresca
+      // aquí para que lo aprendan también los que se emparejaron antes de que
+      // eso existiera, y para enterarse si le cambias el nombre en la web.
+      setNombreAparato((await sync.current.estado())?.aparato ?? null);
     } catch (fallo) {
       console.warn('[sync] no se pudo sincronizar', fallo);
     }
@@ -636,11 +640,10 @@ function BibliotecaVista({
 
     void (async () => {
       await perfiles.anunciarReproduccion(perfil.id, {
-        aparato: aparato ?? 'otro aparato',
+        nombre: aparato ?? 'otro aparato',
         titulo: reproduciendo.titulo,
-        desde: new Date().toISOString(),
       });
-      onSincronizar();
+      sincronizarAhora.current();
     })();
 
     return () => {
@@ -655,10 +658,10 @@ function BibliotecaVista({
           sería justo lo contrario de lo que queremos.
         */
         const anuncio = await perfiles.reproduccion(perfil.id);
-        if (anuncio && anuncio.aparato !== (aparato ?? 'otro aparato')) return;
+        if (anuncio && !anuncio.propia) return;
 
         await perfiles.anunciarReproduccion(perfil.id, null);
-        onSincronizar();
+        sincronizarAhora.current();
       })();
     };
     // Solo al empezar y al terminar de reproducir, no en cada repintado.
@@ -672,11 +675,22 @@ function BibliotecaVista({
     no minutos. Fuera de la reproducción no hace falta: el "seguir viendo" no
     tiene prisa.
   */
+  const sincronizarAhora = useRef(onSincronizar);
+  sincronizarAhora.current = onSincronizar;
+
   useEffect(() => {
     if (!reproduciendo) return;
-    const reloj = setInterval(onSincronizar, LATIDO_REPRODUCIENDO_MS);
+    /*
+      Por referencia y con el reloj dependiendo solo de si suena algo.
+
+      `onSincronizar` llega como una función nueva en cada pintado, así que
+      tenerla en las dependencias rehacía el intervalo una y otra vez y los
+      doce segundos no se cumplían jamás. Es el mismo tropiezo que ya nos pasó
+      con el turno de la portada.
+    */
+    const reloj = setInterval(() => sincronizarAhora.current(), LATIDO_REPRODUCIENDO_MS);
     return () => clearInterval(reloj);
-  }, [reproduciendo, onSincronizar]);
+  }, [reproduciendo]);
 
   /* Y al recibir el anuncio de otro aparato, aquí se para. */
   useEffect(() => {
@@ -685,17 +699,17 @@ function BibliotecaVista({
 
     void (async () => {
       const anuncio = await perfiles.reproduccion(perfil.id);
-      if (!vigente || !anuncio || anuncio.aparato === (aparato ?? 'otro aparato')) return;
+      if (!vigente || !anuncio || anuncio.propia) return;
 
       setReproduciendo(null);
       setAPantallaCompleta(false);
-      setInterrumpido(anuncio.aparato);
+      setInterrumpido(anuncio.nombre);
     })();
 
     return () => {
       vigente = false;
     };
-  }, [sincronizado, reproduciendo, perfiles, perfil.id, aparato]);
+  }, [sincronizado, reproduciendo, perfiles, perfil.id]);
 
   /** El aviso de "te has ido a ver a otro sitio" se quita solo. */
   useEffect(() => {

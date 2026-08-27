@@ -47,8 +47,18 @@ export interface Avance {
  * donde ya viaja todo lo del perfil.
  */
 export interface Reproduccion {
-  /** El nombre del aparato en la casa: "TV Salón". Es lo que se le enseña a quien mira. */
+  /**
+   * **El identificador del aparato**, no su nombre.
+   *
+   * Es lo que decide si el anuncio es de aquí o de otro sitio, y por eso no
+   * puede ser el nombre: el nombre lo pone quien aprueba el aparato en la web
+   * y un aparato emparejado antes de que esto existiera no lo tiene. Con dos
+   * aparatos sin nombre, los dos se creerían el que está sonando y no se
+   * callaría ninguno.
+   */
   aparato: string;
+  /** Cómo se llama en la casa, para poder decirlo: "TV Salón". */
+  nombre: string;
   titulo: string;
   /** Cuándo empezó, en ISO. Desempata dos anuncios casi simultáneos. */
   desde: string;
@@ -63,7 +73,12 @@ export function reproduccionDesde(valor: string | null | undefined): Reproduccio
   try {
     const leido = JSON.parse(valor) as Partial<Reproduccion>;
     if (!leido.aparato || !leido.desde) return null;
-    return { aparato: leido.aparato, titulo: leido.titulo ?? '', desde: leido.desde };
+    return {
+      aparato: leido.aparato,
+      nombre: leido.nombre || 'otro aparato',
+      titulo: leido.titulo ?? '',
+      desde: leido.desde,
+    };
   } catch {
     return null;
   }
@@ -131,9 +146,15 @@ export interface AlmacenPerfiles {
    * sincronización** sin ninguna tubería nueva: el aparato que reciba un
    * anuncio de otro sabrá que le toca callarse.
    */
-  anunciarReproduccion(perfilId: string, reproduccion: Reproduccion | null): Promise<void>;
-  /** Lo último que se anunció para este perfil, venga de donde venga. */
-  reproduccion(perfilId: string): Promise<Reproduccion | null>;
+  anunciarReproduccion(perfilId: string, reproduccion: { nombre: string; titulo: string } | null): Promise<void>;
+  /**
+   * Lo último que se anunció para este perfil, venga de donde venga.
+   *
+   * `propia` dice si lo escribió este mismo aparato, que es lo único que hay
+   * que mirar para saber si toca callarse: el almacén conoce su identificador
+   * y quien pinta la pantalla, no.
+   */
+  reproduccion(perfilId: string): Promise<(Reproduccion & { propia: boolean }) | null>;
 
   /** Preferencias del perfil: columnas de la rejilla, orden... */
   ajustes(perfilId: string): Promise<Ajustes>;

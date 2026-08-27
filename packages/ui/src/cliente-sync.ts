@@ -242,7 +242,7 @@ export class ClienteSync {
     }
     if (!respuesta.ok) throw new Error(`el servidor respondió ${respuesta.status}`);
 
-    const datos = (await respuesta.json()) as { cambios?: Cambio[]; marca?: string };
+    const datos = (await respuesta.json()) as { cambios?: Cambio[]; marca?: string; aparato?: string | null };
     const suyos = datos.cambios ?? [];
     if (suyos.length > 0) await this.#perfiles.aplicarCambios(suyos);
 
@@ -252,6 +252,9 @@ export class ClienteSync {
       // respuesta: son escalas distintas.
       subida: marcaTras(estado.subida, mios),
       bajada: datos.marca ?? marcaTras(estado.bajada, suyos),
+      // El servidor recuerda en cada vuelta cómo se llama este aparato: así
+      // lo aprenden también los que se emparejaron antes de que hiciera falta.
+      aparato: datos.aparato ?? estado.aparato,
     });
 
     return { subidos: mios.length, bajados: suyos.length };

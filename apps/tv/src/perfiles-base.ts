@@ -352,18 +352,29 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       return ajustesDesde(guardados);
     },
 
-    async anunciarReproduccion(perfilId: string, reproduccion: Reproduccion | null): Promise<void> {
+    async anunciarReproduccion(
+      perfilId: string,
+      reproduccion: { nombre: string; titulo: string } | null,
+    ): Promise<void> {
+      // El identificador del aparato lo pone el almacén, que es quien lo
+      // sabe: el mismo con el que firma cualquier otra fila.
+      const anuncio: Reproduccion | null = reproduccion
+        ? { aparato, nombre: reproduccion.nombre, titulo: reproduccion.titulo, desde: ahora() }
+        : null;
+
       // Vacío en vez de lápida: no es una baja, es "aquí ya no suena nada", y
       // el otro aparato tiene que verlo igual que ve el anuncio.
-      guardarSetting(perfilId, CLAVE_REPRODUCCION, reproduccion ? JSON.stringify(reproduccion) : '');
+      guardarSetting(perfilId, CLAVE_REPRODUCCION, anuncio ? JSON.stringify(anuncio) : '');
     },
 
-    async reproduccion(perfilId: string): Promise<Reproduccion | null> {
+    async reproduccion(perfilId: string): Promise<(Reproduccion & { propia: boolean }) | null> {
       const fila = filas(db, 'SELECT value FROM profile_setting WHERE profile_id = ? AND key = ? AND deleted = 0', [
         perfilId,
         CLAVE_REPRODUCCION,
       ])[0];
-      return reproduccionDesde(fila?.value as string | undefined);
+
+      const anuncio = reproduccionDesde(fila?.value as string | undefined);
+      return anuncio ? { ...anuncio, propia: anuncio.aparato === aparato } : null;
     },
 
     async guardarAjuste(perfilId: string, clave: string, valor: string): Promise<void> {

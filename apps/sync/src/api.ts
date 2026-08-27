@@ -137,7 +137,20 @@ export async function manejarApi(
     const salientes = cambiosDesde(base, desde, 'recibido');
 
     panel.anotarSincronizacion(aparato.id);
-    json(res, 200, { cambios: salientes, marca: marcaTras(desde, salientes) });
+    json(res, 200, {
+      cambios: salientes,
+      marca: marcaTras(desde, salientes),
+      /*
+        Y de paso, cómo se llama este aparato en la casa.
+
+        Lo pusiste tú al aprobarlo, y el aparato lo necesita para poder decir
+        en los demás dónde ha empezado a ver algo esta persona. Va aquí y no
+        solo en el alta porque los que ya estaban emparejados no van a volver
+        a darse de alta, y porque si le cambias el nombre en la web tiene que
+        enterarse.
+      */
+      aparato: aparato.nombre,
+    });
     return true;
   }
 
