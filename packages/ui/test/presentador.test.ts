@@ -722,6 +722,47 @@ test('lo empezado va justo detrás de la portada', async () => {
   assert.equal(indiceDe(estado, 'Seguir viendo'), 1, 'lo primero después de la portada');
 });
 
+test('Mi Lista enseña lo marcado, por clases y con su filtro', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    favoritos: {
+      listar: async (clase) => (clase === 'pelicula' ? ['p1'] : clase === 'serie' ? ['dw'] : []),
+      alternar: async () => true,
+    },
+  });
+  await presentador.cargar();
+
+  const estado = await presentador.elegirModo('lista');
+  assert.equal(estado.inicio?.modo, 'lista');
+
+  // La primera fila son los filtros; luego, una fila por clase con algo.
+  assert.equal(estado.inicio?.filas[0]?.tipo, 'filtros');
+  assert.deepEqual(
+    estado.inicio?.filas.slice(1).map((fila) => (fila.tipo === 'carrusel' ? fila.titulo : fila.tipo)),
+    ['Películas', 'Series'],
+    'los canales no salen porque no hay ninguno marcado',
+  );
+
+  // Y el filtro deja solo lo suyo.
+  const soloSeries = await presentador.elegirFiltro('serie');
+  assert.deepEqual(
+    soloSeries.inicio?.filas.slice(1).map((fila) => (fila.tipo === 'carrusel' ? fila.titulo : fila.tipo)),
+    ['Series'],
+  );
+});
+
+test('sin nada marcado, Mi Lista solo tiene sus filtros', async () => {
+  // La vista enseña ahí el "aquí va lo que marques": no es un fallo, es que
+  // todavía no hay nada.
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    favoritos: { listar: async () => [], alternar: async () => true },
+  });
+  await presentador.cargar();
+
+  const estado = await presentador.elegirModo('lista');
+  assert.equal(estado.inicio?.filas.length, 1);
+  assert.equal(estado.inicio?.filas[0]?.tipo, 'filtros');
+});
+
 test('de una serie solo sale por dónde vas, no cada capítulo', async () => {
   // Una serie se ve en orden: lo que hace falta es el último capítulo tocado,
   // no los cuatro anteriores llenando la fila con la misma carátula.

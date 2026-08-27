@@ -39,6 +39,7 @@ import type {
   EstadoPantalla,
   FilaInicio,
   Formato,
+  FormatoFila,
   Inicio,
   OpcionLateral,
   Perfil,
@@ -1150,7 +1151,10 @@ function BibliotecaVista({
   const pestanasCabecera: Array<{ clave: string; nombre: string; onPress: () => void; activa: boolean }> =
     estado.inicio
       ? [
-          ...MODOS_INICIO.map((opcion) => ({
+          // Todo, Películas y Series filtran el inicio; TV en directo es otra
+          // pantalla; y Mi Lista va la última, detrás del directo, porque es
+          // lo tuyo y no una sección del proveedor.
+          ...MODOS_INICIO.filter((opcion) => opcion.modo !== 'lista').map((opcion) => ({
             clave: opcion.modo,
             nombre: opcion.nombre,
             activa: estado.inicio!.modo === opcion.modo,
@@ -1161,6 +1165,12 @@ function BibliotecaVista({
             nombre: 'TV en directo',
             activa: false,
             onPress: () => void presentador.current?.irADirecto().then(setEstado),
+          },
+          {
+            clave: 'lista',
+            nombre: 'Mi Lista',
+            activa: estado.inicio!.modo === 'lista',
+            onPress: () => void presentador.current?.elegirModo('lista').then(setEstado),
           },
         ]
       : [];
@@ -1711,6 +1721,12 @@ function PantallaInicio({
       keyExtractor={(fila, indice) => `${fila.tipo}-${indice}`}
       extraData={inicio}
       showsVerticalScrollIndicator={false}
+      /*
+        Sin portada arriba —Mi Lista, o un inicio sin nada que destacar— la
+        primera fila se metería debajo de la barra flotante, que no ocupa
+        sitio en el flujo. El hueco se lo pone la lista.
+      */
+      contentContainerStyle={inicio.filas[0]?.tipo === 'destacado' ? undefined : estilos.inicioSinPortada}
       // Son pocas filas y `scrollToIndex` necesita que estén montadas.
       initialNumToRender={8}
       onScrollToIndexFailed={() => {}}
@@ -1730,17 +1746,79 @@ function PantallaInicio({
           );
         }
 
+        if (item.tipo === 'filtros') {
+          return (
+            <Filtros
+              elementos={item.elementos}
+              activa={activa}
+              columna={inicio.columna}
+              onTocar={(columna) => onTocar(index, columna)}
+            />
+          );
+        }
+
         return (
           <Carrusel
             titulo={item.titulo}
             elementos={item.elementos}
+            formato={item.formato}
             activa={activa}
             columna={inicio.columna}
             onTocar={(columna) => onTocar(index, columna)}
           />
         );
       }}
+      ListEmptyComponent={
+        inicio.modo === 'lista' ? (
+          <View style={estilos.listaVacia}>
+            <Text style={estilos.listaVaciaTexto}>Aquí va lo que marques con el corazón.</Text>
+            <Text style={estilos.listaVaciaPista}>
+              Mantén pulsado sobre una carátula —o deja el OK apretado con el mando— para añadirla.
+            </Text>
+          </View>
+        ) : null
+      }
     />
+  );
+}
+
+/**
+ * La fila de filtros de Mi Lista.
+ *
+ * Es una fila más de la lista, no una barra aparte: así se recorre con el
+ * mando igual que las carátulas y no hay que inventar otro sitio donde pueda
+ * estar el foco.
+ */
+function Filtros({
+  elementos,
+  activa,
+  columna,
+  onTocar,
+}: {
+  elementos: Elemento[];
+  activa: boolean;
+  columna: number;
+  onTocar: (columna: number) => void;
+}) {
+  return (
+    <View style={estilos.filtros}>
+      {elementos.map((elemento, indice) => {
+        const enfocado = activa && indice === columna;
+        // `favorito` marca cuál está puesto: lo pone el presentador.
+        return (
+          <Pressable
+            key={elemento.id}
+            focusable={false}
+            onPress={() => onTocar(indice)}
+            style={[estilos.filtro, elemento.favorito && estilos.filtroPuesto, enfocado && estilos.filtroEnfocado]}
+          >
+            <Text style={[estilos.filtroTexto, elemento.favorito && estilos.filtroTextoPuesto]}>
+              {elemento.titulo}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -2035,12 +2113,15 @@ function Destacado({
 function Carrusel({
   titulo,
   elementos,
+  formato,
   activa,
   columna,
   onTocar,
 }: {
   titulo: string;
   elementos: Elemento[];
+  /** `canal` pinta el logotipo apaisado en vez del cartel vertical. */
+  formato?: FormatoFila;
   activa: boolean;
   columna: number;
   onTocar: (columna: number) => void;
@@ -2073,7 +2154,12 @@ function Carrusel({
         initialNumToRender={8}
         onScrollToIndexFailed={() => {}}
         renderItem={({ item, index }) => (
-          <FichaDeFila item={item} enfocado={activa && index === columna} onTocar={() => onTocar(index)} />
+          <FichaDeFila
+            item={item}
+            formato={formato}
+            enfocado={activa && index === columna}
+            onTocar={() => onTocar(index)}
+          />
         )}
       />
     </View>
@@ -2106,13 +2192,16 @@ function pieDeFicha(elemento: Elemento): string {
  */
 function FichaDeFila({
   item,
+  formato,
   enfocado,
   onTocar,
 }: {
   item: Elemento;
+  formato?: FormatoFila;
   enfocado: boolean;
   onTocar: () => void;
 }) {
+  const esCanal = formato === 'canal';
   const escala = useRef(new Animated.Value(1)).current;
 
   /*
@@ -2133,7 +2222,14 @@ function FichaDeFila({
   }, [enfocado, escala]);
 
   return (
-    <Animated.View style={[estilos.fichaFilaCaja, enfocado && estilos.fichaFilaEncima, { transform: [{ scale: escala }] }]}>
+    <Animated.View
+      style={[
+        estilos.fichaFilaCaja,
+        esCanal && estilos.fichaFilaCajaCanal,
+        enfocado && estilos.fichaFilaEncima,
+        { transform: [{ scale: escala }] },
+      ]}
+    >
       <Pressable
         focusable={false}
         onPress={onTocar}
@@ -2141,9 +2237,15 @@ function FichaDeFila({
       >
         <View style={estilos.fichaCaratula}>
           {item.logo ? (
-            <Image source={{ uri: item.logo }} style={estilos.fichaImagen} resizeMode="cover" />
+            <Image
+              source={{ uri: item.logo }}
+              style={[estilos.fichaImagen, esCanal && estilos.fichaImagenCanal]}
+              // El logotipo de un canal se enseña entero: recortarlo se lleva
+              // por delante justo lo que se reconoce.
+              resizeMode={esCanal ? 'contain' : 'cover'}
+            />
           ) : (
-            <View style={[estilos.fichaImagen, estilos.fichaSinImagen]}>
+            <View style={[estilos.fichaImagen, esCanal && estilos.fichaImagenCanal, estilos.fichaSinImagen]}>
               <Text style={estilos.fichaSinImagenTexto} numberOfLines={2}>
                 {item.titulo}
               </Text>
@@ -3029,6 +3131,57 @@ const estilos = StyleSheet.create({
   },
   fichaFilaCaja: {
     width: 168,
+  },
+  fichaFilaCajaCanal: {
+    // Apaisada: es la forma del logotipo de un canal.
+    width: 210,
+  },
+  fichaImagenCanal: {
+    aspectRatio: 16 / 9,
+    padding: 10,
+  },
+  filtros: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+    marginTop: 4,
+  },
+  filtro: {
+    borderColor: 'transparent',
+    borderRadius: 999,
+    borderWidth: 2,
+    paddingHorizontal: 20,
+    paddingVertical: 9,
+  },
+  filtroPuesto: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  filtroEnfocado: {
+    borderColor: '#fff',
+  },
+  filtroTexto: {
+    color: TINTA_TENUE,
+    fontSize: 17,
+  },
+  filtroTextoPuesto: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  inicioSinPortada: {
+    paddingTop: MARGEN_CABECERA,
+  },
+  listaVacia: {
+    gap: 10,
+    paddingTop: MARGEN_CABECERA,
+  },
+  listaVaciaTexto: {
+    color: TINTA,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  listaVaciaPista: {
+    color: TINTA_TENUE,
+    fontSize: 16,
   },
   fichaFilaEncima: {
     elevation: 8,

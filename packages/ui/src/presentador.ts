@@ -27,7 +27,10 @@ export interface Reproducible {
   titulo: string;
 }
 
-export type Accion = { tipo: 'entrar'; pantalla: Pantalla } | { tipo: 'reproducir'; medio: Reproducible };
+export type Accion =
+  | { tipo: 'entrar'; pantalla: Pantalla }
+  | { tipo: 'reproducir'; medio: Reproducible }
+  | { tipo: 'filtrar'; filtro: FiltroLista };
 
 /** Una celda de la rejilla, ya lista para pintar. */
 export interface Elemento {
@@ -120,7 +123,18 @@ export type Formato = 'lista' | 'carteles' | 'canales' | 'episodios';
  */
 export type FilaInicio =
   | { tipo: 'destacado'; elementos: Elemento[] }
-  | { tipo: 'carrusel'; titulo: string; elementos: Elemento[] };
+  | { tipo: 'carrusel'; titulo: string; elementos: Elemento[]; formato?: FormatoFila }
+  /**
+   * Los filtros de Mi Lista, que son una fila más.
+   *
+   * Van dentro de la lista y no en la barra de arriba a propósito: así se
+   * recorren con el mando exactamente igual que las carátulas —arriba, abajo,
+   * izquierda, derecha— sin inventar otro sitio donde puede estar el foco.
+   */
+  | { tipo: 'filtros'; elementos: Elemento[] };
+
+/** Cómo se pintan las fichas de una fila: la carátula manda o el logotipo. */
+export type FormatoFila = 'cartel' | 'canal';
 
 /**
  * La pantalla de inicio entera, con el foco en dos ejes.
@@ -137,12 +151,28 @@ export type FilaInicio =
  * que uno no se pierde. TV en directo no está aquí porque no se filtra: es
  * otra pantalla, con su parrilla y su vista previa.
  */
-export type ModoInicio = 'todo' | 'peliculas' | 'series';
+export type ModoInicio = 'todo' | 'peliculas' | 'series' | 'lista';
 
 export const MODOS_INICIO: Array<{ modo: ModoInicio; nombre: string }> = [
   { modo: 'todo', nombre: 'Todo' },
   { modo: 'peliculas', nombre: 'Películas' },
   { modo: 'series', nombre: 'Series' },
+  { modo: 'lista', nombre: 'Mi Lista' },
+];
+
+/**
+ * Dentro de Mi Lista, con qué se queda uno.
+ *
+ * Es un filtro y no otra pantalla: lo marcado es lo mismo, solo que a veces
+ * uno viene a por una película y no quiere ver los canales de por medio.
+ */
+export type FiltroLista = 'todo' | 'pelicula' | 'serie' | 'canal';
+
+export const FILTROS_LISTA: Array<{ filtro: FiltroLista; nombre: string }> = [
+  { filtro: 'todo', nombre: 'Todo' },
+  { filtro: 'pelicula', nombre: 'Películas' },
+  { filtro: 'serie', nombre: 'Series' },
+  { filtro: 'canal', nombre: 'TV en directo' },
 ];
 
 export interface Inicio {
@@ -159,6 +189,8 @@ export interface Inicio {
    * qué se está viendo arriba.
    */
   destacado: number;
+  /** Con qué parte de Mi Lista se está quedando uno. Solo pinta ahí. */
+  filtro: FiltroLista;
 }
 
 /** Los elementos de una fila, sea del tipo que sea. */
@@ -352,6 +384,8 @@ export class Presentador {
   #focoInicio = { fila: 0, columna: 0 };
   /** La pestaña del inicio. Se conserva al entrar y salir de una sección. */
   #modoInicio: ModoInicio = 'todo';
+  /** Y con qué parte de Mi Lista se queda uno. */
+  #filtroLista: FiltroLista = 'todo';
   #avances: OpcionesPresentador['avances'];
   #seguirViendo: OpcionesPresentador['seguirViendo'];
   #favoritos: PuertoFavoritos | undefined;
@@ -647,6 +681,79 @@ export class Presentador {
   }
 
   /**
+   * Mi Lista: lo que has marcado con el corazón, por clases.
+   *
+   * No lleva portada ni "seguir viendo": aquí no se sugiere nada, se enseña lo
+   * que has elegido tú. Y lo que esté vacío no ocupa sitio —una fila de
+   * "Canales" sin canales solo estorba—.
+   */
+  async #montarMiLista(): Promise<void> {
+    const filtro = this.#filtroLista;
+    const quiere = (clase: FiltroLista): boolean => filtro === 'todo' || filtro === clase;
+
+    const [peliculas, series, canales] = await Promise.all([
+      quiere('pelicula')
+        ? this.#biblioteca.peliculasPorId(await this.#idsFavoritos('pelicula'))
+        : Promise.resolve([]),
+      quiere('serie') ? this.#biblioteca.seriesPorId(await this.#idsFavoritos('serie')) : Promise.resolve([]),
+      quiere('canal') ? this.#biblioteca.canalesPorId(await this.#idsFavoritos('canal')) : Promise.resolve([]),
+    ]);
+
+    const filas: FilaInicio[] = [
+      { tipo: 'filtros', elementos: FILTROS_LISTA.map((una) => filtroComoFicha(una, filtro)) },
+    ];
+
+    if (peliculas.length > 0) {
+      filas.push({ tipo: 'carrusel', titulo: 'Películas', elementos: await this.#aCarrusel(peliculas, 'pelicula') });
+    }
+    if (series.length > 0) {
+      filas.push({ tipo: 'carrusel', titulo: 'Series', elementos: await this.#aCarrusel(series, 'serie') });
+    }
+    if (canales.length > 0) {
+      filas.push({
+        tipo: 'carrusel',
+        titulo: 'TV en directo',
+        // El logotipo de un canal es apaisado y con transparencia: recortado a
+        // un cartel 2:3 no se reconoce ninguno.
+        formato: 'canal',
+        elementos: canales.map((canal) => ({
+          id: `canal:${canal.id}`,
+          titulo: canal.nombre,
+          detalle: canal.grupo,
+          genero: null,
+          valoracion: null,
+          anio: null,
+          resumen: null,
+          logo: canal.logo,
+          avance: null,
+          favorito: true,
+          accion: { tipo: 'reproducir' as const, medio: { clase: 'canal' as const, id: canal.id, titulo: canal.nombre } },
+        })),
+      });
+    }
+
+    const fila = Math.min(this.#focoInicio.fila, Math.max(filas.length - 1, 0));
+    this.#inicio = {
+      filas,
+      fila,
+      columna: Math.min(this.#focoInicio.columna, Math.max((filas[fila]?.elementos.length ?? 1) - 1, 0)),
+      modo: 'lista',
+      destacado: 0,
+      filtro,
+    };
+  }
+
+  /** Cambia con qué parte de Mi Lista se queda uno. */
+  async elegirFiltro(filtro: FiltroLista): Promise<EstadoPantalla> {
+    if (filtro === this.#filtroLista) return this.estado();
+    this.#filtroLista = filtro;
+    // El foco vuelve a la fila de filtros, que es donde acaba de pulsar.
+    this.#focoInicio = { fila: 0, columna: FILTROS_LISTA.findIndex((una) => una.filtro === filtro) };
+    await this.#montarInicio(this.#navegador.actual);
+    return this.estado();
+  }
+
+  /**
    * Monta la pantalla de inicio entera.
    *
    * Las cuatro consultas van en paralelo porque son independientes y contra
@@ -659,6 +766,11 @@ export class Presentador {
     }
 
     const modo = this.#modoInicio;
+    if (modo === 'lista') {
+      await this.#montarMiLista();
+      return;
+    }
+
     const conPeliculas = modo !== 'series';
     const conSeries = modo !== 'peliculas';
 
@@ -775,6 +887,9 @@ export class Presentador {
     this.#focoInicio = { fila, columna };
     this.#inicio = {
       filas,
+      // El filtro solo pinta en Mi Lista, pero el estado lo lleva siempre para
+      // que la vista no tenga que preguntarse si existe.
+      filtro: this.#filtroLista,
       fila,
       columna,
       modo,
@@ -1011,6 +1126,9 @@ export class Presentador {
       if (elemento.accion.tipo === 'reproducir') {
         return { estado: this.estado(), reproducir: elemento.accion.medio };
       }
+      if (elemento.accion.tipo === 'filtrar') {
+        return { estado: await this.elegirFiltro(elemento.accion.filtro), reproducir: null };
+      }
       this.#navegador.entrar(elemento.accion.pantalla, 0);
       return { estado: await this.cargar(), reproducir: null };
     }
@@ -1032,6 +1150,9 @@ export class Presentador {
 
     if (elemento.accion.tipo === 'reproducir') {
       return { estado: this.estado(), reproducir: elemento.accion.medio };
+    }
+    if (elemento.accion.tipo === 'filtrar') {
+      return { estado: await this.elegirFiltro(elemento.accion.filtro), reproducir: null };
     }
 
     this.#navegador.entrar(elemento.accion.pantalla, this.#foco);
@@ -1556,6 +1677,24 @@ export class Presentador {
 }
 
 /** Atajo para las fichas que solo llevan a otra pantalla. */
+/** Un filtro de Mi Lista, con la forma de ficha que entiende la fila. */
+function filtroComoFicha(opcion: { filtro: FiltroLista; nombre: string }, activo: FiltroLista): Elemento {
+  return {
+    id: `filtro:${opcion.filtro}`,
+    titulo: opcion.nombre,
+    detalle: null,
+    genero: null,
+    valoracion: null,
+    anio: null,
+    resumen: null,
+    logo: null,
+    avance: null,
+    // Se reaprovecha para marcar cuál está puesto: la vista lo pinta distinto.
+    favorito: opcion.filtro === activo,
+    accion: { tipo: 'filtrar', filtro: opcion.filtro },
+  };
+}
+
 function ficha(id: string, titulo: string, detalle: string | null, pantalla: Pantalla): Elemento {
   return {
     id,
@@ -1583,6 +1722,9 @@ function claseFavorita(elemento: Elemento): { clase: ClaseMedio; id: string } | 
     const medio = elemento.accion.medio;
     return medio.clase === 'episodio' ? null : { clase: medio.clase, id: medio.id };
   }
+  // Un filtro no es contenido: no hay corazón que ponerle.
+  if (elemento.accion.tipo === 'filtrar') return null;
+
   const destino = elemento.accion.pantalla;
   return destino.tipo === 'serie' ? { clase: 'serie', id: destino.serieId } : null;
 }
