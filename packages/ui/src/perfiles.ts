@@ -63,6 +63,19 @@ export interface AlmacenPerfiles {
    */
   recolorear(id: string, color: string): Promise<void>;
   borrar(id: string): Promise<void>;
+  /**
+   * Tira lo local para adoptar lo de la casa. **Borra de verdad.**
+   *
+   * Es la única excepción a la regla de no borrar nunca, y por eso está
+   * aparte de `borrar`: no es una baja que haya que contarle a nadie —eso
+   * enterraría los perfiles de la casa, que llevan el mismo identificador—,
+   * es este aparato olvidando lo suyo antes de traerse el estado del grupo.
+   *
+   * Se hace al emparejar, y solo entonces: los perfiles son de la casa, así
+   * que el que se hubiera creado el aparato por su cuenta sobra en cuanto
+   * entra en una.
+   */
+  vaciarLoLocal(): Promise<void>;
 
   /** Guarda por dónde va. Se llama cada pocos segundos mientras se reproduce. */
   anotarAvance(perfilId: string, avance: Avance): Promise<void>;

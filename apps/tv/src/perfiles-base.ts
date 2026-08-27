@@ -213,6 +213,28 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       ]);
     },
 
+    async vaciarLoLocal(): Promise<void> {
+      /*
+        `DELETE` de verdad, no lápidas: son las cuatro tablas del perfil de
+        este aparato, que se van para dejar sitio a las de la casa.
+
+        Enterrarlas sería peor que no hacer nada. Las lápidas viajan, y el
+        identificador de un perfil sale de su nombre: enterrar "alejandro"
+        aquí enterraría el "alejandro" de la casa en cuanto sincronizara.
+      */
+      db.executeSync('BEGIN IMMEDIATE');
+      try {
+        for (const tabla of ['progress', 'favorite', 'profile_setting', 'profile']) {
+          db.executeSync(`DELETE FROM ${tabla}`);
+        }
+        db.executeSync('COMMIT');
+      } catch (error) {
+        db.executeSync('ROLLBACK');
+        throw error;
+      }
+      console.log('[perfiles] vaciados los locales: este aparato adopta los de su casa');
+    },
+
     async borrar(id: string): Promise<void> {
       // Se lleva por delante su historial, sus favoritos y sus ajustes.
       enterrar('progress', 'profile_id = ?', [id]);

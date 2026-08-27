@@ -401,6 +401,26 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       if (donde.length === 0) return [];
 
       /*
+        Las series que este aparato no haya abierto nunca no tienen episodios
+        guardados, así que se piden ahora.
+
+        Es lo que hace que una serie empezada en la tele aparezca en una
+        tablet recién puesta: hasta aquí llegaba la clave por la
+        sincronización, pero no había fila que enseñar ni URL que reproducir.
+        Son las de "seguir viendo", doce como mucho y casi siempre ninguna:
+        `asegurarEpisodios` mira primero si ya están. Y van de una en una
+        porque cada una escribe en la base.
+      */
+      for (const serieId of new Set(donde.map(({ sitio }) => sitio.serieId))) {
+        try {
+          await asegurarEpisodios(serieId);
+        } catch (error) {
+          // Sin red o con el panel caído se pinta lo que haya, como siempre.
+          console.warn('[base] no se pudieron traer los episodios de', serieId, error);
+        }
+      }
+
+      /*
         Un `OR` por episodio en vez de un `IN`: la clave son tres columnas y
         SQLite no admite tuplas en un `IN`. Son doce como mucho —los que caben
         en "seguir viendo"—, así que no hay nada que optimizar.

@@ -224,6 +224,19 @@ function Raiz() {
       programacion.current = parrilla;
       await gestor.current?.conectar(elegida.id);
 
+      /*
+        Recién emparejado: este aparato tira sus perfiles y adopta los de la
+        casa, que es lo que va a bajar en la sincronización de aquí abajo.
+
+        Se hace ahora y no al emparejar porque el almacén de perfiles no está
+        abierto hasta que se conecta con una lista: emparejar se hace antes,
+        en la pantalla de listas.
+      */
+      if ((await sync.current.estado())?.adoptar) {
+        await almacen.vaciarLoLocal();
+        await sync.current.adoptado();
+      }
+
       // Con el almacén ya abierto se sincroniza, antes de enseñar los
       // perfiles y con un tope de paciencia, para que el "seguir viendo" que
       // se ve sea el bueno: es el caso de dejar algo a medias en la tele y

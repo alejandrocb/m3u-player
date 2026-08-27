@@ -30,6 +30,16 @@ export interface EstadoSync {
   subida: string;
   /** Hasta dónde se ha bajado, en sellos del servidor. */
   bajada: string;
+  /**
+   * Recién emparejado: este aparato todavía tiene que adoptar los perfiles
+   * de la casa.
+   *
+   * Se pone al aprobar el alta y lo quita la aplicación cuando ya ha vaciado
+   * los suyos. Va en el estado y no en una variable porque entre una cosa y
+   * otra puede cerrarse la aplicación: emparejar se hace en la pantalla de
+   * listas y los perfiles no se abren hasta conectar con una.
+   */
+  adoptar?: boolean;
 }
 
 export interface AlmacenSync {
@@ -189,9 +199,11 @@ export class ClienteSync {
       token: datos.token,
       grupo: datos.grupo ?? null,
       // Desde cero las dos: un aparato recién emparejado se trae todo lo que
-      // haya en su casa y sube todo lo que tuviera guardado.
+      // haya en su casa.
       subida: '',
       bajada: '',
+      // Y lo suyo lo tira: los perfiles son de la casa.
+      adoptar: true,
     });
 
     return { estado: 'aprobado', grupo: datos.grupo ?? null, listas: datos.listas ?? [] };
@@ -283,6 +295,13 @@ export class ClienteSync {
       // Sin red, el inicio sale igual. Que esto no impida arrancar.
       return vacio;
     }
+  }
+
+  /** Ya se han vaciado los perfiles locales: no hay que volver a hacerlo. */
+  async adoptado(): Promise<void> {
+    const estado = await this.#almacen.leer();
+    if (!estado?.adoptar) return;
+    await this.#almacen.guardar({ ...estado, adoptar: false });
   }
 
   /** Deja de sincronizar. Lo guardado en el aparato se queda como está. */

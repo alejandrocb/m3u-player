@@ -115,6 +115,16 @@ async function emparejar(casa: Casa, quien: Aparato, grupoId: string): Promise<v
 
   const resultado = await quien.cliente.comprobar(casa.url, alta.espera);
   assert.equal(resultado.estado, 'aprobado');
+
+  /*
+    Y queda pendiente adoptar los perfiles de la casa: los perfiles son del
+    grupo, así que el que el aparato se hubiera creado por su cuenta sobra en
+    cuanto entra en una. Lo hace la aplicación al abrir su almacén, que aquí
+    no existe, pero la señal tiene que estar puesta.
+  */
+  assert.equal((await quien.cliente.estado())?.adoptar, true, 'recién emparejado, toca adoptar');
+  await quien.cliente.adoptado();
+  assert.equal((await quien.cliente.estado())?.adoptar, false, 'y solo se hace una vez');
 }
 
 /** Anota por dónde va una película, como hace el reproductor. */
