@@ -585,7 +585,9 @@ function BibliotecaVista({
       // De más a propósito: el presentador deja una sola fila por serie, así
       // que pedir doce justas dejaría la fila a medias.
       seguirViendo: () => perfiles.seguirViendo(perfil.id, 40),
-      // Y de aquí los corazones y el grupo de favoritos, que son de cada uno.
+      // Y de aquí el orden de las filas por categoría: primero lo que más ve.
+      afinidad: () => perfiles.afinidad(perfil.id),
+      // Y de aquí los corazones de Mi Lista, que son de cada uno.
       favoritos: {
         listar: async (clase) =>
           (await perfiles.favoritos(perfil.id))
@@ -644,6 +646,18 @@ function BibliotecaVista({
         nombre: aparato ?? 'otro aparato',
         titulo: reproduciendo.titulo,
       });
+
+      /*
+        Y se apunta de qué categorías es lo que suena, que es lo que sube las
+        filas del inicio. Al empezar y no al terminar: lo que uno pone dice lo
+        que le gusta aunque luego se duerma a la media hora.
+      */
+      try {
+        await perfiles.anotarUso(perfil.id, await biblioteca.gruposDe(reproduciendo.clase, reproduciendo.id));
+      } catch (fallo) {
+        console.warn('[perfiles] no se pudo apuntar el uso', fallo);
+      }
+
       sincronizarAhora.current();
     })();
 

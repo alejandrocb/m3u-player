@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { cantidad, duracion, mediasEstrellas, nota, numero, reloj } from '../src/texto.ts';
-import { nombreDeCategoria } from '../src/presentador.ts';
+import { nombreDeCategoria, ordenarCategorias } from '../src/presentador.ts';
 
 test('los miles se separan con punto', () => {
   assert.equal(numero(0), '0');
@@ -100,4 +100,24 @@ test('el nombre de una categoría se deja legible', () => {
 test('si al quitar la sección no queda nada, se deja el nombre entero', () => {
   // "PELICULAS" a secas es una categoría de verdad en algunas listas.
   assert.equal(nombreDeCategoria('PELICULAS'), 'Peliculas');
+});
+
+test('las categorías se ordenan por lo que ve el perfil, y luego por tamaño', () => {
+  const categorias = [
+    { nombre: 'Acción', canales: 900 },
+    { nombre: 'Terror', canales: 300 },
+    { nombre: 'Comedia', canales: 600 },
+  ];
+
+  // Sin haber visto nada, mandan las más gordas.
+  assert.deepEqual(
+    ordenarCategorias(categorias, {}).map((una) => una.nombre),
+    ['Acción', 'Comedia', 'Terror'],
+  );
+
+  // Y en cuanto uno ve terror, el terror sube.
+  assert.deepEqual(
+    ordenarCategorias(categorias, { Terror: 3, Comedia: 1 }).map((una) => una.nombre),
+    ['Terror', 'Comedia', 'Acción'],
+  );
 });

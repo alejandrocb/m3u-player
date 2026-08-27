@@ -342,6 +342,29 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       enterrar('progress', 'profile_id = ? AND kind = ? AND item_id = ?', [perfilId, clase, itemId]);
     },
 
+    async anotarUso(perfilId: string, claves: string[]): Promise<void> {
+      if (claves.length === 0) return;
+      for (const clave of claves) {
+        db.executeSync(
+          `INSERT INTO affinity (profile_id, clave, veces, updated, deleted, origin)
+           VALUES (?, ?, 1, ?, 0, ?)
+           ON CONFLICT(profile_id, clave) DO UPDATE SET
+             veces = affinity.veces + 1, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+          [perfilId, clave, ahora(), aparato],
+        );
+      }
+    },
+
+    async afinidad(perfilId: string): Promise<Record<string, number>> {
+      const cuenta: Record<string, number> = {};
+      for (const fila of filas(db, 'SELECT clave, veces FROM affinity WHERE profile_id = ? AND deleted = 0', [
+        perfilId,
+      ])) {
+        cuenta[fila.clave as string] = Number(fila.veces);
+      }
+      return cuenta;
+    },
+
     async ajustes(perfilId: string): Promise<Ajustes> {
       const guardados: Record<string, string> = {};
       for (const fila of filas(db, 'SELECT key, value FROM profile_setting WHERE profile_id = ? AND deleted = 0', [

@@ -23,7 +23,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { INDICES_TRAS_MIGRAR_SQL, RELLENOS_SQL, SCHEMA_PERFILES_SQL } from '@m3u/storage/schema';
+import { INDICES_TRAS_MIGRAR_SQL, RELLENOS_SQL, SCHEMA_PERFILES_SQL, SINCRONIZADAS } from '@m3u/storage/schema';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 
 import { aleatorio, cifrarContrasena, codigoCorto, compruebaContrasena, huella } from './claves.ts';
@@ -221,7 +221,7 @@ export class Panel {
       for (const indice of INDICES_TRAS_MIGRAR_SQL) {
         // Los índices del catálogo no aplican aquí: solo existen las tablas de
         // perfil, así que se salta lo que hable de otras.
-        if (/ON (profile|progress|favorite|profile_setting) /.test(indice)) db.exec(indice);
+        if (/ON (profile|progress|favorite|profile_setting|affinity) /.test(indice)) db.exec(indice);
       }
       for (const relleno of RELLENOS_SQL) db.exec(relleno);
 
@@ -229,7 +229,9 @@ export class Panel {
       // llegó cada fila, según su propio reloj. Los aparatos piden novedades
       // por aquí y no por la fecha del cambio, que es de quien lo hizo y
       // puede llegar con días de retraso. Está explicado en `Cambio.sello`.
-      for (const tabla of ['profile', 'progress', 'favorite', 'profile_setting']) {
+      // La lista sale del esquema y no está escrita a mano: añadir una tabla
+      // al reparto es una línea en `SINCRONIZADAS`, y aquí no hay que tocar.
+      for (const { tabla } of SINCRONIZADAS) {
         const columnas = (db.prepare(`PRAGMA table_info(${tabla})`).all() as Array<{ name: string }>).map(
           (fila) => fila.name,
         );

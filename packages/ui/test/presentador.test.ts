@@ -113,6 +113,11 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
       };
     },
     async guardarGeneros() {},
+    async gruposDe(_clase: ClaseMedio, id: string) {
+      // En el catálogo falso, cada película está en la categoría que dice su
+      // nombre; lo demás no pertenece a ninguna.
+      return id.startsWith('p') ? ['Estrenos'] : [];
+    },
     async detalleDeSerie(id: string) {
       // Doctor Who sí tiene imagen apaisada: es la que preside "Series".
       return id === 'dw'

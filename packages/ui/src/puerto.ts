@@ -11,6 +11,7 @@
  */
 
 import type { Programa } from '@m3u/core';
+import type { ClaseMedio } from './perfiles.ts';
 
 export interface GrupoFicha {
   nombre: string;
@@ -249,6 +250,14 @@ export interface Biblioteca {
   categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]>;
   /** Busca en todo, o solo dentro de la sección y categoría que se indique. */
   buscar(texto: string, ambito?: Ambito): Promise<Resultado[]>;
+  /**
+   * A qué categorías pertenece una ficha.
+   *
+   * Lo pide la afinidad al reproducir: es lo que se apunta para saber qué
+   * filas subir. De un episodio valen las de su serie, que es lo que uno
+   * elige.
+   */
+  gruposDe(clase: ClaseMedio, id: string): Promise<string[]>;
   /** Cuántas fichas hay en cada sección, para pintar los contadores del inicio. */
   totales(): Promise<{ canales: number; peliculas: number; series: number; episodios: number }>;
   /**

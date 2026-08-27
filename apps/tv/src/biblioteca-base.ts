@@ -494,6 +494,23 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       );
     },
 
+    async gruposDe(clase, id): Promise<string[]> {
+      // De un episodio valen las de su serie: es lo que uno elige ver.
+      const serie = clase === 'episodio' ? leerClaveDeEpisodio(id)?.serieId : null;
+      if (clase === 'episodio' && !serie) return [];
+
+      if (clase === 'canal') {
+        const fila = filas(db, 'SELECT group_name FROM channel WHERE id = ?', [id])[0];
+        return fila ? [fila.group_name as string] : [];
+      }
+
+      const dueno = clase === 'serie' || clase === 'episodio' ? 'series' : 'movie';
+      return filas(db, 'SELECT group_name FROM item_group WHERE kind = ? AND item_id = ?', [
+        dueno,
+        serie ?? id,
+      ]).map((fila) => fila.group_name as string);
+    },
+
     async categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
       return filas(
         db,

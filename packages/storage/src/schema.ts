@@ -213,6 +213,21 @@ CREATE TABLE IF NOT EXISTS profile_setting (
   origin     TEXT,
   PRIMARY KEY (profile_id, key)
 ) WITHOUT ROWID;
+
+-- Cuánto usa cada perfil cada categoría, para poder subir al inicio lo que de
+-- verdad ve. Se cuentan **reproducciones**: mirar una carátula no es verla.
+--
+-- Es del perfil, no del aparato, así que viaja como todo lo demás: lo que ves
+-- en la tele ordena también el inicio de la tablet.
+CREATE TABLE IF NOT EXISTS affinity (
+  profile_id TEXT NOT NULL,
+  clave      TEXT NOT NULL,
+  veces      INTEGER NOT NULL DEFAULT 0,
+  updated    TEXT NOT NULL,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  origin     TEXT,
+  PRIMARY KEY (profile_id, clave)
+) WITHOUT ROWID;
 `;
 
 /**
@@ -233,6 +248,15 @@ export const SINCRONIZADAS: Array<{ tabla: string; clave: string[]; campos: stri
   { tabla: 'profile', clave: ['id'], campos: ['name', 'color', 'created'] },
   { tabla: 'progress', clave: ['profile_id', 'kind', 'item_id'], campos: ['seconds', 'duration', 'title'] },
   { tabla: 'favorite', clave: ['profile_id', 'kind', 'item_id'], campos: ['title', 'created'] },
+  /*
+    La afinidad se sincroniza como el resto, con la misma regla: gana el cambio
+    más reciente. Eso quiere decir que **no se suman las cuentas de los dos
+    aparatos**, se queda la última contada. Es lo correcto aquí: cada aparato
+    lleva su cuenta a partir de lo que ya sabía, así que la última es la que
+    más historia tiene detrás, y confundir "sumar" con "fusionar" haría que
+    ver una película en dos sitios contara doble.
+  */
+  { tabla: 'affinity', clave: ['profile_id', 'clave'], campos: ['veces'] },
   { tabla: 'profile_setting', clave: ['profile_id', 'key'], campos: ['value'] },
 ];
 

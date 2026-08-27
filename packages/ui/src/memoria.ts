@@ -249,6 +249,11 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
       // Sin base donde guardarlo: esta biblioteca vive en memoria.
     },
 
+    async gruposDe(): Promise<string[]> {
+      // Esta biblioteca es para pruebas: no hay categorías que apuntar.
+      return [];
+    },
+
     async detalleDeSerie(id: string): Promise<FichaLarga | null> {
       const serie = library.series.find((una) => una.id === id);
       if (!serie) return null;

@@ -156,6 +156,17 @@ export interface AlmacenPerfiles {
    */
   reproduccion(perfilId: string): Promise<(Reproduccion & { propia: boolean }) | null>;
 
+  /**
+   * Apunta que este perfil ha visto algo de estas categorías.
+   *
+   * Se cuentan **reproducciones**: mirar una carátula no es verla. Es lo que
+   * ordena las filas del inicio, y viaja con el perfil, así que lo que ves en
+   * la tele ordena también el inicio de la tablet.
+   */
+  anotarUso(perfilId: string, claves: string[]): Promise<void>;
+  /** Cuántas veces ha reproducido este perfil de cada categoría. */
+  afinidad(perfilId: string): Promise<Record<string, number>>;
+
   /** Preferencias del perfil: columnas de la rejilla, orden... */
   ajustes(perfilId: string): Promise<Ajustes>;
   guardarAjuste(perfilId: string, clave: keyof Ajustes, valor: string): Promise<void>;

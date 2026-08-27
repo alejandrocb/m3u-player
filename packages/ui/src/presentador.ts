@@ -347,6 +347,13 @@ export interface OpcionesPresentador {
   /** Cómo ordenar películas y series. Por título si no se dice otra cosa. */
   orden?: Orden;
   /**
+   * Cuánto ha visto este perfil de cada categoría.
+   *
+   * Va como opción, igual que el historial: sin perfil detrás no hay
+   * afinidad, y el inicio se ordena entonces por lo que más contenido tiene.
+   */
+  afinidad?: () => Promise<Record<string, number>>;
+  /**
    * Los favoritos del perfil que esté viendo.
    *
    * Va como puerto aparte y no dentro de `Biblioteca` porque no son datos del
@@ -394,6 +401,7 @@ export class Presentador {
   #avances: OpcionesPresentador['avances'];
   #seguirViendo: OpcionesPresentador['seguirViendo'];
   #favoritos: PuertoFavoritos | undefined;
+  #afinidad: OpcionesPresentador['afinidad'];
   #orden: Orden;
   /**
    * Las sugerencias que ha preparado el servidor de la casa, si las hay.
@@ -412,6 +420,7 @@ export class Presentador {
     this.#avances = opciones.avances;
     this.#seguirViendo = opciones.seguirViendo;
     this.#favoritos = opciones.favoritos;
+    this.#afinidad = opciones.afinidad;
     this.#orden = opciones.orden ?? 'titulo';
   }
 
@@ -707,7 +716,14 @@ export class Presentador {
       return;
     }
 
-    const elegidas = this.#ordenarCategorias(categorias, clase).slice(0, CATEGORIAS_EN_INICIO);
+    let cuenta: Record<string, number> = {};
+    try {
+      cuenta = (await this.#afinidad?.()) ?? {};
+    } catch {
+      // Sin afinidad se ordena por tamaño, que es como se empieza siempre.
+    }
+
+    const elegidas = ordenarCategorias(categorias, cuenta).slice(0, CATEGORIAS_EN_INICIO);
 
     for (const categoria of elegidas) {
       const fichas =
@@ -718,16 +734,6 @@ export class Presentador {
 
       filas.push({ tipo: 'carrusel', titulo: nombreDeCategoria(categoria.nombre), elementos: await this.#aCarrusel(fichas, clase) });
     }
-  }
-
-  /**
-   * En qué orden salen las categorías.
-   *
-   * De momento, las que más contenido tienen. Es lo que hay hasta que el
-   * perfil haya reproducido lo suficiente como para que su afinidad diga algo.
-   */
-  #ordenarCategorias(categorias: GrupoFicha[], _clase: 'pelicula' | 'serie'): GrupoFicha[] {
-    return [...categorias].sort((a, b) => (b.canales ?? 0) - (a.canales ?? 0));
   }
 
   /**
@@ -1712,6 +1718,21 @@ export class Presentador {
 }
 
 /** Atajo para las fichas que solo llevan a otra pantalla. */
+/**
+ * En qué orden salen las categorías del inicio.
+ *
+ * Primero **lo que este perfil ve más**, y a igualdad —o sin haber visto nada
+ * todavía— las que más contenido tienen. Así el inicio arranca con algo
+ * razonable el primer día y se va pareciendo a ti según lo usas.
+ *
+ * La cuenta es de reproducciones: mirar una carátula no es verla.
+ */
+export function ordenarCategorias(categorias: GrupoFicha[], afinidad: Record<string, number>): GrupoFicha[] {
+  return [...categorias].sort(
+    (a, b) => (afinidad[b.nombre] ?? 0) - (afinidad[a.nombre] ?? 0) || (b.canales ?? 0) - (a.canales ?? 0),
+  );
+}
+
 /**
  * El nombre de una categoría del proveedor, presentable.
  *

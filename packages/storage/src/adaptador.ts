@@ -177,6 +177,11 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       // El escritorio no habla con el servidor de la casa todavía.
     },
 
+    async gruposDe(): Promise<string[]> {
+      // El escritorio todavía no ordena el inicio por lo que ves.
+      return [];
+    },
+
     async detalleDeSerie(): Promise<FichaLarga | null> {
       return null;
     },
