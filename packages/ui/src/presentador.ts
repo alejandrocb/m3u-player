@@ -15,7 +15,7 @@ import type { Direccion } from './foco.ts';
 import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
 import type { PortadaRemota } from './cliente-sync.ts';
-import type { Biblioteca, FichaLarga, Orden, Resultado } from './puerto.ts';
+import type { Biblioteca, FichaLarga, GrupoFicha, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
 import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
@@ -209,6 +209,14 @@ const CANDIDATAS = 8;
 
 /** Cuántas fichas lleva cada carrusel del inicio. */
 const CARRUSEL = 20;
+
+/**
+ * Cuántas categorías del proveedor se enseñan como filas.
+ *
+ * Hay decenas y no caben: pasado un punto, bajar deja de ser mirar y pasa a
+ * ser buscar, que para eso está la sección con su barra de categorías.
+ */
+const CATEGORIAS_EN_INICIO = 8;
 
 /**
  * Cuántas caben en "seguir viendo" **después** de dejar una por serie.
@@ -678,6 +686,51 @@ export class Presentador {
   }
 
   /**
+   * Una fila por categoría del proveedor: acción, comedia, terror…
+   *
+   * El género de verdad —el que da `get_vod_info`— solo lo tenemos de un
+   * puñado de películas, porque cuesta una petición por título. Las
+   * categorías, en cambio, vienen con el catálogo y están todas: son las que
+   * el proveedor usa para ordenar su lista y, salvo por los nombres a gritos,
+   * dicen lo mismo.
+   *
+   * No caben todas —hay decenas—, así que se cogen las más gordas. Cuando la
+   * afinidad del perfil tenga datos, mandará ella.
+   */
+  async #anadirCategorias(filas: FilaInicio[], modo: ModoInicio): Promise<void> {
+    const clase = modo === 'series' ? 'serie' : 'pelicula';
+    let categorias: GrupoFicha[];
+    try {
+      categorias = await this.#biblioteca.categorias(clase);
+    } catch {
+      // Sin categorías el inicio se pinta igual, con lo de arriba.
+      return;
+    }
+
+    const elegidas = this.#ordenarCategorias(categorias, clase).slice(0, CATEGORIAS_EN_INICIO);
+
+    for (const categoria of elegidas) {
+      const fichas =
+        clase === 'pelicula'
+          ? await this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'recomendada', grupo: categoria.nombre })
+          : await this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'recomendada', grupo: categoria.nombre });
+      if (fichas.length === 0) continue;
+
+      filas.push({ tipo: 'carrusel', titulo: nombreDeCategoria(categoria.nombre), elementos: await this.#aCarrusel(fichas, clase) });
+    }
+  }
+
+  /**
+   * En qué orden salen las categorías.
+   *
+   * De momento, las que más contenido tienen. Es lo que hay hasta que el
+   * perfil haya reproducido lo suficiente como para que su afinidad diga algo.
+   */
+  #ordenarCategorias(categorias: GrupoFicha[], _clase: 'pelicula' | 'serie'): GrupoFicha[] {
+    return [...categorias].sort((a, b) => (b.canales ?? 0) - (a.canales ?? 0));
+  }
+
+  /**
    * Mi Lista: lo que has marcado con el corazón, por clases.
    *
    * No lleva portada ni "seguir viendo": aquí no se sugiere nada, se enseña lo
@@ -870,6 +923,8 @@ export class Presentador {
       manda aquí es el año y lo último que ha entrado.
     */
     await anadir('Recomendadas', modo === 'series' ? seriesValoradas : valoradas, modo === 'series' ? 'serie' : 'pelicula');
+
+    await this.#anadirCategorias(filas, modo);
 
     // El foco vuelve donde estaba, recortado por si las filas han cambiado.
     // Vale para dos casos: volver de una sección, y una sincronización que
@@ -1657,6 +1712,23 @@ export class Presentador {
 }
 
 /** Atajo para las fichas que solo llevan a otra pantalla. */
+/**
+ * El nombre de una categoría del proveedor, presentable.
+ *
+ * Vienen a gritos y con la sección delante —"PELICULAS ACCION", "SERIES |
+ * DRAMA"—, que dentro de su sección sobra. Se le quita eso y se deja en
+ * capital inicial, que es como se lee una fila.
+ */
+export function nombreDeCategoria(bruto: string): string {
+  const limpio = bruto
+    .replace(/^(pel[ií]culas?|cine|series?|tv|canales?)\b[\s|:·-]*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const texto = limpio || bruto.trim();
+  return texto.charAt(0).toUpperCase() + texto.slice(1).toLowerCase();
+}
+
 /** Un filtro de Mi Lista, con la forma de ficha que entiende la fila. */
 function filtroComoFicha(opcion: { filtro: FiltroLista; nombre: string }, activo: FiltroLista): Elemento {
   return {

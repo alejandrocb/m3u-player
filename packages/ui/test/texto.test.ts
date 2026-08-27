@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { cantidad, duracion, mediasEstrellas, nota, numero, reloj } from '../src/texto.ts';
+import { nombreDeCategoria } from '../src/presentador.ts';
 
 test('los miles se separan con punto', () => {
   assert.equal(numero(0), '0');
@@ -82,4 +83,21 @@ test('sin nota no hay estrellas', () => {
 
 test('una nota fuera de escala no desborda las cinco', () => {
   assert.equal(mediasEstrellas(12), 10);
+});
+
+/*
+  Las categorías del proveedor vienen a gritos y con la sección delante. Como
+  rótulo de una fila del inicio, eso no se lee: se limpia.
+*/
+
+test('el nombre de una categoría se deja legible', () => {
+  assert.equal(nombreDeCategoria('PELICULAS ACCION'), 'Accion');
+  assert.equal(nombreDeCategoria('SERIES | DRAMA'), 'Drama');
+  assert.equal(nombreDeCategoria('CINE - TERROR'), 'Terror');
+  assert.equal(nombreDeCategoria('Comedia'), 'Comedia');
+});
+
+test('si al quitar la sección no queda nada, se deja el nombre entero', () => {
+  // "PELICULAS" a secas es una categoría de verdad en algunas listas.
+  assert.equal(nombreDeCategoria('PELICULAS'), 'Peliculas');
 });

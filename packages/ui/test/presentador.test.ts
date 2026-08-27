@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { Presentador } from '../src/presentador.ts';
-import type { FilaInicio } from '../src/presentador.ts';
+import type { EstadoPantalla, FilaInicio } from '../src/presentador.ts';
 import type { ClaseMedio } from '../src/perfiles.ts';
 import type {
   Biblioteca,
@@ -186,7 +186,11 @@ test('el inicio trae carruseles de películas y de series', async () => {
   const estado = await presentador.cargar();
 
   assert.deepEqual(
-    estado.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
+    // Detrás van las categorías del proveedor, una fila por cada una.
+    estado.inicio?.filas
+      .filter((fila) => fila.tipo === 'carrusel')
+      .map((fila) => fila.titulo)
+      .slice(0, 3),
     ['Películas recién llegadas', 'Series recién llegadas', 'Recomendadas'],
   );
   assert.equal(estado.inicio?.modo, 'todo');
@@ -196,17 +200,17 @@ test('la pestaña de películas deja fuera las series, y al revés', async () =>
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
 
+  const titulos = (estado: EstadoPantalla): string[] =>
+    (estado.inicio?.filas ?? [])
+      .map((fila: FilaInicio) => (fila.tipo === 'carrusel' ? fila.titulo : null))
+      .filter((titulo): titulo is string => titulo !== null)
+      .slice(0, 2);
+
   const soloPeliculas = await presentador.elegirModo('peliculas');
-  assert.deepEqual(
-    soloPeliculas.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
-    ['Novedades', 'Recomendadas'],
-  );
+  assert.deepEqual(titulos(soloPeliculas), ['Novedades', 'Recomendadas']);
 
   const soloSeries = await presentador.elegirModo('series');
-  assert.deepEqual(
-    soloSeries.inicio?.filas.filter((fila) => fila.tipo === 'carrusel').map((fila) => fila.titulo),
-    ['Novedades', 'Recomendadas'],
-  );
+  assert.deepEqual(titulos(soloSeries), ['Novedades', 'Recomendadas']);
   assert.equal(soloSeries.inicio?.modo, 'series');
 });
 
