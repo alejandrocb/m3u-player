@@ -695,6 +695,32 @@ test('lo empezado va justo detrás de la portada', async () => {
   assert.equal(indiceDe(estado, 'Seguir viendo'), 1, 'lo primero después de la portada');
 });
 
+test('TV en directo es una fila por grupo de canales, con todos', async () => {
+  // La misma forma que el resto del inicio. Y aquí no se recorta: un grupo de
+  // canales es una lista corta y cerrada, esconder alguno sería esconder un
+  // canal.
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+
+  const estado = await presentador.elegirModo('directo');
+  assert.equal(estado.inicio?.modo, 'directo');
+  assert.deepEqual(
+    estado.inicio?.filas.map((fila) => (fila.tipo === 'carrusel' ? fila.titulo : fila.tipo)),
+    ['Deportes', 'Noticias'],
+    'una por grupo, de más canales a menos',
+  );
+});
+
+test('la segunda pulsación en la pestaña entra en la rejilla', async () => {
+  const presentador = new Presentador(bibliotecaFalsa());
+  await presentador.cargar();
+
+  await presentador.elegirModo('directo');
+  const dentro = await presentador.elegirModo('directo');
+  assert.equal(pantallaDe(presentador), 'directo');
+  assert.ok(dentro.lateral, 'con su barra de categorías');
+});
+
 test('Mi Lista enseña lo marcado, por clases y con su filtro', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), {
     favoritos: {

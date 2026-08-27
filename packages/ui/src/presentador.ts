@@ -15,7 +15,7 @@ import type { Direccion } from './foco.ts';
 import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
 import type { PortadaRemota } from './cliente-sync.ts';
-import type { Biblioteca, FichaLarga, GrupoFicha, Orden, Resultado } from './puerto.ts';
+import type { Biblioteca, CanalFicha, FichaLarga, GrupoFicha, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
 import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
@@ -148,12 +148,13 @@ export type FormatoFila = 'cartel' | 'canal';
  * que uno no se pierde. TV en directo no está aquí porque no se filtra: es
  * otra pantalla, con su parrilla y su vista previa.
  */
-export type ModoInicio = 'todo' | 'peliculas' | 'series' | 'lista';
+export type ModoInicio = 'todo' | 'peliculas' | 'series' | 'directo' | 'lista';
 
 export const MODOS_INICIO: Array<{ modo: ModoInicio; nombre: string }> = [
   { modo: 'todo', nombre: 'Todo' },
   { modo: 'peliculas', nombre: 'Películas' },
   { modo: 'series', nombre: 'Series' },
+  { modo: 'directo', nombre: 'TV en directo' },
   { modo: 'lista', nombre: 'Mi Lista' },
 ];
 
@@ -737,6 +738,56 @@ export class Presentador {
   }
 
   /**
+   * TV en directo, con la misma forma que el resto del inicio.
+   *
+   * Una fila por grupo de canales y **todos los canales**: aquí no se recorta
+   * como en las películas. Un grupo de canales es una lista corta y cerrada
+   * —"Deportes", "Noticias"—, no una categoría con tres mil títulos, así que
+   * caben todos y esconder alguno sería esconder un canal.
+   *
+   * El orden es el mismo de siempre: primero los grupos que este perfil más
+   * ve, y a igualdad los que más canales tienen.
+   */
+  async #montarDirecto(): Promise<void> {
+    let grupos: GrupoFicha[] = [];
+    try {
+      grupos = await this.#biblioteca.grupos();
+    } catch {
+      grupos = [];
+    }
+
+    let cuenta: Record<string, number> = {};
+    try {
+      cuenta = (await this.#afinidad?.()) ?? {};
+    } catch {
+      // Sin afinidad, por tamaño.
+    }
+
+    const filas: FilaInicio[] = [];
+    for (const grupo of ordenarCategorias(grupos, cuenta)) {
+      const canales = await this.#biblioteca.canalesDeGrupo(grupo.nombre);
+      if (canales.length === 0) continue;
+
+      filas.push({
+        tipo: 'carrusel',
+        titulo: nombreDeCategoria(grupo.nombre),
+        formato: 'canal',
+        elementos: await this.#conFavoritos(canales.map(comoFichaDeCanal)),
+      });
+    }
+
+    const fila = Math.min(this.#focoInicio.fila, Math.max(filas.length - 1, 0));
+    this.#inicio = {
+      filas,
+      fila,
+      columna: Math.min(this.#focoInicio.columna, Math.max((filas[fila]?.elementos.length ?? 1) - 1, 0)),
+      modo: 'directo',
+      destacado: 0,
+      filtro: this.#filtroLista,
+    };
+  }
+
+  /**
    * Mi Lista: lo que has marcado con el corazón, por clases.
    *
    * No lleva portada ni "seguir viendo": aquí no se sugiere nada, se enseña lo
@@ -772,19 +823,8 @@ export class Presentador {
         // El logotipo de un canal es apaisado y con transparencia: recortado a
         // un cartel 2:3 no se reconoce ninguno.
         formato: 'canal',
-        elementos: canales.map((canal) => ({
-          id: `canal:${canal.id}`,
-          titulo: canal.nombre,
-          detalle: canal.grupo,
-          genero: null,
-          valoracion: null,
-          anio: null,
-          resumen: null,
-          logo: canal.logo,
-          avance: null,
-          favorito: true,
-          accion: { tipo: 'reproducir' as const, medio: { clase: 'canal' as const, id: canal.id, titulo: canal.nombre } },
-        })),
+        // Ya se sabe que están marcados: es de lo que va esta pantalla.
+        elementos: canales.map((canal) => ({ ...comoFichaDeCanal(canal), favorito: true })),
       });
     }
 
@@ -824,6 +864,10 @@ export class Presentador {
     const modo = this.#modoInicio;
     if (modo === 'lista') {
       await this.#montarMiLista();
+      return;
+    }
+    if (modo === 'directo') {
+      await this.#montarDirecto();
       return;
     }
 
@@ -963,7 +1007,22 @@ export class Presentador {
    * peor que empezar de nuevo.
    */
   async elegirModo(modo: ModoInicio): Promise<EstadoPantalla> {
-    if (modo === this.#modoInicio) return this.estado();
+    /*
+      La segunda pulsación sobre la pestaña que ya está puesta **entra en la
+      sección**: la rejilla completa, con su barra de categorías y —en el
+      directo— su vista previa y su parrilla.
+
+      La primera filtra el inicio y la segunda entra, que es lo que ya hacían
+      Películas y Series. Mi Lista no tiene rejilla detrás: ahí no hay
+      segunda pulsación que valga.
+    */
+    if (modo === this.#modoInicio) {
+      if (modo === 'peliculas') return this.irASeccion({ tipo: 'peliculas' });
+      if (modo === 'series') return this.irASeccion({ tipo: 'series' });
+      if (modo === 'directo') return this.irASeccion({ tipo: 'directo' });
+      return this.estado();
+    }
+
     this.#modoInicio = modo;
     this.#focoInicio = { fila: 0, columna: 0 };
     return this.cargar();
@@ -977,8 +1036,9 @@ export class Presentador {
    * aceptando sobre la pestaña que ya está puesta: la primera pulsación
    * filtra y la segunda entra.
    *
-   * TV en directo entra siempre a la primera, porque no se filtra: tiene
-   * parrilla y vista previa y es otra cosa.
+   * TV en directo va igual desde que tiene su fila por grupo de canales: la
+   * primera pulsación filtra el inicio y la segunda entra en la rejilla, que
+   * es donde están la vista previa y la parrilla.
    */
   async irASeccion(pantalla: Pantalla): Promise<EstadoPantalla> {
     this.#navegador.entrar(pantalla, 0);
@@ -986,10 +1046,6 @@ export class Presentador {
   }
 
   /** Atajo para el directo, que es la pestaña que nunca filtra. */
-  async irADirecto(): Promise<EstadoPantalla> {
-    return this.irASeccion({ tipo: 'directo' });
-  }
-
   /**
    * Pasa a otra de las sugerencias de la portada.
    *
@@ -1281,17 +1337,51 @@ export class Presentador {
    */
   async alternarFavorito(indice = this.#foco): Promise<EstadoPantalla> {
     const elemento = this.#elementos[indice];
-    if (!elemento || !this.#favoritos) return this.estado();
+    if (!elemento) return this.estado();
+    return this.#marcar(elemento, (marcado) => {
+      this.#elementos = this.#elementos.map((otro, posicion) =>
+        posicion === indice ? { ...otro, favorito: marcado } : otro,
+      );
+    });
+  }
+
+  /**
+   * Lo mismo, pero sobre una ficha del inicio.
+   *
+   * En el inicio las fichas no están en `#elementos` —viven en las filas—, y
+   * el gesto tiene que ser el mismo en todas partes: mantener pulsado añade a
+   * Mi Lista, se esté donde se esté.
+   */
+  async alternarFavoritoEnInicio(fila: number, columna: number): Promise<EstadoPantalla> {
+    const inicio = this.#inicio;
+    const elemento = inicio?.filas[fila]?.elementos[columna];
+    if (!inicio || !elemento) return this.estado();
+
+    return this.#marcar(elemento, (marcado) => {
+      this.#inicio = {
+        ...inicio,
+        filas: inicio.filas.map((una, posicionFila) =>
+          posicionFila !== fila
+            ? una
+            : {
+                ...una,
+                elementos: una.elementos.map((otro, posicion) =>
+                  posicion === columna ? { ...otro, favorito: marcado } : otro,
+                ),
+              },
+        ),
+      };
+    });
+  }
+
+  /** Marca o desmarca una ficha y deja que quien llame se apunte el cambio. */
+  async #marcar(elemento: Elemento, anotar: (marcado: boolean) => void): Promise<EstadoPantalla> {
+    if (!this.#favoritos) return this.estado();
 
     const marcable = claseFavorita(elemento);
     if (!marcable) return this.estado();
 
-    const favorito = await this.#favoritos.alternar(marcable.clase, marcable.id, elemento.titulo);
-    this.#elementos = this.#elementos.map((otro, posicion) =>
-      posicion === indice ? { ...otro, favorito } : otro,
-    );
-
-    // Estando dentro del grupo de favoritos, quitar uno tiene que sacarlo de
+    anotar(await this.#favoritos.alternar(marcable.clase, marcable.id, elemento.titulo));
     return this.estado();
   }
 
@@ -1718,6 +1808,23 @@ export class Presentador {
 }
 
 /** Atajo para las fichas que solo llevan a otra pantalla. */
+/** Un canal con la forma de ficha que entiende una fila del inicio. */
+function comoFichaDeCanal(canal: CanalFicha): Elemento {
+  return {
+    id: `canal:${canal.id}`,
+    titulo: canal.nombre,
+    detalle: canal.grupo,
+    genero: null,
+    valoracion: null,
+    anio: null,
+    resumen: null,
+    logo: canal.logo,
+    avance: null,
+    favorito: false,
+    accion: { tipo: 'reproducir', medio: { clase: 'canal', id: canal.id, titulo: canal.nombre } },
+  };
+}
+
 /**
  * En qué orden salen las categorías del inicio.
  *

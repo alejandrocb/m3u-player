@@ -937,6 +937,16 @@ function BibliotecaVista({
     [reproduciendo],
   );
 
+  /** Lo mismo sobre una ficha del inicio, que no está en la rejilla. */
+  const mantenerEnInicio = useCallback(
+    (fila: number, columna: number) => {
+      const instancia = presentador.current;
+      if (!instancia || reproduciendo) return;
+      instancia.alternarFavoritoEnInicio(fila, columna).then(setEstado);
+    },
+    [reproduciendo],
+  );
+
   useTVEventHandler((evento) => {
     const instancia = presentador.current;
     if (!instancia) return;
@@ -1049,6 +1059,17 @@ function BibliotecaVista({
         });
         break;
       }
+
+      /*
+        Mantener pulsado el OK del mando añade a Mi Lista, igual que el
+        toque largo con el dedo. Sin esto, en la tele no había forma de
+        marcar nada: el gesto solo existía por pantalla táctil.
+      */
+      case 'longSelect':
+        if (verAjustes || verPerfil || enCabecera || reproduciendo || !estado) return;
+        if (estado.inicio) mantenerEnInicio(estado.inicio.fila, estado.inicio.columna);
+        else if (!estado.lateral?.dentro) mantener(estado.foco);
+        return;
 
       case 'select':
         if (verAjustes) {
@@ -1164,29 +1185,16 @@ function BibliotecaVista({
    */
   const pestanasCabecera: Array<{ clave: string; nombre: string; onPress: () => void; activa: boolean }> =
     estado.inicio
-      ? [
-          // Todo, Películas y Series filtran el inicio; TV en directo es otra
-          // pantalla; y Mi Lista va la última, detrás del directo, porque es
-          // lo tuyo y no una sección del proveedor.
-          ...MODOS_INICIO.filter((opcion) => opcion.modo !== 'lista').map((opcion) => ({
-            clave: opcion.modo,
-            nombre: opcion.nombre,
-            activa: estado.inicio!.modo === opcion.modo,
-            onPress: () => void presentador.current?.elegirModo(opcion.modo).then(setEstado),
-          })),
-          {
-            clave: 'directo',
-            nombre: 'TV en directo',
-            activa: false,
-            onPress: () => void presentador.current?.irADirecto().then(setEstado),
-          },
-          {
-            clave: 'lista',
-            nombre: 'Mi Lista',
-            activa: estado.inicio!.modo === 'lista',
-            onPress: () => void presentador.current?.elegirModo('lista').then(setEstado),
-          },
-        ]
+      ? // Las cinco filtran el inicio, TV en directo incluido: ya no es otra
+        // pantalla, es el mismo inicio con una fila por grupo de canales. La
+        // rejilla completa —con su barra y su vista previa— sigue estando a
+        // una pulsación: aceptar sobre la pestaña que ya está puesta.
+        MODOS_INICIO.map((opcion) => ({
+          clave: opcion.modo,
+          nombre: opcion.nombre,
+          activa: estado.inicio!.modo === opcion.modo,
+          onPress: () => void presentador.current?.elegirModo(opcion.modo).then(setEstado),
+        }))
       : [];
 
   const botonesCabecera: Array<{ texto: string; onPress: () => void; perfil?: true }> = [
@@ -1565,6 +1573,7 @@ function BibliotecaVista({
         <PantallaInicio
           enCabecera={enCabecera}
           inicio={estado.inicio}
+          onMantener={mantenerEnInicio}
           onTurno={(siguiente) => setEstado(presentador.current!.rotarDestacado(siguiente))}
           onTocar={(fila, columna) => {
             const instancia = presentador.current;
@@ -1668,12 +1677,15 @@ function PantallaInicio({
   enCabecera,
   inicio,
   onTocar,
+  onMantener,
   onTurno,
 }: {
   /** El mando está arriba, en la lupa o el perfil. */
   enCabecera: boolean;
   inicio: Inicio;
   onTocar: (fila: number, columna: number) => void;
+  /** Mantener pulsado añade a Mi Lista, igual que en la rejilla. */
+  onMantener: (fila: number, columna: number) => void;
   /** La portada pasa a la siguiente sugerencia. */
   onTurno: (siguiente: number) => void;
 }) {
@@ -1771,6 +1783,7 @@ function PantallaInicio({
             activa={activa}
             columna={inicio.columna}
             onTocar={(columna) => onTocar(index, columna)}
+            onMantener={(columna) => onMantener(index, columna)}
           />
         );
       }}
@@ -2123,6 +2136,7 @@ function Carrusel({
   activa,
   columna,
   onTocar,
+  onMantener,
 }: {
   titulo: string;
   elementos: Elemento[];
@@ -2131,6 +2145,7 @@ function Carrusel({
   activa: boolean;
   columna: number;
   onTocar: (columna: number) => void;
+  onMantener: (columna: number) => void;
 }) {
   const lista = useRef<FlatList<Elemento>>(null);
 
@@ -2165,6 +2180,7 @@ function Carrusel({
             formato={formato}
             enfocado={activa && index === columna}
             onTocar={() => onTocar(index)}
+            onMantener={() => onMantener(index)}
           />
         )}
       />
@@ -2201,11 +2217,13 @@ function FichaDeFila({
   formato,
   enfocado,
   onTocar,
+  onMantener,
 }: {
   item: Elemento;
   formato?: FormatoFila;
   enfocado: boolean;
   onTocar: () => void;
+  onMantener: () => void;
 }) {
   const esCanal = formato === 'canal';
   const escala = useRef(new Animated.Value(1)).current;
@@ -2239,6 +2257,9 @@ function FichaDeFila({
       <Pressable
         focusable={false}
         onPress={onTocar}
+        // El mismo gesto que en la rejilla: mantener pulsado lo añade a Mi
+        // Lista, y el toque normal reproduce o entra.
+        onLongPress={onMantener}
         style={[estilos.fichaFila, enfocado && estilos.fichaFilaEnfocada]}
       >
         <View style={estilos.fichaCaratula}>
