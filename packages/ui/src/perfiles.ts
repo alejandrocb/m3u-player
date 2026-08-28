@@ -25,6 +25,14 @@ export interface Perfil {
   nombre: string;
   /** Color de la ficha, para distinguirlos de un vistazo. */
   color: string;
+  /**
+   * Cuál de los retratos que trae la aplicación se ha elegido.
+   *
+   * Vacío es "ninguno": entonces el círculo lleva la inicial, que es como
+   * empiezan todos. Lo que se guarda es el nombre del retrato y no una
+   * imagen, así que viaja entre aparatos como cualquier otro dato del perfil.
+   */
+  avatar: string;
   creado: string;
 }
 
@@ -108,6 +116,8 @@ export interface AlmacenPerfiles {
    * distingue a cuatro personas de un vistazo, que es para lo que sirve.
    */
   recolorear(id: string, color: string): Promise<void>;
+  /** Le pone uno de los retratos de la aplicación, o ninguno con ''. */
+  ponerRetrato(id: string, avatar: string): Promise<void>;
   borrar(id: string): Promise<void>;
   /**
    * Tira lo local para adoptar lo de la casa. **Borra de verdad.**

@@ -14,7 +14,7 @@ import {
 import type { Avance, Perfil } from '../src/perfiles.ts';
 
 function perfil(id: string, color: string): Perfil {
-  return { id, nombre: id, color, creado: '2026-08-20T00:00:00.000Z' };
+  return { id, nombre: id, color, avatar: '', creado: '2026-08-20T00:00:00.000Z' };
 }
 
 function avance(segundos: number, duracion: number): Avance {

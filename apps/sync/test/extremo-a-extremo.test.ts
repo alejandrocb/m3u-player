@@ -17,7 +17,7 @@ import test from 'node:test';
 
 import type { AlmacenSync, Cambio, EstadoSync } from '@m3u/ui';
 import { ClienteSync } from '@m3u/ui';
-import { SCHEMA_PERFILES_SQL } from '@m3u/storage/schema';
+import { SCHEMA_PERFILES_SQL, SINCRONIZADAS, migrarTablasDePerfil } from '@m3u/storage/schema';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 import { aplicarCambios, cambiosDesde } from '@m3u/storage/sincronizar';
 
@@ -49,6 +49,12 @@ function llavero(): AlmacenSync {
 function aparato(nombre: string, url: string): Aparato {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA_PERFILES_SQL);
+  // Al día, igual que la base de un aparato de verdad.
+  migrarTablasDePerfil({
+    columnas: (tabla) =>
+      (db.prepare(`PRAGMA table_info(${tabla})`).all() as Array<{ name: string }>).map((fila) => fila.name),
+    ejecutar: (sql) => db.exec(sql),
+  });
   db.exec(
     `INSERT INTO profile (id, name, color, created, updated, deleted, origin)
      VALUES ('ana', 'Ana', '#35d07f', '2026-03-01T10:00:00.000Z', '2026-03-01T10:00:00.000Z', 0, 'alta')`,

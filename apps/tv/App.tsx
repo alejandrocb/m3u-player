@@ -49,7 +49,6 @@ import type {
 } from '@m3u/ui';
 import {
   AJUSTES_POR_DEFECTO,
-  COLORES_PERFIL,
   COLUMNAS_POSIBLES,
   ClienteSync,
   GestorCuentas,
@@ -82,6 +81,7 @@ import type { Avance, Medicion } from './src/carga';
 import { PantallaEmparejar } from './src/pantalla-emparejar';
 import { PantallaListas } from './src/listas';
 import { PantallaPerfiles } from './src/pantalla-perfiles';
+import { Retrato } from './src/retrato';
 import { Reproductor } from './src/reproductor';
 import type { Cola } from './src/reproductor';
 
@@ -137,7 +137,12 @@ type Fase =
   | { tipo: 'listas'; error?: string }
   | { tipo: 'emparejar' }
   | { tipo: 'conectando'; nombre: string; avance: Avance }
-  | { tipo: 'perfiles'; cuenta: Cuenta; medicion: Medicion }
+  /*
+    El `perfil` solo viene cuando se llega desde la biblioteca, con el botón
+    "Perfiles" del menú: es lo que permite volver sin elegir. Al arrancar no
+    hay adónde volver.
+  */
+  | { tipo: 'perfiles'; cuenta: Cuenta; medicion: Medicion; perfil?: Perfil }
   | { tipo: 'biblioteca'; cuenta: Cuenta; medicion: Medicion; perfil: Perfil };
 
 function App() {
@@ -261,9 +266,18 @@ function Raiz() {
         new Promise<void>((sigue) => setTimeout(() => sigue(), ESPERA_SINCRONIZAR_MS)),
       ]);
 
-      // Antes de la biblioteca, quién está viendo: cada perfil tiene su
-      // historial y sus favoritos.
-      setFase({ tipo: 'perfiles', cuenta: elegida, medicion });
+      /*
+        Antes de la biblioteca, quién está viendo: cada perfil tiene su
+        historial y sus favoritos.
+
+        Con uno solo no se pregunta. La pantalla de "¿quién está viendo?" con
+        un único círculo no elige nada: es una pulsación de más en cada
+        arranque. Quien quiera otro lo hace desde el menú, que es donde están
+        los perfiles.
+      */
+      const suyos = await almacen.perfiles();
+      if (suyos.length === 1) setFase({ tipo: 'biblioteca', cuenta: elegida, medicion, perfil: suyos[0]! });
+      else setFase({ tipo: 'perfiles', cuenta: elegida, medicion });
     } catch (fallo) {
       biblioteca.current = null;
       setFase({ tipo: 'listas', error: fallo instanceof Error ? fallo.message : String(fallo) });
@@ -365,11 +379,38 @@ function Raiz() {
     return <Espera texto={`${fase.nombre} · ${seccion}${cuenta}`} />;
   }
 
-  if (fase.tipo === 'perfiles' && perfiles.current) {
+  if (fase.tipo === 'perfiles') {
+    // Sin almacén no hay a quién enseñar: se conecta antes de llegar aquí, y
+    // esto solo se ve el instante que tarde en abrirse.
+    if (!perfiles.current) return <Espera texto="Un momento…" />;
     return (
       <PantallaPerfiles
         almacen={perfiles.current}
         onElegir={(perfil) => setFase({ tipo: 'biblioteca', cuenta: fase.cuenta, medicion: fase.medicion, perfil })}
+        onVolver={
+          fase.perfil
+            ? () => {
+                /*
+                  Se relee el perfil antes de volver: en esta pantalla se
+                  edita, y la copia que traíamos es de antes de tocarlo. Sin
+                  esto, cambiabas de retrato y la cabecera seguía con la
+                  inicial hasta el siguiente arranque.
+
+                  Y si se ha borrado, no hay a dónde volver: se pregunta otra
+                  vez quién está viendo.
+                */
+                const anterior = fase.perfil!;
+                perfiles.current!.perfiles().then((todos) => {
+                  const puesto = todos.find((uno) => uno.id === anterior.id);
+                  if (puesto) {
+                    setFase({ tipo: 'biblioteca', cuenta: fase.cuenta, medicion: fase.medicion, perfil: puesto });
+                  } else {
+                    setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion });
+                  }
+                });
+              }
+            : undefined
+        }
       />
     );
   }
@@ -412,13 +453,15 @@ function Raiz() {
       cuenta={fase.cuenta}
       medicion={fase.medicion}
       onCerrarSesion={cerrarSesion}
-      onCambiarPerfil={() => setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion })}
+      onCambiarPerfil={() =>
+        setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion, perfil: fase.perfil })
+      }
       onActualizar={() => conectar(fase.cuenta, true)}
       sincronizado={sincronizado}
       preparado={preparado}
       aparato={nombreAparato}
       onSincronizar={() => void sincronizar()}
-      onCambioPerfil={(nuevo) =>
+      onElegirPerfil={(nuevo) =>
         setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
       }
     />
@@ -448,7 +491,7 @@ function BibliotecaVista({
   preparado,
   aparato,
   onSincronizar,
-  onCambioPerfil,
+  onElegirPerfil,
 }: {
   biblioteca: Biblioteca;
   perfiles: AlmacenPerfiles;
@@ -467,8 +510,14 @@ function BibliotecaVista({
   sincronizado: number;
   /** Pide sincronizar ahora, sin esperar al temporizador. */
   onSincronizar: () => void;
-  /** El perfil ha cambiado de nombre o de color: hay que repintarlo arriba. */
-  onCambioPerfil: (perfil: Perfil) => void;
+  /**
+   * Se pasa a otro perfil desde el menú, sin volver a la pantalla de perfiles.
+   *
+   * En una casa se cambia de persona a menudo —uno deja la tele y la coge
+   * otro—, así que los demás perfiles están a dos pulsaciones y no detrás de
+   * una pantalla entera.
+   */
+  onElegirPerfil: (perfil: Perfil) => void;
 }) {
   const insets = useSafeAreaInsets();
   /*
@@ -495,8 +544,8 @@ function BibliotecaVista({
   /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
   const [verPerfil, setVerPerfil] = useState(false);
   const [focoPerfil, setFocoPerfil] = useState(0);
-  /** Cuando se está escribiendo el nombre nuevo del perfil. */
-  const [nombreNuevo, setNombreNuevo] = useState<string | null>(null);
+  /** Los demás perfiles de la casa, para poder pasarse a uno desde el menú. */
+  const [otrosPerfiles, setOtrosPerfiles] = useState<Perfil[]>([]);
 
   /*
     Estos dos van aquí arriba, con el resto de hooks, y no junto al menú que
@@ -506,23 +555,15 @@ function BibliotecaVista({
     primero. El síntoma es "Rendered more hooks than during the previous
     render" y la aplicación cerrándose al entrar.
   */
-  /** Guarda el nombre nuevo del perfil y cierra el campo. */
-  const guardarNombre = useCallback(async () => {
-    const limpio = (nombreNuevo ?? '').trim();
-    setNombreNuevo(null);
-    if (!limpio || limpio === perfil.nombre) return;
-
-    await perfiles.renombrar(perfil.id, limpio);
-    onCambioPerfil({ ...perfil, nombre: limpio });
-  }, [nombreNuevo, perfil, perfiles, onCambioPerfil]);
-
-  /** Pasa al siguiente color de la paleta, dando la vuelta al llegar al final. */
-  const siguienteColor = useCallback(async () => {
-    const actual = COLORES_PERFIL.indexOf(perfil.color as (typeof COLORES_PERFIL)[number]);
-    const siguiente = COLORES_PERFIL[(actual + 1) % COLORES_PERFIL.length]!;
-    await perfiles.recolorear(perfil.id, siguiente);
-    onCambioPerfil({ ...perfil, color: siguiente });
-  }, [perfil, perfiles, onCambioPerfil]);
+  /*
+    Los demás perfiles se leen al abrir el menú y no una vez al entrar: en esta
+    casa los perfiles se sincronizan, así que la lista de hace media hora
+    puede no ser la de ahora.
+  */
+  useEffect(() => {
+    if (!verPerfil) return;
+    perfiles.perfiles().then((todos) => setOtrosPerfiles(todos.filter((uno) => uno.id !== perfil.id)));
+  }, [verPerfil, perfiles, perfil.id]);
 
   /** El mando está en la cabecera —buscar, ajustes, perfil— y no en la rejilla. */
   const [enCabecera, setEnCabecera] = useState(false);
@@ -774,10 +815,6 @@ function BibliotecaVista({
     if (!instancia) return false;
 
     // Lo que esté encima se cierra antes que nada, de más reciente a menos.
-    if (nombreNuevo !== null) {
-      setNombreNuevo(null);
-      return true;
-    }
     if (verPerfil) {
       setVerPerfil(false);
       return true;
@@ -814,7 +851,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, nombreNuevo]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -1093,11 +1130,20 @@ function BibliotecaVista({
    *
    * Todo lo que es "de este usuario" vive aquí y no en la barra: cinco
    * botones de texto arriba tapaban contenido y no se leían de lejos.
+   *
+   * **Empieza por las otras personas de la casa**, con su cara y su nombre.
+   * Antes había un "Cambiar de perfil" que llevaba a otra pantalla para
+   * acabar eligiendo lo mismo: aquí se ve directamente a quién se pasa.
+   * Editar el nombre y el color se fue a la pantalla de perfiles, que es
+   * donde se ve lo que se está tocando.
    */
-  const opcionesPerfil: Array<{ texto: string; onPress: () => void }> = [
-    { texto: 'Editar nombre', onPress: () => setNombreNuevo(perfil.nombre) },
-    { texto: 'Cambiar color', onPress: () => void siguienteColor() },
-    { texto: 'Cambiar de perfil', onPress: onCambiarPerfil },
+  const opcionesPerfil: Array<{ texto: string; onPress: () => void; retrato?: Perfil }> = [
+    ...otrosPerfiles.map((otro) => ({
+      texto: otro.nombre,
+      retrato: otro,
+      onPress: () => onElegirPerfil(otro),
+    })),
+    { texto: 'Perfiles', onPress: onCambiarPerfil },
     { texto: 'Actualizar catálogo', onPress: onActualizar },
     { texto: 'Cerrar sesión', onPress: onCerrarSesion },
   ];
@@ -1139,7 +1185,8 @@ function BibliotecaVista({
         ]
       : []),
     {
-      texto: inicialDe(perfil.nombre),
+      // El texto no se usa en este: lleva el retrato del perfil.
+      texto: '',
       perfil: true as const,
       onPress: () => {
         setFocoPerfil(0);
@@ -1218,15 +1265,23 @@ function BibliotecaVista({
                   */
                   focusable={false}
                   style={[
-                    boton.perfil ? estilos.avatar : estilos.botonCabecera,
-                    boton.perfil && { backgroundColor: perfil.color },
+                    boton.perfil ? null : estilos.botonCabecera,
                     enCabecera &&
                       focoCabecera === pestanasCabecera.length + indice &&
-                      (boton.perfil ? estilos.avatarEnfocado : estilos.botonCabeceraEnfocado),
+                      !boton.perfil &&
+                      estilos.botonCabeceraEnfocado,
                   ]}
                   onPress={boton.onPress}
                 >
-                  <Text style={boton.perfil ? estilos.avatarTexto : estilos.iconoCabecera}>{boton.texto}</Text>
+                  {boton.perfil ? (
+                    <Retrato
+                      perfil={perfil}
+                      tamano={44}
+                      enfocado={enCabecera && focoCabecera === pestanasCabecera.length + indice}
+                    />
+                  ) : (
+                    <Text style={estilos.iconoCabecera}>{boton.texto}</Text>
+                  )}
                 </Pressable>
               ))}
             </View>
@@ -1376,14 +1431,12 @@ function BibliotecaVista({
       {verPerfil ? (
         <View style={estilos.menuPerfil}>
           <View style={estilos.menuCabecera}>
-            <View style={[estilos.avatarGrande, { backgroundColor: perfil.color }]}>
-              <Text style={estilos.avatarGrandeTexto}>{inicialDe(perfil.nombre)}</Text>
-            </View>
+            <Retrato perfil={perfil} tamano={52} />
             <Text style={estilos.menuNombre}>{perfil.nombre}</Text>
           </View>
           {opcionesPerfil.map((opcion, indice) => (
             <Pressable
-              key={opcion.texto}
+              key={opcion.retrato?.id ?? opcion.texto}
               focusable={false}
               style={[estilos.menuOpcion, focoPerfil === indice && estilos.menuOpcionEnfocada]}
               onPress={() => {
@@ -1391,26 +1444,10 @@ function BibliotecaVista({
                 opcion.onPress();
               }}
             >
+              {opcion.retrato ? <Retrato perfil={opcion.retrato} tamano={32} /> : null}
               <Text style={estilos.menuOpcionTexto}>{opcion.texto}</Text>
             </Pressable>
           ))}
-        </View>
-      ) : null}
-
-      {/* Escribir el nombre nuevo del perfil. */}
-      {nombreNuevo !== null ? (
-        <View style={estilos.menuPerfil}>
-          <Text style={estilos.menuNombre}>Nombre del perfil</Text>
-          <TextInput
-            style={estilos.campoNombre}
-            value={nombreNuevo}
-            onChangeText={setNombreNuevo}
-            autoFocus
-            onSubmitEditing={() => void guardarNombre()}
-          />
-          <Pressable focusable={false} style={estilos.menuOpcionEnfocada} onPress={() => void guardarNombre()}>
-            <Text style={estilos.menuOpcionTexto}>Guardar</Text>
-          </Pressable>
         </View>
       ) : null}
 
@@ -2210,17 +2247,6 @@ function FichaDeFila({
   );
 }
 
-/**
- * La letra que va dentro del círculo del perfil.
- *
- * Hace las veces de foto sin traerse un selector de imágenes, que en Android
- * es un módulo nativo. Con el color propio de cada perfil, cuatro personas se
- * distinguen de un vistazo.
- */
-function inicialDe(nombre: string): string {
-  return (nombre.trim()[0] ?? '?').toUpperCase();
-}
-
 function Ficha({
   elemento,
   enfocado,
@@ -2661,35 +2687,6 @@ const estilos = StyleSheet.create({
     fontSize: 24,
     lineHeight: 26,
   },
-  avatar: {
-    alignItems: 'center',
-    borderColor: 'transparent',
-    borderRadius: 22,
-    borderWidth: 3,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  avatarEnfocado: {
-    borderColor: '#fff',
-  },
-  avatarTexto: {
-    color: FONDO,
-    fontSize: 19,
-    fontWeight: '700',
-  },
-  avatarGrande: {
-    alignItems: 'center',
-    borderRadius: 26,
-    height: 52,
-    justifyContent: 'center',
-    width: 52,
-  },
-  avatarGrandeTexto: {
-    color: FONDO,
-    fontSize: 23,
-    fontWeight: '700',
-  },
   menuPerfil: {
     backgroundColor: '#0d2231',
     borderRadius: 12,
@@ -2714,7 +2711,10 @@ const estilos = StyleSheet.create({
     fontWeight: '700',
   },
   menuOpcion: {
+    alignItems: 'center',
     borderRadius: 8,
+    flexDirection: 'row',
+    gap: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
@@ -2727,13 +2727,6 @@ const estilos = StyleSheet.create({
   menuOpcionTexto: {
     color: TINTA_SUAVE,
     fontSize: 17,
-  },
-  campoNombre: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderRadius: 8,
-    color: '#fff',
-    fontSize: 18,
-    padding: 14,
   },
   inicioLista: {
     height: '100%',

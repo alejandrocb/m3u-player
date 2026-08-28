@@ -23,7 +23,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { INDICES_TRAS_MIGRAR_SQL, RELLENOS_SQL, SCHEMA_PERFILES_SQL, SINCRONIZADAS } from '@m3u/storage/schema';
+import {
+  INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_SQL,
+  SCHEMA_PERFILES_SQL,
+  SINCRONIZADAS,
+  migrarTablasDePerfil,
+} from '@m3u/storage/schema';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 
 import { aleatorio, cifrarContrasena, codigoCorto, compruebaContrasena, huella } from './claves.ts';
@@ -218,6 +224,15 @@ export class Panel {
       db = new DatabaseSync(join(this.#carpeta, `grupo-${grupoId}.sqlite`));
       db.exec('PRAGMA journal_mode = WAL');
       db.exec(SCHEMA_PERFILES_SQL);
+
+      // Las columnas añadidas después de la primera versión: en una base ya
+      // creada no las pone `CREATE TABLE IF NOT EXISTS`.
+      migrarTablasDePerfil({
+        columnas: (tabla) =>
+          (db!.prepare(`PRAGMA table_info(${tabla})`).all() as Array<{ name: string }>).map((fila) => fila.name),
+        ejecutar: (sql) => db!.exec(sql),
+      });
+
       for (const indice of INDICES_TRAS_MIGRAR_SQL) {
         // Los índices del catálogo no aplican aquí: solo existen las tablas de
         // perfil, así que se salta lo que hable de otras.

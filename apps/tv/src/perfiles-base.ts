@@ -73,6 +73,7 @@ function aPerfil(fila: Fila): Perfil {
     id: fila.id as string,
     nombre: fila.name as string,
     color: fila.color as string,
+    avatar: (fila.avatar as string) ?? '',
     creado: fila.created as string,
   };
 }
@@ -174,7 +175,7 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
   migrarClavesDeEpisodio(db, aparato);
 
   const listar = (): Perfil[] =>
-    filas(db, 'SELECT id, name, color, created FROM profile WHERE deleted = 0 ORDER BY created').map(aPerfil);
+    filas(db, 'SELECT id, name, color, avatar, created FROM profile WHERE deleted = 0 ORDER BY created').map(aPerfil);
 
   /** Escribe un ajuste del perfil, sellando la fila como cualquier otra. */
   const guardarSetting = (perfilId: string, clave: string, valor: string): void => {
@@ -207,18 +208,21 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
         id: idDePerfil(nombre, existentes),
         nombre: nombre.trim() || 'Perfil',
         color: color || colorLibre(existentes),
+        // Sin retrato: el círculo empieza con la inicial y se elige después.
+        avatar: '',
         creado: ahora(),
       };
       // Al elegir el identificador solo se miran los perfiles vivos, así que
       // puede tocarle el de uno borrado hace tiempo: se reaprovecha la lápida
       // en vez de chocar con ella.
       db.executeSync(
-        `INSERT INTO profile (id, name, color, created, updated, deleted, origin)
-         VALUES (?, ?, ?, ?, ?, 0, ?)
+        `INSERT INTO profile (id, name, color, avatar, created, updated, deleted, origin)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
          ON CONFLICT(id) DO UPDATE SET
-           name = excluded.name, color = excluded.color, created = excluded.created,
-           updated = excluded.updated, deleted = 0, origin = excluded.origin`,
-        [perfil.id, perfil.nombre, perfil.color, perfil.creado, perfil.creado, aparato],
+           name = excluded.name, color = excluded.color, avatar = excluded.avatar,
+           created = excluded.created, updated = excluded.updated, deleted = 0,
+           origin = excluded.origin`,
+        [perfil.id, perfil.nombre, perfil.color, perfil.avatar, perfil.creado, perfil.creado, aparato],
       );
       return perfil;
     },
@@ -226,6 +230,15 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
     async renombrar(id: string, nombre: string): Promise<void> {
       db.executeSync('UPDATE profile SET name = ?, updated = ?, origin = ? WHERE id = ?', [
         nombre.trim() || 'Perfil',
+        ahora(),
+        aparato,
+        id,
+      ]);
+    },
+
+    async ponerRetrato(id: string, avatar: string): Promise<void> {
+      db.executeSync('UPDATE profile SET avatar = ?, updated = ?, origin = ? WHERE id = ?', [
+        avatar,
         ahora(),
         aparato,
         id,

@@ -13,7 +13,7 @@ import test from 'node:test';
 
 import type { BaseSQL } from '../src/sincronizar.ts';
 import { aplicarCambios, cambioValido, cambiosDesde } from '../src/sincronizar.ts';
-import { SCHEMA_PERFILES_SQL } from '../src/schema.ts';
+import { SCHEMA_PERFILES_SQL, migrarTablasDePerfil } from '../src/schema.ts';
 
 /** El principio de los tiempos: pedir "todo" es pedir lo posterior a esto. */
 const DESDE_CERO = '';
@@ -27,6 +27,12 @@ interface Aparato {
 function aparato(nombre: string): Aparato {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA_PERFILES_SQL);
+  // Al día, igual que la base de un aparato de verdad.
+  migrarTablasDePerfil({
+    columnas: (tabla) =>
+      (db.prepare(`PRAGMA table_info(${tabla})`).all() as Array<{ name: string }>).map((fila) => fila.name),
+    ejecutar: (sql) => db.exec(sql),
+  });
   db.exec(
     `INSERT INTO profile (id, name, color, created, updated, deleted, origin)
      VALUES ('ana', 'Ana', '#35d07f', '2026-03-01T10:00:00.000Z', '2026-03-01T10:00:00.000Z', 0, 'alta')`,

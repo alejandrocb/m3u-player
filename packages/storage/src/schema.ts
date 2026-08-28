@@ -245,7 +245,7 @@ CREATE TABLE IF NOT EXISTS affinity (
  * la misma conclusión en vez de quedarse cada uno con lo suyo.
  */
 export const SINCRONIZADAS: Array<{ tabla: string; clave: string[]; campos: string[] }> = [
-  { tabla: 'profile', clave: ['id'], campos: ['name', 'color', 'created'] },
+  { tabla: 'profile', clave: ['id'], campos: ['name', 'color', 'avatar', 'created'] },
   { tabla: 'progress', clave: ['profile_id', 'kind', 'item_id'], campos: ['seconds', 'duration', 'title'] },
   { tabla: 'favorite', clave: ['profile_id', 'kind', 'item_id'], campos: ['title', 'created'] },
   /*
@@ -333,6 +333,12 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   // añadir una columna obligatoria sin valor por defecto, y el que tocaría
   // —la fecha de ahora— haría que todo lo viejo pareciera recién cambiado y
   // ganara la primera fusión. Se rellenan justo después, en RELLENOS_SQL.
+  /*
+    El retrato del perfil: el nombre de uno de los que trae la aplicación
+    ("gato", "buho"…), no una imagen. Así viaja en una palabra y se pinta
+    igual en los cuatro aparatos, sin subir nada a ninguna parte.
+  */
+  { tabla: 'profile', columna: 'avatar', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'updated', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
   { tabla: 'profile', columna: 'origin', tipo: 'TEXT' },
@@ -345,6 +351,28 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'profile_setting', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
   { tabla: 'profile_setting', columna: 'origin', tipo: 'TEXT' },
 ];
+
+/**
+ * Pone al día las tablas de perfil de una base que ya existía.
+ *
+ * Lo usan el servidor, para la base de cada casa, y los tests. El aparato
+ * tiene su propio recorrido porque además migra las tablas del catálogo.
+ *
+ * Sin esto, añadir una columna a un perfil —el retrato, por ejemplo— tumbaba
+ * la sincronización con un "no such column": quien reparte pide todas las
+ * columnas de la tabla, y de un lado no existían.
+ */
+export function migrarTablasDePerfil(base: {
+  columnas(tabla: string): string[];
+  ejecutar(sql: string): void;
+}): void {
+  const dePerfil = new Set(SINCRONIZADAS.map(({ tabla }) => tabla));
+  for (const { tabla, columna, tipo } of COLUMNAS_MIGRADAS) {
+    if (!dePerfil.has(tabla)) continue;
+    if (base.columnas(tabla).includes(columna)) continue;
+    base.ejecutar(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${tipo}`);
+  }
+}
 
 /**
  * Fecha de las filas que existían antes de que hubiera sincronización.

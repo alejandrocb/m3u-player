@@ -688,8 +688,51 @@ absoluto: el grupo es la frontera de la sincronización. Se reconoce enseguida
 porque cada aparato ve un solo perfil y no el del otro, y porque el trabajo
 diario del servidor prepara la misma lista dos veces, una por grupo.
 
-Lo que falta —y se nota— es que al emparejarse un aparato adopte los perfiles
-de la casa en vez de quedarse con el que se creó él solo antes de emparejar.
+Al emparejarse, el aparato **adopta los perfiles de la casa** en vez de
+quedarse con el que se creó él solo: queda la señal `adoptar`, y al conectar
+con la lista vacía los suyos y se trae los del grupo.
+
+### La pantalla de perfiles es donde se administra
+
+Logotipo arriba, "¿Quién está viendo?" y los perfiles en **círculos**, como en
+cualquier servicio de estos. Redondos y no cuadrados a propósito: es lo que
+hace que se lean como personas y no como una ficha más de contenido, que en
+esta aplicación son todas rectángulos.
+
+Editar vive aquí y en ningún otro sitio. Antes el nombre y el color se
+cambiaban desde el menú de la biblioteca, a ciegas —"Cambiar color" iba dando
+la vuelta a la paleta—; ahora se entra en "Administrar perfiles", se toca el
+que sea y se ve lo que se está eligiendo. **El borrado avisa**: se lleva por
+delante el historial y la Mi Lista de esa persona, y lo hace en todos los
+aparatos de la casa.
+
+**Con un solo perfil no se pregunta.** La pantalla de "¿quién está viendo?"
+con un único círculo no elige nada: era una pulsación de más en cada arranque.
+Se sigue llegando a ella desde el menú, con el botón "Perfiles".
+
+Y **el menú del círculo empieza por las otras personas**, con su cara y su
+nombre. Había un "Cambiar de perfil" que llevaba a otra pantalla para acabar
+eligiendo lo mismo; ahora se pasa de una a otra en dos pulsaciones. Al volver
+del menú "Perfiles" hay que **releer el perfil** de la base antes de pintar la
+biblioteca: la copia que llevábamos es de antes de editarlo, y sin eso
+cambiabas de retrato y la cabecera seguía con la inicial.
+
+**El retrato es una palabra, no una imagen.** El perfil guarda el nombre de uno
+de los diez que trae la aplicación (`apps/tv/src/retratos/`), así que viaja
+como cualquier otro dato del perfil y no hay nada que subir a ninguna parte.
+Son siluetas en el negro de la aplicación con los huecos transparentes, y se
+pintan **encima del color del perfil**: los diez valen para los cinco colores.
+Un nombre desconocido —de una versión más nueva, llegado por sincronización—
+no rompe nada: se cae en la inicial, que es como empiezan todos.
+
+Al añadir la columna `avatar` se vio que **el servidor no aplicaba
+`COLUMNAS_MIGRADAS`** a la base de cada casa: se creaba con el esquema de la
+primera versión y ahí se quedaba. La sincronización pide todas las columnas de
+la tabla, así que reventaba con "no such column". Ahora eso lo hace
+`migrarTablasDePerfil`, en el propio esquema, y lo usan el servidor y los
+tests. **Añadir una columna a un perfil obliga a redesplegar el VPS**: un
+servidor viejo no se cae —solo escribe los campos que conoce—, pero el dato
+nuevo no llega al otro aparato hasta que se actualiza.
 
 ## Estado y siguiente paso
 
