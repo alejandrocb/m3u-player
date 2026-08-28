@@ -3,6 +3,14 @@ import test from 'node:test';
 
 import { Navegador } from '../src/navegacion.ts';
 
+/*
+  Las pantallas que hay son tres: el inicio —que se filtra con las pestañas y
+  no se apila—, una serie y el buscador. Las rejillas de películas, series y
+  directo se fueron cuando el inicio pasó a ser filas: eran el mismo contenido
+  con otra cara.
+*/
+const DOCTOR_WHO = { tipo: 'serie', serieId: 'doctor-who', titulo: 'Doctor Who' } as const;
+
 test('arranca en el inicio', () => {
   const nav = new Navegador();
   assert.deepEqual(nav.actual, { tipo: 'inicio' });
@@ -18,15 +26,12 @@ test('atrás en la raíz pide salir, y no vacía la pila', () => {
 
 test('se entra y se vuelve por donde se vino', () => {
   const nav = new Navegador();
-  nav.entrar({ tipo: 'peliculas' });
-  nav.entrar({ tipo: 'series' });
-  nav.entrar({ tipo: 'serie', serieId: 'doctor-who', titulo: 'Doctor Who' });
+  nav.entrar({ tipo: 'buscador', texto: '' });
+  nav.entrar(DOCTOR_WHO);
 
-  assert.equal(nav.profundidad, 4);
+  assert.equal(nav.profundidad, 3);
   assert.equal(nav.atras(), 'retrocedido');
-  assert.deepEqual(nav.actual, { tipo: 'series' });
-  assert.equal(nav.atras(), 'retrocedido');
-  assert.deepEqual(nav.actual, { tipo: 'peliculas' });
+  assert.deepEqual(nav.actual, { tipo: 'buscador', texto: '' });
   assert.equal(nav.atras(), 'retrocedido');
   assert.deepEqual(nav.actual, { tipo: 'inicio' });
   assert.equal(nav.atras(), 'salir');
@@ -34,13 +39,13 @@ test('se entra y se vuelve por donde se vino', () => {
 
 test('el foco de cada pantalla se recuerda al volver', () => {
   const nav = new Navegador();
-  // El usuario baja hasta la película 137 de la rejilla y entra en la ficha.
-  nav.entrar({ tipo: 'peliculas' });
+  // Se baja hasta el resultado 137 del buscador y se entra en una serie.
+  nav.entrar({ tipo: 'buscador', texto: 'who' });
   nav.recordarFoco(137);
-  nav.entrar({ tipo: 'serie', serieId: 'x', titulo: 'X' }, 137);
+  nav.entrar(DOCTOR_WHO, 137);
 
   nav.atras();
-  // Al volver, el cursor sigue en la 137 y no al principio de 18.000 fichas.
+  // Al volver, el cursor sigue en la 137 y no al principio.
   assert.equal(nav.focoGuardado(), 137);
 });
 
@@ -56,18 +61,10 @@ test('dos temporadas de la misma serie recuerdan focos distintos', () => {
   assert.equal(nav.focoGuardado(), 5);
 });
 
-test('cada categoría recuerda su propio foco', () => {
-  const nav = new Navegador();
-  nav.entrar({ tipo: 'peliculas' });
-  nav.recordarFoco(3);
-  nav.reemplazar({ tipo: 'peliculas', grupo: 'Estrenos' });
-  assert.equal(nav.focoGuardado(), 0, 'cada una recuerda el suyo');
-});
-
 test('volver al inicio deja la pila en su fondo', () => {
   const nav = new Navegador();
-  nav.entrar({ tipo: 'directo' });
-  nav.entrar({ tipo: 'peliculas', grupo: 'Estrenos' });
+  nav.entrar({ tipo: 'buscador', texto: '' });
+  nav.entrar(DOCTOR_WHO);
   nav.aInicio();
   assert.equal(nav.profundidad, 1);
   assert.equal(nav.atras(), 'salir');
@@ -75,10 +72,10 @@ test('volver al inicio deja la pila en su fondo', () => {
 
 test('la ruta se puede leer entera para pintar migas', () => {
   const nav = new Navegador();
-  nav.entrar({ tipo: 'directo' });
-  nav.entrar({ tipo: 'peliculas', grupo: 'Estrenos' });
+  nav.entrar({ tipo: 'buscador', texto: '' });
+  nav.entrar(DOCTOR_WHO);
   assert.deepEqual(
     nav.ruta.map((pantalla) => pantalla.tipo),
-    ['inicio', 'directo', 'peliculas'],
+    ['inicio', 'buscador', 'serie'],
   );
 });

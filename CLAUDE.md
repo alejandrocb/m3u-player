@@ -65,10 +65,8 @@ plataforma vive fuera.
 ### El inicio es la pantalla, y las pestañas lo filtran
 
 Arriba hay cinco: **Todo, Películas, Series, TV en directo y Mi Lista**. Las
-cinco pintan lo mismo —filas de fichas— y solo cambian qué filas. La rejilla
-completa, con su barra de categorías, sigue siendo otra pantalla: se llega
-**aceptando sobre la pestaña que ya está puesta**, la primera pulsación filtra
-y la segunda entra. Mi Lista no tiene rejilla detrás.
+cinco pintan lo mismo —filas de fichas— y solo cambian qué filas. **Pulsar la
+pestaña solo filtra**: no hay ninguna otra pantalla detrás a la que entrar.
 
 Las filas de cada pestaña:
 
@@ -97,50 +95,42 @@ lo tenemos de un puñado; las categorías vienen con el catálogo y están todas
 Dicen casi lo mismo, solo que a gritos —"PELICULAS ACCION"—, y por eso el
 rótulo se limpia con `nombreDeCategoria`.
 
-### Las cuatro pantallas tienen la misma forma
+### Solo hay tres pantallas
 
-TV en directo, películas, series y el interior de una serie son **la misma
-pantalla**: una barra a la izquierda con los grupos y una rejilla a la derecha
-con lo que haya en el grupo marcado. En una serie los "grupos" son sus
-temporadas y la rejilla son los episodios.
+El **inicio** —que se filtra con las pestañas y no se apila—, **una serie** y
+el **buscador**. Nada más.
 
-Antes eran ocho pantallas apiladas de dos en dos (directo → grupo, serie →
-temporada). Con la barra, elegir grupo **reemplaza** la pantalla en vez de
-apilar otra: "atrás" sale de la sección de una vez, en lugar de ir deshaciendo
-las categorías que hayas mirado.
+Hubo una cuarta forma: la rejilla completa de películas, series y directo, con
+su barra de categorías a la izquierda. Se llegaba a ella pulsando dos veces la
+pestaña que ya estaba puesta, y era **el mismo contenido con otra cara**: uno
+entraba sin querer, veía otra cosa, y al darle a "atrás" aparecía la buena. Se
+quitó entera.
+
+La barra lateral sobrevive en un solo sitio, dentro de una serie, donde los
+"grupos" son sus temporadas y a la derecha van los episodios. Elegir temporada
+**reemplaza** la pantalla en vez de apilar otra: "atrás" sale de la serie de
+una vez, en lugar de ir deshaciendo las temporadas que hayas mirado.
 
 `EstadoPantalla.formato` le dice a la vista cómo dibujar las fichas, porque no
-se deduce del contenido: `carteles` (2:3, películas y series), `canales` (16:9,
-el logotipo manda), `episodios` (fila con fotograma y sinopsis) y `lista`.
+se deduce del contenido: `carteles` (2:3, el buscador), `episodios` (fila con
+fotograma y sinopsis) y `lista`. Las filas del inicio no pasan por ahí: cada
+una lleva su propio `formato` —cartel o canal—.
 
-### La parrilla del directo
+### La parrilla del directo, hoy a medias
 
-TV en directo tiene tres columnas: categorías, canales en lista y, a la
-derecha, el canal enfocado con lo que está echando y lo que viene detrás.
+Lo que echan solo se ve **dentro del reproductor**: al abrir un canal, donde
+iría "0:00 / 0:00" van la hora de inicio, el título del programa y la hora de
+fin, con la barra marcando por dónde va.
 
-La mitad derecha de la pantalla es esa columna, y ahí se ve **el canal
-reproduciéndose en pequeño**, con su programación debajo. Pulsar sobre el vídeo
-—o aceptar otra vez sobre el canal que ya se está viendo— lo abre entero, y
-"atrás" devuelve a la vista previa.
-
-Con `max_connections` a 1, la vista previa ocupa la única ranura: por eso solo
-arranca cuando el foco lleva **un segundo quieto**, y no mientras se zapea, y
-se para al salir del directo.
-
-**El vídeo no es hijo de esta columna.** La columna deja el hueco, lo mide y el
-reproductor —que vive en la capa de arriba— se coloca encima. Si colgara de
-aquí, al pasar a pantalla completa cambiaría de sitio en el árbol, React lo
-volvería a montar y ExoPlayer soltaría la conexión: **medio minuto de 403**
-cada vez que se agranda.
+La columna que lo enseñaba antes de abrir —con la vista previa del canal
+enfocado— se fue con la rejilla. Queda pendiente devolverla a la pantalla de
+directo, que ahora son filas por grupo de canales, y ahí es donde encajará lo
+que prepare el servidor con el EPG completo.
 
 El EPG se pide con `get_short_epg` canal a canal, con un retardo de 350 ms
 desde que el foco se para —el foco se mueve más rápido de lo que responde el
 panel— y se cachea media hora en memoria. Medido: 3,4 KB por canal frente a
 los 186 KB de `get_simple_data_table`, que trae la semana entera.
-
-En el reproductor de directo eso reemplaza a la línea de tiempo: donde iría
-"0:00 / 0:00" van la hora de inicio, el título del programa y la hora de fin,
-con la barra marcando por dónde va.
 
 ### Un perfil es una persona: solo suena en un sitio
 

@@ -82,8 +82,6 @@ import type { Avance, Medicion } from './src/carga';
 import { PantallaEmparejar } from './src/pantalla-emparejar';
 import { PantallaListas } from './src/listas';
 import { PantallaPerfiles } from './src/pantalla-perfiles';
-import { Parrilla } from './src/parrilla';
-import type { Caja } from './src/parrilla';
 import { Reproductor } from './src/reproductor';
 import type { Cola } from './src/reproductor';
 
@@ -492,10 +490,6 @@ function BibliotecaVista({
    * coloca. Ver el porqué en `parrilla.tsx`.
    */
   const [aPantallaCompleta, setAPantallaCompleta] = useState(true);
-  /** Dónde ha quedado el hueco del vídeo dentro de la columna. */
-  const [cajaVista, setCajaVista] = useState<Caja | null>(null);
-  /** El mando está sobre la vista previa, no sobre la lista de canales. */
-  const [focoEnVideo, setFocoEnVideo] = useState(false);
 
   const [verAjustes, setVerAjustes] = useState(false);
   /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
@@ -540,7 +534,6 @@ function BibliotecaVista({
   const presentador = useRef<Presentador | null>(null);
   const salidaPendiente = useRef(false);
   /** La pantalla actual es la del directo: solo ahí hay vista previa. */
-  const esDirecto = useRef(false);
   /** Contra este contenedor se mide el hueco del vídeo. */
   const raiz = useRef<View | null>(null);
   const lista = useRef<FlatList<Elemento> | null>(null);
@@ -733,43 +726,7 @@ function BibliotecaVista({
     return () => clearTimeout(reloj);
   }, [interrumpido]);
 
-  /**
-   * El canal sobre el que está el foco, si es que hay uno.
-   *
-   * Se saca aquí y no dentro del efecto para que la dependencia sea el
-   * identificador y no el estado entero, que cambia en cada pulsación.
-   */
-  const canalEnfocado =
-    estado?.formato === 'canales' && !estado.lateral?.dentro
-      ? estado.elementos[estado.foco]
-      : undefined;
-  const medioEnfocado =
-    canalEnfocado?.accion.tipo === 'reproducir' ? canalEnfocado.accion.medio : null;
-  const idEnfocado = medioEnfocado?.id ?? null;
 
-  /**
-   * La vista previa sigue al foco, con un segundo de retraso.
-   *
-   * Ese retraso es lo que hace que zapear por la lista no abra un flujo por
-   * canal: con `max_connections` a uno, cada arranque ocupa la única ranura y
-   * el panel tarda medio minuto en soltarla. Solo se previsualiza el canal en
-   * el que uno se queda.
-   */
-  useEffect(() => {
-    if (!idEnfocado || aPantallaCompleta) return;
-    if (reproduciendo?.id === idEnfocado) return;
-
-    const espera = setTimeout(() => {
-      if (medioEnfocado) setReproduciendo(medioEnfocado);
-    }, ESPERA_VISTA_PREVIA_MS);
-    return () => clearTimeout(espera);
-    // `medioEnfocado` se reconstruye en cada render; el identificador no.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idEnfocado, aPantallaCompleta, reproduciendo?.id]);
-
-  // Entrar y salir del directo: al entrar, el vídeo empieza en la columna; al
-  // salir, se para, o seguiría ocupando la conexión mientras se navega por
-  // películas.
   /**
    * Al cerrar el reproductor, sincronizar: acaba de haber algo que contar.
    *
@@ -801,16 +758,10 @@ function BibliotecaVista({
 
   useEffect(() => {
     if (!estado) return;
-    if (estado.formato === 'canales') {
-      if (!reproduciendo && aPantallaCompleta) setAPantallaCompleta(false);
-    } else {
-      if (focoEnVideo) setFocoEnVideo(false);
-      if (reproduciendo && !aPantallaCompleta) {
-        setReproduciendo(null);
-        setAPantallaCompleta(true);
-      }
-    }
-  }, [estado, reproduciendo, aPantallaCompleta, focoEnVideo]);
+    // Lo que suena siempre ocupa la pantalla: la vista previa vivía en la
+    // columna del directo, y esa pantalla ya no existe.
+    if (reproduciendo && !aPantallaCompleta) setAPantallaCompleta(true);
+  }, [estado, reproduciendo, aPantallaCompleta]);
 
   // Cambiar de pantalla devuelve el mando al contenido: la cabecera de la
   // pantalla nueva puede tener otros botones, o ninguno.
@@ -833,14 +784,6 @@ function BibliotecaVista({
     }
     if (verAjustes) {
       setVerAjustes(false);
-      return true;
-    }
-
-    // Desde el vídeo entero se vuelve a la vista previa, que es de donde se
-    // vino: cerrarlo del todo obligaría a esperar a que el panel suelte la
-    // conexión para volver a verlo.
-    if (reproduciendo && aPantallaCompleta && esDirecto.current) {
-      setAPantallaCompleta(false);
       return true;
     }
 
@@ -1017,17 +960,6 @@ function BibliotecaVista({
         // la pantalla se quedaba muerta—.
         if (reproduciendo && aPantallaCompleta) return;
 
-        // La derecha salta de la lista al vídeo, y la izquierda vuelve: es el
-        // camino que en una tablet hace el dedo tocando la vista previa.
-        if (focoEnVideo) {
-          if (evento.eventType === 'left') setFocoEnVideo(false);
-          return;
-        }
-        if (evento.eventType === 'right' && esDirecto.current && reproduciendo && !estado?.lateral?.dentro) {
-          setFocoEnVideo(true);
-          return;
-        }
-
         const direccion = {
           up: 'arriba',
           down: 'abajo',
@@ -1089,11 +1021,6 @@ function BibliotecaVista({
           else botonesCabecera[focoCabecera - pestanasCabecera.length]?.onPress();
           return;
         }
-        // Aceptar sobre la vista previa la abre entera.
-        if (focoEnVideo) {
-          setAPantallaCompleta(true);
-          return;
-        }
         aceptar();
         break;
 
@@ -1145,7 +1072,6 @@ function BibliotecaVista({
 
   if (!estado) return <Espera texto="Cargando la biblioteca…" />;
 
-  esDirecto.current = estado.formato === 'canales';
 
   const enInicio = presentador.current?.pantalla.tipo === 'inicio';
 
@@ -1588,37 +1514,8 @@ function BibliotecaVista({
       ) : null}
 
       <View style={[estilos.cuerpo, estado.inicio && estilos.cuerpoOculto]}>
-        {/*
-          En el directo la pantalla se parte por la mitad: la barra y la lista
-          a un lado, la parrilla al otro. En el resto de pantallas la lista
-          cuelga directamente del cuerpo, sin envoltorio: metido siempre, ese
-          contenedor de más le comía el ancho a la lista —se quedaba en unos
-          cuarenta píxeles y las fichas salían como tiras verticales—.
-        */}
-        {estado.formato === 'canales' ? (
-          <View style={[estilos.columnaIzquierda, estilos.mitad]}>
-            {barraLateral}
-            {rejilla}
-          </View>
-        ) : (
-          <>
-            {barraLateral}
-            {rejilla}
-          </>
-        )}
-
-        {/* La programación del canal en el que está el foco. */}
-        {estado.formato === 'canales' ? (
-          <Parrilla
-            canal={estado.elementos[estado.foco] ?? null}
-            programacion={programacion}
-            conVideo={Boolean(reproduciendo) && !aPantallaCompleta}
-            enfocada={focoEnVideo}
-            onCaja={setCajaVista}
-            respectoA={raiz}
-            onAbrir={() => reproduciendo && setAPantallaCompleta(true)}
-          />
-        ) : null}
+        {barraLateral}
+        {rejilla}
       </View>
       </View>
 
@@ -1633,8 +1530,6 @@ function BibliotecaVista({
           cola={colaDe(estado.elementos, reproduciendo)}
           onCambiar={setReproduciendo}
           programacion={programacion}
-          caja={aPantallaCompleta ? null : cajaVista}
-          resaltado={focoEnVideo}
           onAbrir={() => setAPantallaCompleta(true)}
         />
       ) : null}
@@ -2408,30 +2303,6 @@ function Ficha({
     );
   }
 
-  // Un canal es su logotipo: apaisado, con transparencia y sin recortar, que
-  // es como los manda el proveedor. El nombre va debajo porque muchos logos no
-  // lo llevan escrito.
-  if (formato === 'canales') {
-    return (
-      <Pressable
-        style={[estilos.canal, enfocado && estilos.fichaEnfocada]}
-        onPress={onPress}
-        onLongPress={onLongPress}
-      >
-        <View style={estilos.marcoLogo}>
-          <Logo uri={elemento.logo} nombre={elemento.titulo} />
-        </View>
-        <Text style={[estilos.canalNombre, enfocado && estilos.textoEnfocado]} numberOfLines={2}>
-          {elemento.titulo}
-        </Text>
-        {/* El corazón, al final de la fila: en el logotipo lo taparía. */}
-        {elemento.favorito ? <Text style={estilos.corazonEnFila}>♥</Text> : null}
-      </Pressable>
-    );
-  }
-
-  // El episodio ocupa la fila entera: fotograma a la izquierda y su ficha a la
-  // derecha, que es donde cabe la sinopsis.
   if (formato === 'episodios') {
     return (
       <Pressable

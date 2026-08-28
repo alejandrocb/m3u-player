@@ -29,8 +29,8 @@ import { reloj, vaAnotado } from '@m3u/ui';
 import { avanceDePrograma, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
-import { hora } from './parrilla';
-import type { Caja } from './parrilla';
+import { hora } from './reloj';
+import type { Caja } from './reloj';
 import { FONDO, TINTA_SUAVE, VERDE } from './tema';
 
 import {

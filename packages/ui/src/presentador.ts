@@ -441,11 +441,6 @@ export class Presentador {
 
   get formato(): Formato {
     switch (this.#navegador.actual.tipo) {
-      case 'peliculas':
-      case 'series':
-        return 'carteles';
-      case 'directo':
-        return 'canales';
       case 'serie':
         return 'episodios';
       // El buscador enseña carátulas como cualquier otra rejilla. En lista, un
@@ -525,10 +520,15 @@ export class Presentador {
           : { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: ficha.id, titulo: ficha.titulo } },
     }));
 
-    // Por aquí y no llamando al historial a pelo: `#conAvances` ya se guarda de
-    // que un fallo de la base no tire la pantalla, y ya sabe que a una serie
-    // —que se abre, no se reproduce— no se le pregunta por dónde iba.
-    return this.#conAvances(elementos);
+    /*
+      Por aquí y no llamando al historial a pelo: `#conAvances` ya se guarda de
+      que un fallo de la base no tire la pantalla, y ya sabe que a una serie
+      —que se abre, no se reproduce— no se le pregunta por dónde iba.
+
+      Y el corazón, que faltaba: sin él, marcar algo desde el inicio no se
+      notaba hasta ir a Mi Lista, y al volver la ficha salía sin marcar.
+    */
+    return this.#conFavoritos(await this.#conAvances(elementos));
   }
 
   /** La fila de "seguir viendo", a partir del historial del perfil. */
@@ -1007,45 +1007,17 @@ export class Presentador {
    * peor que empezar de nuevo.
    */
   async elegirModo(modo: ModoInicio): Promise<EstadoPantalla> {
-    /*
-      La segunda pulsación sobre la pestaña que ya está puesta **entra en la
-      sección**: la rejilla completa, con su barra de categorías y —en el
-      directo— su vista previa y su parrilla.
-
-      La primera filtra el inicio y la segunda entra, que es lo que ya hacían
-      Películas y Series. Mi Lista no tiene rejilla detrás: ahí no hay
-      segunda pulsación que valga.
-    */
-    if (modo === this.#modoInicio) {
-      if (modo === 'peliculas') return this.irASeccion({ tipo: 'peliculas' });
-      if (modo === 'series') return this.irASeccion({ tipo: 'series' });
-      if (modo === 'directo') return this.irASeccion({ tipo: 'directo' });
-      return this.estado();
-    }
+    // La pestaña **solo filtra**. Antes, pulsarla estando ya puesta entraba en
+    // una rejilla con barra de categorías, que era el mismo contenido con otra
+    // cara: dos formas de ver lo mismo y ninguna manera de saber en cuál
+    // estabas. Ahora hay una sola.
+    if (modo === this.#modoInicio) return this.estado();
 
     this.#modoInicio = modo;
     this.#focoInicio = { fila: 0, columna: 0 };
     return this.cargar();
   }
 
-  /**
-   * Entra en una sección desde el selector del inicio.
-   *
-   * El selector filtra el inicio, pero la rejilla completa —con su barra de
-   * categorías y sus 18.000 fichas— sigue siendo otra pantalla. Se llega
-   * aceptando sobre la pestaña que ya está puesta: la primera pulsación
-   * filtra y la segunda entra.
-   *
-   * TV en directo va igual desde que tiene su fila por grupo de canales: la
-   * primera pulsación filtra el inicio y la segunda entra en la rejilla, que
-   * es donde están la vista previa y la parrilla.
-   */
-  async irASeccion(pantalla: Pantalla): Promise<EstadoPantalla> {
-    this.#navegador.entrar(pantalla, 0);
-    return this.cargar();
-  }
-
-  /** Atajo para el directo, que es la pestaña que nunca filtra. */
   /**
    * Pasa a otra de las sugerencias de la portada.
    *
@@ -1311,17 +1283,14 @@ export class Presentador {
   async elegirCategoria(grupo: string | null): Promise<EstadoPantalla> {
     const pantalla = this.#navegador.actual;
 
-    if (pantalla.tipo === 'serie') {
-      // Aquí la "categoría" es la temporada, y el número viene como texto
-      // porque la barra es la misma en todas las pantallas.
-      const temporada = Number(grupo);
-      if (!Number.isFinite(temporada)) return this.estado();
-      this.#navegador.reemplazar({ ...pantalla, temporada });
-    } else if (pantalla.tipo === 'directo' || pantalla.tipo === 'peliculas' || pantalla.tipo === 'series') {
-      this.#navegador.reemplazar(grupo ? { tipo: pantalla.tipo, grupo } : { tipo: pantalla.tipo });
-    } else {
-      return this.estado();
-    }
+    // La "categoría" de la única pantalla que conserva barra lateral es la
+    // temporada de una serie, y el número viene como texto porque la barra es
+    // la misma que había en las rejillas.
+    if (pantalla.tipo !== 'serie') return this.estado();
+
+    const temporada = Number(grupo);
+    if (!Number.isFinite(temporada)) return this.estado();
+    this.#navegador.reemplazar({ ...pantalla, temporada });
 
     const estado = await this.cargar();
     // El foco vuelve a la rejilla: se acaba de elegir qué mirar.
@@ -1385,15 +1354,21 @@ export class Presentador {
     return this.estado();
   }
 
-  /** Abre el buscador acotado a donde estemos. */
+  /**
+   * Abre el buscador, acotado a la pestaña en la que estés.
+   *
+   * Antes se acotaba a la rejilla y a su categoría; sin rejilla, lo que dice
+   * dónde estás es la pestaña del inicio.
+   */
   async abrirBuscador(): Promise<EstadoPantalla> {
-    const pantalla = this.#navegador.actual;
     const ambito =
-      pantalla.tipo === 'peliculas'
-        ? { tipo: 'pelicula' as const, grupo: pantalla.grupo }
-        : pantalla.tipo === 'series'
-          ? { tipo: 'serie' as const, grupo: pantalla.grupo }
-          : undefined;
+      this.#modoInicio === 'peliculas'
+        ? { tipo: 'pelicula' as const }
+        : this.#modoInicio === 'series'
+          ? { tipo: 'serie' as const }
+          : this.#modoInicio === 'directo'
+            ? { tipo: 'canal' as const }
+            : undefined;
 
     this.#navegador.entrar({ tipo: 'buscador', ambito, texto: '' }, this.#foco);
     return this.cargar();
@@ -1500,22 +1475,10 @@ export class Presentador {
       return;
     }
 
-    // Qué hay marcado en la barra: la temporada dentro de una serie, y la
-    // categoría —o el grupo de favoritos— en las tres secciones.
-    const conGrupos = pantalla.tipo === 'directo' || pantalla.tipo === 'peliculas' || pantalla.tipo === 'series';
-    const activa =
-      pantalla.tipo === 'serie'
-        ? String(pantalla.temporada ?? '')
-        : conGrupos
-          ? (pantalla.grupo ?? null)
-          : null;
-
-    const foco = Math.max(
-      0,
-      opciones.findIndex((opcion) =>
-        opcion.grupo === activa,
-      ),
-    );
+    // Qué hay marcado en la barra: hoy solo queda una, la de las temporadas
+    // de una serie.
+    const activa = pantalla.tipo === 'serie' ? String(pantalla.temporada ?? '') : null;
+    const foco = Math.max(0, opciones.findIndex((opcion) => opcion.grupo === activa));
     // Se conserva si el foco estaba en la barra: recargar por elegir categoría
     // no debe sacarlo de ahí a mitad de recorrido.
     this.#lateral = {
@@ -1535,27 +1498,6 @@ export class Presentador {
         nombre: `Temporada ${temporada.numero}`,
         cuantos: temporada.episodios,
       }));
-    }
-
-    if (pantalla.tipo === 'directo') {
-      const grupos = await this.#biblioteca.grupos();
-      return this.#conCabeceras(
-        'Todos los canales',
-        grupos.map((grupo) => ({ grupo: grupo.nombre, nombre: grupo.nombre, cuantos: grupo.canales })),
-      );
-    }
-
-    if (pantalla.tipo === 'peliculas' || pantalla.tipo === 'series') {
-      const tipo = pantalla.tipo === 'peliculas' ? 'pelicula' : 'serie';
-      const categorias = await this.#biblioteca.categorias(tipo);
-      return this.#conCabeceras(
-        pantalla.tipo === 'peliculas' ? 'Todas las películas' : 'Todas las series',
-        categorias.map((categoria) => ({
-          grupo: categoria.nombre,
-          nombre: categoria.nombre,
-          cuantos: categoria.canales,
-        })),
-      );
     }
 
     return null;
@@ -1584,79 +1526,6 @@ export class Presentador {
       // monta `#montarInicio`. Aquí solo queda el título.
       case 'inicio':
         return { titulo: 'Biblioteca', hayMas: false, elementos: [] };
-
-      case 'directo': {
-        // Sin grupo elegido salen todos, igual que en películas y series: lo
-        // que marca la barra y lo que se ve tienen que coincidir.
-        const canales = pantalla.grupo
-          ? await this.#biblioteca.canalesDeGrupo(pantalla.grupo)
-          : await this.#biblioteca.canales(pagina);
-
-        return {
-          titulo: pantalla.grupo ?? 'TV en directo',
-          // Solo se pagina el listado completo: un grupo cabe entero.
-          hayMas: !pantalla.grupo && canales.length === pagina.limite,
-          elementos: canales.map((canal) => ({
-            id: canal.id,
-            titulo: canal.nombre,
-            detalle: null,
-            valoracion: null,
-            anio: null,
-            resumen: null,
-            logo: canal.logo,
-            avance: null,
-            favorito: false,
-            accion: { tipo: 'reproducir', medio: { clase: 'canal', id: canal.id, titulo: canal.nombre } },
-          })),
-        };
-      }
-
-      case 'peliculas': {
-        // Los favoritos son pocos y ya vienen ordenados por cuándo se
-        // marcaron: no se paginan ni se reordenan.
-        const peliculas = await this.#biblioteca.peliculas({ ...pagina, grupo: pantalla.grupo });
-
-        return {
-          titulo: pantalla.grupo ?? 'Películas',
-          hayMas: peliculas.length === pagina.limite,
-          elementos: peliculas.map((pelicula) => ({
-            id: pelicula.id,
-            titulo: pelicula.titulo,
-            detalle: null,
-            valoracion: pelicula.valoracion,
-            anio: pelicula.anio,
-            resumen: null,
-            logo: pelicula.logo,
-            avance: null,
-            favorito: false,
-            accion: {
-              tipo: 'reproducir',
-              medio: { clase: 'pelicula', id: pelicula.id, titulo: pelicula.titulo },
-            },
-          })),
-        };
-      }
-
-      case 'series': {
-        const series = await this.#biblioteca.series({ ...pagina, grupo: pantalla.grupo });
-
-        return {
-          titulo: pantalla.grupo ?? 'Series',
-          hayMas: series.length === pagina.limite,
-          elementos: series.map((serie) => ({
-            id: serie.id,
-            titulo: serie.titulo,
-            detalle: null,
-            valoracion: serie.valoracion,
-            anio: serie.anio,
-            resumen: null,
-            logo: serie.logo,
-            avance: null,
-            favorito: false,
-            accion: { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: serie.id, titulo: serie.titulo } },
-          })),
-        };
-      }
 
       case 'serie': {
         // La temporada elegida está en la barra de la izquierda; sin elegir,
