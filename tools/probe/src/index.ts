@@ -77,6 +77,8 @@ async function main(): Promise<void> {
 
   reportPlaylist(doc.header, doc.entries, doc.malformed, library);
 
+  if (options.url) await probeEpg(options.url, library);
+
   if (options.jsonOut) {
     await writeFile(options.jsonOut, JSON.stringify(library, null, 2), 'utf8');
     console.log(`\nInforme completo escrito en ${options.jsonOut}`);
@@ -130,6 +132,103 @@ async function probeXtream(url: string): Promise<void> {
     console.log('  Se usará el parseo del M3U como plan B.');
   }
   console.log();
+}
+
+/**
+ * Paso 3: ¿sale a cuenta bajarse el EPG entero, y casan sus identificadores?
+ *
+ * Son las dos preguntas que deciden cómo se enseña lo que echan en directo:
+ *
+ * - Si `xmltv.php` pesa poco, el servidor de la casa puede bajárselo una vez
+ *   al día y dejar preparado "qué hay ahora" para todos los canales, igual que
+ *   hace con las portadas. Si pesa mucho, gana seguir pidiendo `get_short_epg`
+ *   canal a canal según se mueve el foco.
+ * - Y da igual lo que pese si sus `channel id` no son los `tvg-id` de nuestros
+ *   canales: sin eso no hay forma de saber a qué canal pertenece cada
+ *   programa, y haría falta una tabla de equivalencias por nombre, que es
+ *   justo lo que no queremos mantener a mano.
+ *
+ * Se mide leyendo la respuesta a trozos y sin guardarla: el fichero puede ser
+ * de decenas de megas y aquí solo interesan el tamaño y los identificadores.
+ */
+async function probeEpg(url: string, library: Library): Promise<void> {
+  const creds = credentialsFromUrl(url);
+  if (!creds) return;
+
+  console.log('\n== EPG completo (xmltv.php) ==');
+  const client = new XtreamClient(creds, { userAgent: USER_AGENT });
+
+  const empezado = Date.now();
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(client.epgUrl(), { headers: { 'User-Agent': USER_AGENT } });
+  } catch (error) {
+    console.log(`  No se pudo pedir (${(error as Error).message}).`);
+    return;
+  }
+  if (!respuesta.ok || !respuesta.body) {
+    console.log(`  HTTP ${respuesta.status}: el panel no sirve el EPG entero.`);
+    return;
+  }
+
+  const canales = new Set<string>();
+  let programas = 0;
+  let bytes = 0;
+
+  /*
+    Un trozo puede partir una etiqueta por la mitad, así que cada uno se mira
+    con el final del anterior pegado delante. Ese solape hay que mirarlo
+    entero —una etiqueta partida solo se ve así— pero **no puede contarse dos
+    veces**, o los programas saldrían inflados: se cuenta solo lo que termina
+    más allá de donde llegó la vuelta anterior. 400 caracteres sobran para la
+    etiqueta más larga que se busca aquí.
+  */
+  const ARRASTRE = 400;
+  const decodificador = new TextDecoder('utf-8');
+  let resto = '';
+
+  const deCanal = /<channel\s+id="([^"]*)"/g;
+  const dePrograma = /<programme\s/g;
+
+  const contar = (texto: string, yaVisto: number): void => {
+    for (const encontrado of texto.matchAll(deCanal)) {
+      if ((encontrado.index ?? 0) + encontrado[0].length > yaVisto) canales.add(encontrado[1]!);
+    }
+    for (const encontrado of texto.matchAll(dePrograma)) {
+      if ((encontrado.index ?? 0) + encontrado[0].length > yaVisto) programas++;
+    }
+  };
+
+  for await (const trozo of respuesta.body as unknown as AsyncIterable<Uint8Array>) {
+    bytes += trozo.length;
+    const arrastrado = resto.length;
+    const texto = resto + decodificador.decode(trozo, { stream: true });
+    contar(texto, arrastrado);
+    resto = texto.slice(Math.max(0, texto.length - ARRASTRE));
+  }
+  const cola = decodificador.decode();
+  if (cola) contar(resto + cola, resto.length);
+
+  const segundos = ((Date.now() - empezado) / 1000).toFixed(1);
+  console.log(`  ${mb(bytes)} en ${segundos} s: ${canales.size} canales y ${programas} programas.`);
+
+  // Y ahora lo que de verdad decide: ¿son estos identificadores los nuestros?
+  const nuestros = library.channels.filter((canal) => canal.tvgId);
+  const casan = nuestros.filter((canal) => canales.has(canal.tvgId!)).length;
+  const sinTvgId = library.channels.length - nuestros.length;
+
+  console.log(
+    `  Casan por tvg-id: ${casan} de ${nuestros.length} canales con identificador` +
+      (sinTvgId > 0 ? ` (${sinTvgId} no traen tvg-id y nunca casarán)` : ''),
+  );
+
+  if (nuestros.length > 0 && casan / nuestros.length < 0.5) {
+    console.log('  AVISO: menos de la mitad casan. El EPG completo no sirve sin equivalencias por nombre.');
+    console.log('  Ejemplos de identificadores del EPG:');
+    for (const id of [...canales].slice(0, 5)) console.log(`    ${id}`);
+    console.log('  Ejemplos de los nuestros:');
+    for (const canal of nuestros.slice(0, 5)) console.log(`    ${canal.tvgId}`);
+  }
 }
 
 async function fetchPlaylist(url: string, useCache: boolean): Promise<string> {
