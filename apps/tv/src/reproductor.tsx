@@ -34,13 +34,13 @@ import type {
   Reproducible,
   Uso,
 } from '@m3u/ui';
-import { esLimiteDeConexiones, reloj, vaAnotado } from '@m3u/ui';
+import { FIN_EPISODIO, esLimiteDeConexiones, reloj, vaAnotado } from '@m3u/ui';
 import { avanceDePrograma, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
 import { hora } from './reloj';
 import type { Caja } from './reloj';
-import { FONDO, TINTA_SUAVE, VERDE } from './tema';
+import { FONDO, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
 
 import {
   IconoAnterior,
@@ -406,6 +406,20 @@ export function Reproductor({
   const anterior = vecino(-1);
   const siguiente = vecino(1);
 
+  /*
+    Los créditos, sin más dato que la duración.
+
+    No hay quien nos diga dónde empiezan de verdad —el panel no marca
+    segmentos y los ficheros habría que analizarlos—, así que se toma el mismo
+    umbral con el que se da un capítulo por visto: a partir de ahí, lo que
+    queda son títulos. En un capítulo de 50 minutos son los últimos dos y
+    medio, y el error es siempre por defecto: el botón aparece un poco tarde,
+    nunca en mitad de la escena.
+
+    Solo con algo detrás que poner: sin siguiente no hay botón que ofrecer.
+  */
+  const enCreditos = !enDirecto && Boolean(siguiente) && total > 0 && tiempo >= total * FIN_EPISODIO;
+
   const saltar = useCallback(
     (segundos: number) => {
       const destino = Math.max(0, Math.min(total || Number.MAX_SAFE_INTEGER, tiempo + segundos));
@@ -427,6 +441,14 @@ export function Reproductor({
     sucesión de etiquetas.
   */
   const secundarios: Array<{ clave: string; etiqueta: string; activo?: boolean; onPress: () => void }> = [
+    /*
+      El "Siguiente capítulo" va **el primero de la fila** mientras duran los
+      créditos: es lo único que uno quiere hacer en ese momento, y así el
+      mando lo encuentra bajando, sin recorrer nada.
+    */
+    ...(enCreditos && siguiente
+      ? [{ clave: 'proximo', etiqueta: 'Siguiente capítulo', onPress: () => onCambiar?.(siguiente) }]
+      : []),
     ...(enDirecto
       ? []
       : [
@@ -729,7 +751,19 @@ export function Reproductor({
           >
             Las conexiones de la lista están ocupadas. Reintentando en {espera} s…
           </Text>
-          {compacto ? null : (
+          {/*
+        Con los controles escondidos, el aviso de los créditos se queda igual:
+        es el momento en que uno mira la pantalla esperando que pase algo, y
+        esconderlo obligaría a despertar los controles a ciegas.
+      */}
+      {enCreditos && !visible ? (
+        <View style={estilos.creditos} pointerEvents="none">
+          <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
+          <Text style={estilos.creditosPie}>Baja con el mando para ponerlo</Text>
+        </View>
+      ) : null}
+
+      {compacto ? null : (
             <Text style={estilos.falloPie}>Se abrirá sola en cuanto quede una libre</Text>
           )}
         </View>
@@ -897,6 +931,20 @@ export function Reproductor({
             {secundarios.map((boton, indice) => {
               const enfocado = zona === 'botones' && focoBoton === indice;
               const marcado = Boolean(boton.activo);
+
+              // El de los créditos lleva texto: es una oferta, no un ajuste,
+              // y un icono suelto no se entiende a tiempo.
+              if (boton.clave === 'proximo') {
+                return (
+                  <Pastilla
+                    key={boton.clave}
+                    texto={`${boton.etiqueta}  ›`}
+                    enfocada={enfocado}
+                    onPress={boton.onPress}
+                  />
+                );
+              }
+
               return (
                 <Icono
                   key={boton.clave}
@@ -1246,6 +1294,29 @@ const estilos = StyleSheet.create({
   falloPie: {
     color: '#7f95a6',
     fontSize: 14,
+  },
+  /* El aviso de créditos, abajo a la derecha, como en cualquier servicio. */
+  creditos: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(11,11,12,0.82)',
+    borderColor: VERDE,
+    borderRadius: 10,
+    borderWidth: 2,
+    bottom: 60,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    position: 'absolute',
+    right: 60,
+  },
+  creditosTexto: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  creditosPie: {
+    color: TINTA_TENUE,
+    fontSize: 13,
+    marginTop: 4,
   },
   pistas: {
     alignSelf: 'center',

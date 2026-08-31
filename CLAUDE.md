@@ -18,6 +18,7 @@ node --test packages/core/test/classify.test.ts   # una sola suite
 npm run typecheck                         # tsc, sin emitir
 npm run probe -- "<url de get.php>"       # diagnóstico de una lista real
 npm run probe -- --m3u samples/muestra.m3u
+node tools/probe/src/intro.ts "<url>" [serie]   # ¿traen capítulos los ficheros?
 npm run bench -- .probe-cache/<lista>.m3u # medir el almacenamiento
 .\app.cmd                                 # abrir la app de escritorio
 .\app.cmd --sw                            # ídem, con salida de vídeo por software
@@ -247,6 +248,41 @@ Con `max_connections` a 1 esto además libera la ranura del panel para el
 aparato que acaba de empezar. Lo que falta es que ese espere a que se libere
 de verdad —el panel tarda ~30 s— en vez de comerse un 403: eso es el árbitro
 de conexión, que sigue pendiente.
+
+### Saltar la intro: de dónde saldrían los segundos
+
+El botón de **"Siguiente capítulo"** sale al llegar a los créditos, y para eso
+no hace falta ningún dato de nadie: se toma el mismo umbral con el que se da un
+capítulo por visto (95 %), así que en uno de cincuenta minutos aparece en los
+últimos dos y medio. El error es siempre por defecto —tarde, nunca en mitad de
+la escena— y el aviso se queda puesto aunque los controles se escondan, que es
+justo el momento en que uno mira la pantalla esperando que pase algo.
+
+**El "Saltar intro" es otra cosa**, y conviene tener claro por qué. Hay dos
+tipos de serie:
+
+- La intro empieza **siempre en el mismo minuto**. Se reconoce por su posición,
+  así que marcarla una vez valdría para toda la temporada.
+- La serie **arranca con una escena** y la careta viene después, en un sitio
+  distinto en cada capítulo. Por posición no hay nada que hacer; lo único que
+  se repite es **el sonido**.
+
+Por eso Jellyfin —y su plugin Intro Skipper— compara la huella de audio de dos
+capítulos y busca el trozo común, en vez de suponer un desplazamiento fijo. Su
+formato es el que conviene copiar si algún día se guardan segmentos, porque
+así se podrían importar tal cual: `tipo` (`intro`/`outro`), `start` y `end` por
+episodio.
+
+Lo que hay medido hasta ahora: **nada**, y hay una pregunta que decide el
+camino y se contesta barata. Muchos MKV llevan **capítulos con nombre** en la
+cabecera ("Intro", "Opening"), y leerla cuesta unos megas con `Range`, no el
+episodio entero. Si están, la intro sale exacta y en los dos tipos de serie.
+Eso es lo que mide `tools/probe/src/intro.ts`. Si no están, el único camino
+real es la huella de audio en el servidor de la casa, y ahí el coste no es la
+CPU sino la descarga: en un MKV el audio va entrelazado con el vídeo, así que
+bajarse quince minutos de audio es bajarse quince minutos de película —unos
+400 MB por capítulo—. Viable bajo demanda al abrir una serie; impensable para
+las 6.500 del catálogo.
 
 ### Lo que ya se ha visto se releva, no se queda
 
