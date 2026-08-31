@@ -8,3 +8,4 @@ export * from './cuentas.ts';
 export * from './perfiles.ts';
 export * from './sincronizacion.ts';
 export * from './cliente-sync.ts';
+export * from './arbitro.ts';

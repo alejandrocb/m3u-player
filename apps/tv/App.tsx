@@ -54,6 +54,7 @@ import {
   COLUMNAS_POSIBLES,
   ClienteSync,
   GestorCuentas,
+  Arbitro,
   MODOS_INICIO,
   canalDeElemento,
   elementosDeFila,
@@ -189,6 +190,14 @@ function Raiz() {
   const biblioteca = useRef<Biblioteca | null>(null);
   const perfiles = useRef<AlmacenPerfiles | null>(null);
   const programacion = useRef<Programacion | null>(null);
+  /*
+    El árbitro de las conexiones del panel.
+
+    Vive aquí y no dentro del reproductor porque la ranura no es de una
+    pantalla: la comparten el vídeo, la vista previa y —cuando llegue— la
+    descarga. Se crea una vez y se le dicen las ranuras al conectar.
+  */
+  const arbitro = useRef(new Arbitro(1));
   /**
    * El cliente de sincronización, uno para toda la vida de la app.
    *
@@ -261,6 +270,8 @@ function Raiz() {
       biblioteca.current = datos;
       perfiles.current = almacen;
       programacion.current = parrilla;
+      // Lo que diga el panel, no lo que supongamos: hay cuentas de 1 y de 3.
+      if (medicion.conexiones) arbitro.current.ajustarRanuras(medicion.conexiones);
       await gestor.current?.conectar(elegida.id);
 
       /*
@@ -479,6 +490,7 @@ function Raiz() {
       sincronizado={sincronizado}
       preparado={preparado}
       aparato={nombreAparato}
+      arbitro={arbitro.current}
       onSincronizar={() => void sincronizar()}
       onElegirPerfil={(nuevo) =>
         setFase((actual) => (actual.tipo === 'biblioteca' ? { ...actual, perfil: nuevo } : actual))
@@ -503,6 +515,7 @@ function BibliotecaVista({
   perfil,
   cuenta,
   medicion,
+  arbitro,
   onCerrarSesion,
   onCambiarPerfil,
   onActualizar,
@@ -518,6 +531,8 @@ function BibliotecaVista({
   perfil: Perfil;
   cuenta: Cuenta;
   medicion: Medicion;
+  /** Reparte las conexiones del panel entre el vídeo y lo que venga. */
+  arbitro: Arbitro;
   /** Lo que el servidor haya preparado para el inicio, si hay servidor. */
   preparado: Preparado;
   /** El nombre de este aparato en la casa, para poder decir dónde suena algo. */
@@ -1665,6 +1680,7 @@ function BibliotecaVista({
           cola={colaDe(estado.elementos, reproduciendo)}
           onCambiar={setReproduciendo}
           programacion={programacion}
+          arbitro={arbitro}
           onAbrir={() => setAPantallaCompleta(true)}
         />
       ) : null}

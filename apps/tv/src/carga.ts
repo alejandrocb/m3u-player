@@ -45,6 +45,13 @@ export interface Medicion {
   peliculas: number;
   series: number;
   entradas: number;
+  /**
+   * Cuántas conexiones simultáneas admite la cuenta, según el panel.
+   *
+   * No se supone: la primera cuenta del proveedor daba 1 y la segunda, 3. Es
+   * lo que reparte el árbitro. `null` si el panel no contestó.
+   */
+  conexiones: number | null;
 }
 
 export interface Cargada {
@@ -96,6 +103,19 @@ export async function cargarCatalogo(
     traerFichaSerie: (panelIds) => (cliente ? fichaDeSerie(cliente, panelIds) : Promise.resolve(null)),
   });
 
+  /*
+    El handshake, solo para saber cuántas conexiones da la cuenta. Es una
+    petición barata y se pide siempre, también cuando el catálogo ya está
+    guardado: el proveedor puede cambiar el límite y el árbitro reparte con lo
+    que diga el panel, no con lo que hubiera la primera vez.
+  */
+  const conexiones = cliente
+    ? await cliente
+        .info()
+        .then(({ user_info }) => Number(user_info.max_connections) || null)
+        .catch(() => null)
+    : null;
+
   const guardado = estadoGuardado(db, cuenta.id);
   if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) {
     const totales = await biblioteca.totales();
@@ -112,6 +132,7 @@ export async function cargarCatalogo(
         peliculas: totales.peliculas,
         series: totales.series,
         entradas: totales.canales + totales.peliculas + totales.series,
+        conexiones,
       },
     };
   }
@@ -137,6 +158,7 @@ export async function cargarCatalogo(
       canales: library.stats.channels,
       peliculas: library.stats.movies,
       series: library.stats.series,
+      conexiones,
       // Fichas ya fusionadas, para que la cifra sea la misma se venga del
       // panel o de la base. `stats.entries` cuenta entradas del proveedor,
       // que son más porque incluyen las repetidas por calidad.

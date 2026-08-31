@@ -494,6 +494,45 @@ Rarezas reales de la lista que el parseo ya contempla: números de episodio de
 cinco cifras (el proveedor cuela el id del stream), el año usado como número de
 temporada (`S2026 E24`), y decoración en los grupos (`== NOTICIAS`).
 
+### El árbitro: quién se queda la conexión
+
+`max_connections` limita cuántas cosas se pueden estar bajando a la vez **de la
+cuenta**, no de este aparato: si la tele está viendo algo y la tablet abre otra
+cosa, la segunda ranura ya está ocupada aunque este aparato no haya hecho nada.
+De ahí que el árbitro (`packages/ui/src/arbitro.ts`) tenga dos mitades.
+
+**Lo que sabe de sí mismo.** Cuántas cosas tiene abiertas este aparato y con
+qué prioridad: `reproducir` > `previa` > `descargar`. Reproducir es lo que
+alguien está mirando y gana siempre; la descarga va la última **porque es la
+única que no pierde nada**, que los ficheros aceptan `Range` y se reanuda donde
+iba. Cuando hace falta sitio, `pedir` devuelve a quién hay que echar: el
+árbitro no conoce reproductores ni descargas, solo reparte.
+
+**Lo que aprende a golpes.** Que la casa esté al tope no se puede saber de
+antemano —`active_cons` del handshake no vale de semáforo, medido—, así que se
+descubre con el `403` del panel. Y entonces **no es un fallo: es una espera**.
+El reproductor lo enseñaba como "El servidor rechazó la conexión (403)", uno
+cerraba y volvía a entrar, y vuelta a empezar; ahora sale una cuenta atrás y se
+reintenta solo.
+
+Dos números salen de medir el panel, no de elegirlos:
+
+- **El enfriamiento, 30 s.** Es lo que tarda el panel en soltar de verdad una
+  ranura después de cerrar. Lo recién soltado no se puede reusar: pedirlo antes
+  es comerse un 403. Ojo, esto **solo se nota cuando no hay ranuras libres**:
+  con las tres de esta cuenta, zapear sigue siendo instantáneo.
+- **Las ranuras salen del handshake.** No hay ningún número escrito a mano: una
+  cuenta del proveedor da 1 y otra da 3, y `ajustarRanuras` se lo cree.
+
+Lo expulsado **no enfría**: la ranura se la queda quien acaba de entrar sin
+soltarla en el panel. Si enfriara, echar a una descarga para poner una película
+haría esperar treinta segundos a la película, que es lo contrario de lo que se
+busca.
+
+Y al cerrar el reproductor la ranura se suelta **siempre**, que es la mitad que
+fallan los reproductores comerciales: dejan la conexión colgada y la cuenta se
+queda bloqueada hasta que el panel la caduca por su cuenta.
+
 ### Restricciones del proveedor que condicionan el diseño
 
 - **`max_connections` no es siempre 1.** La primera cuenta da 1 y una segunda
@@ -807,9 +846,12 @@ nuevo no llega al otro aparato hasta que se actualiza.
 El README lleva la tabla de estado y las cifras medidas contra la lista real
 (218.662 entradas, ~6 s de importación completa, consultas de 0-1 ms).
 
-Pendiente: el árbitro de conexión, la interfaz y la descarga a disco. Del
-reproductor solo queda decidir qué hacer con el redimensionado de la ventana
-transparente.
+Pendiente: la descarga a disco y la interfaz del escritorio. Del reproductor
+solo queda decidir qué hacer con el redimensionado de la ventana transparente.
+
+El árbitro de conexión ya reparte y el reproductor lo usa; falta **verlo
+esperar contra el panel de verdad**, que exige tener las tres ranuras ocupadas
+a la vez, y engancharle la descarga cuando exista.
 
 Compartir el historial entre aparatos está terminado de punta a punta: el
 modelo, el servidor (`apps/sync`, ver su README), el cliente (`ClienteSync`) y

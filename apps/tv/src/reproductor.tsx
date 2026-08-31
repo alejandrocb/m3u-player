@@ -24,8 +24,17 @@ import {
 import Video from 'react-native-video';
 import type { VideoRef } from 'react-native-video';
 
-import type { AlmacenPerfiles, Biblioteca, ClaseMedio, Perfil, Programacion, Reproducible } from '@m3u/ui';
-import { reloj, vaAnotado } from '@m3u/ui';
+import type {
+  AlmacenPerfiles,
+  Arbitro,
+  Biblioteca,
+  ClaseMedio,
+  Perfil,
+  Programacion,
+  Reproducible,
+  Uso,
+} from '@m3u/ui';
+import { esLimiteDeConexiones, reloj, vaAnotado } from '@m3u/ui';
 import { avanceDePrograma, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
@@ -102,6 +111,14 @@ interface Props {
    */
   caja?: Caja | null;
   /**
+   * Quién reparte las conexiones del panel.
+   *
+   * Sin él, el reproductor abre y ya está: es lo que hacía hasta ahora, y por
+   * eso un 403 salía como fallo. Con él, se pide la ranura antes de abrir y se
+   * espera cuando la casa está al tope.
+   */
+  arbitro?: Arbitro;
+  /**
    * El mando está sobre la vista previa.
    *
    * El resalte lo dibuja el reproductor y no la columna: el vídeo va por
@@ -166,6 +183,7 @@ export function Reproductor({
   cola,
   onCambiar,
   programacion,
+  arbitro,
   caja,
   resaltado,
   onAbrir,
@@ -178,6 +196,17 @@ export function Reproductor({
   const [url, setUrl] = useState<string | null>(null);
   const [calidad, setCalidad] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Segundos que faltan para volver a intentarlo.
+   *
+   * No es un error: es que las conexiones de la casa están ocupadas —por otro
+   * aparato, o por lo que este mismo acaba de cerrar, que el panel tarda medio
+   * minuto en soltar—. Con un mensaje de fallo, uno cierra y vuelve a entrar;
+   * con una cuenta atrás, espera.
+   */
+  const [espera, setEspera] = useState<number | null>(null);
+  /** Sube en cada reintento: es lo que rehace la petición y remonta el vídeo. */
+  const [intento, setIntento] = useState(0);
 
   const [pausado, setPausado] = useState(false);
   const [tiempo, setTiempo] = useState(0);
@@ -205,6 +234,14 @@ export function Reproductor({
   const [visible, setVisible] = useState(true);
   const opacidad = useRef(new Animated.Value(1)).current;
   const temporizador = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /*
+    Qué ranura se pide. La vista previa es otra cosa que el reproductor
+    entero: vale menos —se cede antes— y las dos pueden convivir si la cuenta
+    tiene ranuras de sobra.
+  */
+  const idRanura = compacto ? 'previa' : 'reproductor';
+  const usoRanura: Uso = compacto ? 'previa' : 'reproducir';
 
   /** Enseña los controles y programa su desaparición. */
   const despertar = useCallback(() => {
@@ -257,6 +294,18 @@ export function Reproductor({
           return;
         }
         setCalidad(mejor.calidad);
+
+        /*
+          La ranura, antes de abrir. Si no la hay, no se intenta siquiera: el
+          panel contestaría 403 y el reproductor lo enseñaría como un fallo
+          suyo, que es lo que confundía.
+        */
+        const permiso = arbitro?.pedir(idRanura, usoRanura, Date.now());
+        if (permiso && !permiso.concedido) {
+          setEspera(Math.max(1, Math.ceil(permiso.esperar / 1000)));
+          return;
+        }
+        setEspera(null);
         setUrl(mejor.url);
       })
       .catch((fallo) => vigente && setError(String(fallo)));
@@ -265,7 +314,34 @@ export function Reproductor({
       vigente = false;
       if (temporizador.current) clearTimeout(temporizador.current);
     };
-  }, [biblioteca, medio]);
+    // `intento` está a propósito: subirlo es lo que rehace la petición.
+  }, [biblioteca, medio, intento, arbitro, idRanura, usoRanura]);
+
+  /*
+    La cuenta atrás del reintento.
+
+    Se cuenta en la pantalla porque esperar sin saber cuánto es lo que hace que
+    uno cierre la aplicación. Al llegar a cero se vuelve a pedir la ranura.
+  */
+  useEffect(() => {
+    if (espera === null) return;
+    if (espera <= 0) {
+      setEspera(null);
+      setIntento((antes) => antes + 1);
+      return;
+    }
+    const reloj = setTimeout(() => setEspera((quedan) => (quedan === null ? null : quedan - 1)), 1000);
+    return () => clearTimeout(reloj);
+  }, [espera]);
+
+  /*
+    Al cerrar, la ranura se suelta **siempre**. Es la mitad que falla en los
+    reproductores comerciales: dejan la conexión colgada y la cuenta se queda
+    bloqueada hasta que el panel la caduca por su cuenta.
+  */
+  useEffect(() => {
+    return () => arbitro?.soltar(idRanura, Date.now());
+  }, [arbitro, idRanura]);
 
   // Qué echan en el canal, para poner el programa donde iría la duración.
   useEffect(() => {
@@ -375,6 +451,7 @@ export function Reproductor({
     >
       {url ? (
         <Video
+          key={intento}
           ref={video}
           source={{ uri: url }}
           style={StyleSheet.absoluteFill}
@@ -452,12 +529,43 @@ export function Reproductor({
           onError={(fallo) => {
             // El detalle completo, al registro: se lee con `adb logcat`.
             console.warn('[reproductor]', JSON.stringify(fallo));
+
+            /*
+              El 403 del panel no es un fallo del vídeo: es que las conexiones
+              de la casa están ocupadas. Se suelta lo que creíamos tener y se
+              espera, en vez de dejar la pantalla en negro con un aviso.
+            */
+            if (arbitro && esLimiteDeConexiones(fallo)) {
+              const ms = arbitro.rechazado(idRanura, Date.now());
+              setUrl(null);
+              setEspera(Math.max(1, Math.ceil(ms / 1000)));
+              return;
+            }
             setError(mensajeDeError(fallo));
           }}
         />
       ) : null}
 
-      {!url && !error ? <ActivityIndicator size="large" color={VERDE} /> : null}
+      {!url && !error && espera === null ? <ActivityIndicator size="large" color={VERDE} /> : null}
+
+      {/*
+        Esperando ranura. Se dice **por qué** y **cuánto**: sin las dos cosas
+        esto es indistinguible de un cuelgue.
+      */}
+      {espera !== null ? (
+        <View style={[estilos.fallo, compacto && estilos.falloCompacto]} pointerEvents="none">
+          {compacto ? null : <Text style={estilos.falloTitulo}>{medio.titulo}</Text>}
+          <Text
+            style={[estilos.falloTexto, compacto && estilos.falloTextoCompacto]}
+            numberOfLines={compacto ? 3 : undefined}
+          >
+            Las conexiones de la lista están ocupadas. Reintentando en {espera} s…
+          </Text>
+          {compacto ? null : (
+            <Text style={estilos.falloPie}>Se abrirá sola en cuanto quede una libre</Text>
+          )}
+        </View>
+      ) : null}
 
       {/*
         El fallo, en su propia capa y sin desvanecerse.
