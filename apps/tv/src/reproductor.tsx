@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -72,6 +73,15 @@ const OCULTAR_MS = 4000;
  * botón solo estorbaría el resto del capítulo.
  */
 const MARCAR_HASTA_S = 600;
+
+/**
+ * Cuánto antes de la marca se ofrece saltar.
+ *
+ * Solo se apunta dónde **acaba** la careta, así que el principio se supone:
+ * dos minutos, que es lo que dura una larga. Por delante es aproximado y por
+ * detrás exacto, que es como conviene equivocarse aquí.
+ */
+const VENTANA_INTRO_S = 120;
 
 /** Salto de las flechas y de los botones de avance. */
 const SALTO_S = 10;
@@ -147,6 +157,8 @@ interface Props {
   /** Lo marcado por la casa para este capítulo: la careta, y algún día más. */
   segmentosDe?: (clave: string) => Promise<Segmento[]>;
   guardarSegmento?: (segmento: Segmento) => Promise<void>;
+  /** Quitar la marca, desde el pulsado largo sobre "Saltar intro". */
+  borrarSegmento?: (ambito: string, tipo: Segmento['tipo']) => Promise<void>;
   /**
    * Al marcar, guardar para la temporada entera en vez de para el capítulo.
    *
@@ -224,6 +236,7 @@ export function Reproductor({
   continua = false,
   segmentosDe,
   guardarSegmento,
+  borrarSegmento,
   marcarTemporada = true,
   caja,
   resaltado,
@@ -276,15 +289,7 @@ export function Reproductor({
   const [zona, setZona] = useState<'video' | 'botones' | 'pistas'>('video');
   /** Lo marcado para este capítulo y su temporada. */
   const [segmentos, setSegmentos] = useState<Segmento[]>([]);
-  /**
-   * El segundo en que se pulsó "marcar intro", esperando la segunda pulsación.
-   *
-   * Se marca en dos tiempos porque las dos horas hacen falta: cuándo aparece
-   * el botón y adónde salta. Y el reproductor sigue andando entre las dos, que
-   * es justo lo que uno está haciendo —viendo la careta— así que no hay nada
-   * que interrumpir.
-   */
-  const [marcando, setMarcando] = useState<number | null>(null);
+
   const [focoBoton, setFocoBoton] = useState(0);
   const [focoPista, setFocoPista] = useState(0);
 
@@ -501,27 +506,44 @@ export function Reproductor({
   const enIntro = Boolean(intro && dentroDelSegmento(intro, tiempo));
 
   /**
-   * Guarda lo marcado.
+   * Guarda la careta con **una sola pulsación**: dónde acaba.
    *
-   * **Por temporada**, que es lo que vale para la mayoría de las series: la
-   * careta empieza siempre en el mismo minuto. Las que arrancan con una escena
-   * la llevan en otro sitio cada vez, y para esas se marca el capítulo, que es
-   * lo que manda al leer.
+   * El principio no se pregunta. Hay series que empiezan por la careta, así
+   * que marcar dónde empieza sería siempre "en el cero" y una pulsación
+   * tirada; y en las que arrancan con una escena, lo que uno sabe decir es
+   * cuándo termina la careta, no cuándo empezó, que ya ha pasado.
+   *
+   * Así que el botón se ofrece durante los dos minutos anteriores a la marca,
+   * que es lo que dura una careta larga. Es aproximado por delante y exacto
+   * por detrás, que es como conviene equivocarse: el salto cae siempre donde
+   * empieza la serie.
+   *
+   * Se guarda **por temporada**, que es lo que vale para la mayoría: la careta
+   * empieza siempre en el mismo minuto. Las que la llevan en otro sitio cada
+   * vez se marcan por capítulo, y eso es lo que manda al leer.
    */
   const anotarIntro = useCallback(
-    (desde: number, hasta: number) => {
+    (hasta: number) => {
       if (medio.clase !== 'episodio' || !guardarSegmento) return;
 
       const ambito = (marcarTemporada ? ambitoDeTemporada(medio.id) : medio.id) ?? medio.id;
-      const segmento: Segmento = { ambito, tipo: 'intro', desde, hasta };
-      // Una marca al revés o de dos segundos es un despiste, y estropearía la
-      // serie para toda la casa: se comparte con todos los aparatos.
+      const segmento: Segmento = { ambito, tipo: 'intro', desde: Math.max(0, hasta - VENTANA_INTRO_S), hasta };
+      // Una marca absurda es un despiste, y estropearía la serie para toda la
+      // casa: se comparte con todos los aparatos.
       if (!segmentoValido(segmento)) return;
 
       void guardarSegmento(segmento).then(() => setSegmentos((antes) => [...antes, segmento]));
     },
     [medio, guardarSegmento, marcarTemporada],
   );
+
+  /** Quita la marca, para cuando se puso mal. Va en el pulsado largo. */
+  const olvidarIntro = useCallback(() => {
+    if (!intro || !borrarSegmento) return;
+    void borrarSegmento(intro.ambito, 'intro').then(() =>
+      setSegmentos((antes) => antes.filter((uno) => uno !== intro)),
+    );
+  }, [intro, borrarSegmento]);
 
   /*
     La fila de abajo, armada como datos y no como JSX suelto.
@@ -530,7 +552,13 @@ export function Reproductor({
     activarlo desde el manejador de teclas hace falta una lista, no una
     sucesión de etiquetas.
   */
-  const secundarios: Array<{ clave: string; etiqueta: string; activo?: boolean; onPress: () => void }> = [
+  const secundarios: Array<{
+    clave: string;
+    etiqueta: string;
+    activo?: boolean;
+    onPress: () => void;
+    onLongPress?: () => void;
+  }> = [
     /*
       El "Siguiente capítulo" va **el primero de la fila** mientras duran los
       créditos: es lo único que uno quiere hacer en ese momento, y así el
@@ -550,6 +578,9 @@ export function Reproductor({
             clave: 'saltar',
             etiqueta: 'Saltar intro',
             onPress: () => saltar(intro.hasta - tiempo),
+            // Mantener pulsado la quita: es el mismo gesto que en la
+            // biblioteca, y hace falta cuando la marca quedó mal puesta.
+            onLongPress: olvidarIntro,
           },
         ]
       : []),
@@ -559,20 +590,7 @@ export function Reproductor({
       dentro de los primeros minutos, que es donde puede haber una careta.
     */
     ...(medio.clase === 'episodio' && guardarSegmento && !intro && tiempo < MARCAR_HASTA_S
-      ? [
-          {
-            clave: 'marcar',
-            etiqueta: marcando === null ? 'Marcar intro' : 'La intro acaba aquí',
-            activo: marcando !== null,
-            onPress: () => {
-              if (marcando === null) setMarcando(tiempo);
-              else {
-                anotarIntro(marcando, tiempo);
-                setMarcando(null);
-              }
-            },
-          },
-        ]
+      ? [{ clave: 'marcar', etiqueta: 'La intro acaba aquí', onPress: () => anotarIntro(tiempo) }]
       : []),
     ...(enDirecto
       ? []
@@ -654,6 +672,27 @@ export function Reproductor({
     }
   }, [panel]);
 
+  /*
+    "Atrás" cierra primero lo que esté abierto **dentro** del reproductor.
+
+    Estando en la fila de botones o en las pistas, atrás salía del vídeo y
+    devolvía a la serie, que es dos pantallas de más: lo que uno quiere cerrar
+    es el menú que tiene delante. El manejador de la aplicación sigue detrás
+    para cuando no hay nada abierto, y por eso este devuelve `false` entonces:
+    Android va llamando a los manejadores del último registrado al primero
+    hasta que uno diga que sí.
+  */
+  useEffect(() => {
+    const suscripcion = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (compacto || zona === 'video') return false;
+      setPanel('ninguno');
+      setZona('video');
+      despertar();
+      return true;
+    });
+    return () => suscripcion.remove();
+  }, [compacto, zona, despertar]);
+
   useTVEventHandler((evento) => {
     // En pequeño manda la lista de canales, no el reproductor.
     if (compacto) return;
@@ -682,6 +721,12 @@ export function Reproductor({
     }
 
     if (zona === 'botones') {
+      // Mantener pulsado sobre un botón hace lo suyo, si es que hace algo:
+      // hoy solo el de saltar la intro, que así se puede desmarcar.
+      if (evento.eventType === 'longSelect') {
+        secundarios[focoBoton]?.onLongPress?.();
+        return;
+      }
       switch (evento.eventType) {
         case 'left':
           setFocoBoton((actual) => Math.max(0, actual - 1));
@@ -1069,6 +1114,7 @@ export function Reproductor({
                     activo={marcado}
                     enfocada={enfocado}
                     onPress={boton.onPress}
+                    onLongPress={boton.onLongPress}
                   />
                 );
               }
@@ -1191,11 +1237,14 @@ function Icono({
 function Pastilla({
   texto,
   onPress,
+  onLongPress,
   activo,
   enfocada,
 }: {
   texto: string;
   onPress: () => void;
+  /** Mantener pulsado, cuando el botón tenga algo que deshacer. */
+  onLongPress?: () => void;
   activo?: boolean;
   /** Enfocada por el mando; con el dedo manda el foco del sistema. */
   enfocada?: boolean;
@@ -1203,6 +1252,7 @@ function Pastilla({
   return (
     <Pressable
       focusable={false}
+      onLongPress={onLongPress}
       style={({ focused, pressed }) => [
         estilos.pastilla,
         activo && estilos.pastillaActiva,
@@ -1358,17 +1408,25 @@ const estilos = StyleSheet.create({
   },
   // El de reproducir es el único con círculo, y translúcido: un botón opaco
   // encima de la imagen es lo que hacía que esto pareciera un aparato viejo.
+  /*
+    El de reproducir es el único con círculo, y translúcido. **Su borde es muy
+    tenue a propósito**: con uno más marcado parecía que estaba enfocado
+    siempre, y entonces el verde de abajo se leía como otra cosa. En esta
+    pantalla el foco es una sola cosa —el aro verde— y todo lo demás es
+    decoración.
+  */
   iconoPrincipal: {
     backgroundColor: 'rgba(255,255,255,0.16)',
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 36,
     borderWidth: 1.5,
     height: 72,
     width: 72,
   },
   iconoPrincipalEnfocado: {
-    backgroundColor: 'rgba(255,255,255,0.32)',
-    borderColor: '#fff',
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderColor: VERDE,
+    borderWidth: 2,
     transform: [{ scale: 1.06 }],
   },
   // Un mando sin destino no se quita: se atenúa, o la fila baila al llegar al
@@ -1460,18 +1518,26 @@ const estilos = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 9,
   },
+  /*
+    Lo puesto ahora mismo —la pista de audio que suena— se marca con **el
+    texto en verde**, no con el fondo: el fondo verde se leía como "esto es lo
+    que tienes enfocado", que es lo que dice el aro, y con las dos cosas a la
+    vez no había manera de saber dónde estaba el mando.
+  */
   pastillaActiva: {
-    backgroundColor: VERDE,
+    backgroundColor: 'rgba(53,208,127,0.16)',
   },
   pastillaEnfocada: {
-    borderColor: '#fff',
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderColor: VERDE,
+    transform: [{ scale: 1.04 }],
   },
   pastillaTexto: {
     color: '#fff',
     fontSize: 15,
   },
   pastillaTextoActivo: {
-    color: FONDO,
+    color: VERDE,
     fontWeight: '700',
   },
   // En la vista previa solo la ruedecita: la caja entera taparía el recuadro.

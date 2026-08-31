@@ -189,6 +189,8 @@ export interface AlmacenPerfiles {
    */
   segmentosDeEpisodio(clave: string): Promise<Segmento[]>;
   guardarSegmento(segmento: Segmento): Promise<void>;
+  /** Quita una marca: deja lápida, como toda baja que se sincroniza. */
+  borrarSegmento(ambito: string, tipo: Segmento['tipo']): Promise<void>;
   guardarAjuste(perfilId: string, clave: keyof Ajustes, valor: string): Promise<void>;
 
   favoritos(perfilId: string): Promise<Favorito[]>;

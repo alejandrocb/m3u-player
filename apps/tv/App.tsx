@@ -1857,6 +1857,7 @@ function BibliotecaVista({
           */
           segmentosDe={(clave) => perfiles.segmentosDeEpisodio(clave)}
           guardarSegmento={(segmento) => perfiles.guardarSegmento(segmento)}
+          borrarSegmento={(ambito, tipo) => perfiles.borrarSegmento(ambito, tipo)}
           onAbrir={() => setAPantallaCompleta(true)}
         />
       ) : null}

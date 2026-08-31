@@ -265,11 +265,20 @@ hora, `00:06:16.251`— y repartidas cada cinco o seis minutos, que es un
 troceado automático del que codificó y no un capitulado que sepa dónde está la
 careta. Con eso no hay forma de decir cuál de las marcas es la intro.
 
-Así que la marca quien mira, con **dos pulsaciones**: la primera apunta dónde
-empieza y la segunda dónde acaba. Hacen falta las dos —cuándo aparece el botón
-y adónde salta— y entre una y otra el vídeo sigue andando, que es exactamente
-lo que uno está haciendo. El botón solo se ofrece en los diez primeros minutos:
-pasados, lo que hay en pantalla es la serie.
+Así que la marca quien mira, con **una sola pulsación: "La intro acaba aquí"**.
+El principio no se pregunta, y no por ahorrar una pulsación: hay series que
+**empiezan por la careta**, así que marcar dónde empieza sería siempre "en el
+cero"; y en las que arrancan con una escena, lo que uno sabe decir es cuándo
+termina, no cuándo empezó, que ya ha pasado. El botón de saltar se ofrece
+durante los **dos minutos anteriores** a la marca, que es lo que dura una
+careta larga: aproximado por delante y exacto por detrás, que es como conviene
+equivocarse aquí —el salto cae siempre donde empieza la serie—.
+
+Marcar solo se ofrece en los diez primeros minutos, y **mantener pulsado sobre
+"Saltar intro" quita la marca**, que es el mismo gesto que en la biblioteca y
+hace falta cuando quedó mal puesta. Quitarla deja lápida, como toda baja que se
+sincroniza: borrar la fila no dejaría nada que contar y el otro aparato la
+volvería a subir.
 
 **La marca es de la casa, no de un perfil.** La careta de una serie es la misma
 para todos, así que quien la marque le ahorra el trabajo al siguiente y al
@@ -670,6 +679,16 @@ Dos cosas que costaron encontrar, y que valen para cualquier pantalla nueva:
 - **El foco tiene que cantar sobre cualquier fotograma.** El 18 % de blanco que
   marcaba lo enfocado desaparecía sobre una imagen clara. Va el verde de la
   marca sobre fondo oscuro, como en el resto de la aplicación.
+- **Y tiene que ser lo único que se vea así.** Había tres cosas compitiendo: el
+  círculo de reproducir con su borde claro parecía enfocado siempre, la pista
+  de audio puesta llevaba fondo verde, y lo enfocado de verdad un borde blanco.
+  Ahora **el aro verde es el foco y nada más**: lo que está puesto se marca con
+  el texto en verde, y el círculo de reproducir tiene el borde muy tenue.
+- **"Atrás" cierra primero lo de dentro.** Estando en la fila de botones o en
+  las pistas, atrás salía del vídeo y devolvía a la serie —dos pantallas de
+  más—. El reproductor registra su propio manejador, que devuelve `false`
+  cuando no hay nada abierto para que siga el de la aplicación: Android los va
+  llamando del último registrado al primero hasta que uno diga que sí.
 
 La primera pulsación con los controles escondidos solo los enseña —igual que el
 OK—, así que para entrar en los botones desde el vídeo parado hacen falta dos.

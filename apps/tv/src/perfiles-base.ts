@@ -453,6 +453,14 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       );
     },
 
+    async borrarSegmento(ambito: string, tipo: Segmento['tipo']): Promise<void> {
+      // Lápida, no DELETE: si no, el otro aparato la volvería a subir.
+      db.executeSync(
+        'UPDATE segment SET deleted = 1, updated = ?, origin = ? WHERE ambito = ? AND kind = ?',
+        [ahora(), aparato, ambito, tipo],
+      );
+    },
+
     async favoritos(perfilId: string): Promise<Favorito[]> {
       return filas(
         db,

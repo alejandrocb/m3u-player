@@ -44,6 +44,14 @@ export interface AlmacenSegmentos {
   /** Los que apliquen a un capítulo: los suyos y los de su temporada. */
   deEpisodio(clave: string): Promise<Segmento[]>;
   guardar(segmento: Segmento): Promise<void>;
+  /**
+   * Quita una marca puesta mal.
+   *
+   * Como todo lo que se sincroniza, **no se borra la fila**: se marca de baja
+   * y se queda de lápida. Borrarla del todo no dejaría nada que contarle al
+   * otro aparato, que la volvería a subir tan campante.
+   */
+  borrar(ambito: string, tipo: TipoSegmento): Promise<void>;
 }
 
 /**
