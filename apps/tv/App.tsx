@@ -2291,6 +2291,8 @@ function FichaDeFila({
     [programas, minuto],
   );
   const avanceEnCurso = enCurso ? avanceDePrograma(enCurso, new Date()) : item.avance;
+  // Con programa, el grupo sobra: lo dice el rótulo de la fila.
+  const pie = enCurso ? null : pieDeFicha(item);
 
   /*
     Con el dedo **no hay foco**, así que no hay ficha que enseñar al enfocar:
@@ -2356,18 +2358,27 @@ function FichaDeFila({
               <Text style={estilos.fichaVeloTitulo} numberOfLines={2}>
                 {item.titulo}
               </Text>
-              <View style={estilos.fichaVeloDatos}>
-                {item.valoracion !== null ? (
-                  <Text style={estilos.fichaVeloNota}>★ {nota(item.valoracion)}</Text>
-                ) : null}
-                {pieDeFicha(item) ? (
-                  <Text style={estilos.fichaVeloTexto} numberOfLines={1}>
-                    {pieDeFicha(item)}
-                  </Text>
-                ) : null}
-              </View>
               {/*
-                Y en un canal, lo que están echando: la hora y el título.
+                El pie —género y año, o el grupo en un canal— **cede el sitio
+                al programa** cuando lo hay: el grupo ya lo dice el rótulo de
+                la fila, y la línea se aprovecha mejor diciendo qué echan.
+              */}
+              {pie || item.valoracion !== null ? (
+                <View style={estilos.fichaVeloDatos}>
+                  {item.valoracion !== null ? (
+                    <Text style={estilos.fichaVeloNota}>★ {nota(item.valoracion)}</Text>
+                  ) : null}
+                  {pie ? (
+                    <Text style={estilos.fichaVeloTexto} numberOfLines={1}>
+                      {pie}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+              {/*
+                Y en un canal, lo que están echando: la hora y el título, en
+                dos líneas porque los títulos largos son la norma —"A 47
+                metros 2 · El terror emerge"— y cortados no dicen nada.
 
                 Sin programación no se pinta nada ni se reserva hueco: 272 de
                 los 463 canales de la lista real no traen tvg-id y no tienen
@@ -2375,8 +2386,8 @@ function FichaDeFila({
                 excepción sino más de la mitad de los casos.
               */}
               {enCurso ? (
-                <Text style={estilos.fichaVeloTexto} numberOfLines={1}>
-                  {hora(enCurso.desde)}  {enCurso.titulo}
+                <Text style={estilos.fichaVeloTexto} numberOfLines={2}>
+                  <Text style={estilos.fichaVeloHora}>{hora(enCurso.desde)}</Text>  {enCurso.titulo}
                 </Text>
               ) : null}
             </View>
@@ -3268,6 +3279,12 @@ const estilos = StyleSheet.create({
     color: '#d6dde4',
     flexShrink: 1,
     fontSize: 12,
+  },
+  // La hora, en el verde de la marca: separa de un vistazo cuándo empezó de
+  // cómo se llama, sin meter un guion ni un punto en medio.
+  fichaVeloHora: {
+    color: VERDE,
+    fontWeight: '700',
   },
   fichaCaratula: {
     borderRadius: 6,
