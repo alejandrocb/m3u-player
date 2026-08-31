@@ -456,6 +456,51 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         .filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
     },
 
+    /*
+      El capítulo que va después de otro.
+
+      Primero en su misma temporada y, si era el último, el primero de la
+      siguiente. Se ordena por temporada y número y se coge el primero que vaya
+      por delante: así el salto de temporada sale gratis y no hay que preguntar
+      cuántos capítulos tenía la anterior.
+
+      Los episodios se piden al panel si esta serie no se ha abierto nunca en
+      este aparato, igual que en `episodiosPorClave`: puede llegar por la
+      sincronización una serie que aquí no se ha tocado.
+    */
+    async episodioSiguiente(clave: string): Promise<EpisodioDeSerieFicha | null> {
+      const sitio = leerClaveDeEpisodio(clave);
+      if (!sitio) return null;
+
+      try {
+        await asegurarEpisodios(sitio.serieId);
+      } catch (error) {
+        console.warn('[base] no se pudieron traer los episodios de', sitio.serieId, error);
+      }
+
+      const fila = filas(
+        db,
+        `SELECT e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.series_id = ?
+            AND (e.season > ? OR (e.season = ? AND e.episode > ?))
+          ORDER BY e.season, e.episode
+          LIMIT 1`,
+        [sitio.serieId, sitio.temporada, sitio.temporada, sitio.numero],
+      )[0];
+      if (!fila) return null;
+
+      return {
+        clave: claveDeEpisodio(fila.series_id as string, Number(fila.season), Number(fila.episode)),
+        serieId: fila.series_id as string,
+        serieTitulo: fila.serie as string,
+        serieLogo: (fila.serie_logo as string) ?? null,
+        temporada: Number(fila.season),
+        numero: Number(fila.episode),
+        titulo: (fila.title as string) ?? null,
+      };
+    },
+
     async detalleDePelicula(id: string): Promise<FichaLarga | null> {
       return fichaLarga('movie', id, () => panelIdsDePelicula(db, id), opciones.traerDetalle);
     },

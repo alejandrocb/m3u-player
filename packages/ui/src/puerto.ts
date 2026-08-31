@@ -208,6 +208,15 @@ export interface Programacion {
 }
 
 export interface Biblioteca {
+  /**
+   * El capítulo que va después de uno, por su clave.
+   *
+   * Hace falta para el "seguir viendo": cuando el último capítulo ya está
+   * visto, lo que uno quiere ver no es ese sino el siguiente. Salta de
+   * temporada si el que se acabó era el último de la suya, y devuelve `null`
+   * cuando la serie se termina ahí.
+   */
+  episodioSiguiente(clave: string): Promise<EpisodioDeSerieFicha | null>;
   grupos(): Promise<GrupoFicha[]>;
   canalesDeGrupo(grupo: string): Promise<CanalFicha[]>;
   /**

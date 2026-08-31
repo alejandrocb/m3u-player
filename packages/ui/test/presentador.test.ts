@@ -137,6 +137,20 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
         ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }]
         : [];
     },
+    async episodioSiguiente(clave: string) {
+      // La serie de prueba tiene tres capítulos en una temporada.
+      const numero = Number(clave.split('e').pop());
+      if (!Number.isFinite(numero) || numero >= 3) return null;
+      return {
+        clave: `dw:s1e${numero + 1}`,
+        serieId: 'dw',
+        serieTitulo: 'Doctor Who',
+        serieLogo: null,
+        temporada: 1,
+        numero: numero + 1,
+        titulo: `Episodio ${numero + 1}`,
+      };
+    },
     async episodiosPorClave(claves: string[]) {
       // La clave es `serie:sTeN`, la misma en todos los aparatos.
       return claves.map((clave) => {
@@ -1039,4 +1053,61 @@ test('atrás sale de la ficha y devuelve al inicio', async () => {
   assert.equal(resultado, 'retrocedido');
   assert.equal(estado.ficha, null);
   assert.ok(estado.inicio, 'debería volver al inicio');
+});
+
+test('una película vista se cae de "seguir viendo" al pasar del 90 %', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    // 91 % de una película: para el catálogo, vista.
+    seguirViendo: async () => [
+      { clase: 'pelicula', itemId: 'p1', titulo: 'Película 1', segundos: 5460, duracion: 6000, visto: '2026-08-30' },
+    ],
+  });
+  const estado = await presentador.cargar();
+
+  assert.equal(
+    estado.inicio?.filas.some((fila) => fila.tipo === 'carrusel' && fila.titulo === 'Seguir viendo'),
+    false,
+  );
+});
+
+test('pero al 85 % sigue ahí: una película aguanta más que un capítulo', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    seguirViendo: async () => [
+      { clase: 'pelicula', itemId: 'p1', titulo: 'Película 1', segundos: 5100, duracion: 6000, visto: '2026-08-30' },
+    ],
+  });
+  const estado = await presentador.cargar();
+
+  const fila = estado.inicio?.filas.find((una) => una.tipo === 'carrusel' && una.titulo === 'Seguir viendo');
+  assert.equal(fila?.elementos[0]?.titulo, 'Película 1');
+});
+
+test('un capítulo terminado da paso al siguiente, no se queda puesto', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    // 96 % del primero: terminado, y lo que toca ver es el segundo.
+    seguirViendo: async () => [
+      { clase: 'episodio', itemId: 'dw:s1e1', titulo: 'Doctor Who', segundos: 2880, duracion: 3000, visto: '2026-08-30' },
+    ],
+  });
+  const estado = await presentador.cargar();
+
+  const fila = estado.inicio?.filas.find((una) => una.tipo === 'carrusel' && una.titulo === 'Seguir viendo');
+  assert.equal(fila?.elementos[0]?.detalle, 'T1 E2 · Episodio 2');
+  // Y empieza de cero: la barrita del que ya se vio no dice nada del que viene.
+  assert.equal(fila?.elementos[0]?.avance, 0);
+});
+
+test('y cuando se acaba la serie, sale de la fila', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    // El tercero es el último de la serie de prueba.
+    seguirViendo: async () => [
+      { clase: 'episodio', itemId: 'dw:s1e3', titulo: 'Doctor Who', segundos: 2970, duracion: 3000, visto: '2026-08-30' },
+    ],
+  });
+  const estado = await presentador.cargar();
+
+  assert.equal(
+    estado.inicio?.filas.some((fila) => fila.tipo === 'carrusel' && fila.titulo === 'Seguir viendo'),
+    false,
+  );
 });

@@ -145,6 +145,12 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       }));
     },
 
+    async episodioSiguiente(): Promise<EpisodioDeSerieFicha | null> {
+      // El escritorio es un prototipo y no tiene "seguir viendo" por series:
+      // cuando lo tenga, esto será la misma consulta que en Android.
+      return null;
+    },
+
     async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
       const fichas: EpisodioDeSerieFicha[] = [];
       for (const clave of claves) {

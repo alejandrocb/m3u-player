@@ -78,6 +78,7 @@ test('los ajustes guardados se interpretan y se sanean', () => {
   assert.deepEqual(ajustesDesde({ columnas: '6', orden: 'valoracion' }), {
     columnas: 6,
     orden: 'valoracion',
+    continua: true,
   });
 
   // Lo que no está entre los valores admitidos vuelve al de siempre.
@@ -87,6 +88,14 @@ test('los ajustes guardados se interpretan y se sanean', () => {
   assert.deepEqual(ajustesDesde({}), AJUSTES_POR_DEFECTO);
 });
 
+test('la reproducción continua se apaga solo con un "no" explícito', () => {
+  // Es de cada persona: hay a quien le gusta que siga solo y hay a quien no.
+  assert.equal(ajustesDesde({ continua: 'no' }).continua, false);
+  assert.equal(ajustesDesde({ continua: 'si' }).continua, true);
+  // Y por defecto encadena, que es lo que hacen todos.
+  assert.equal(ajustesDesde({}).continua, true);
+});
+
 test('el orden por novedades es un ajuste más del perfil', () => {
-  assert.deepEqual(ajustesDesde({ orden: 'reciente' }), { columnas: 4, orden: 'reciente' });
+  assert.deepEqual(ajustesDesde({ orden: 'reciente' }), { columnas: 4, orden: 'reciente', continua: true });
 });

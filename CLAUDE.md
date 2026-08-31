@@ -248,6 +248,29 @@ aparato que acaba de empezar. Lo que falta es que ese espere a que se libere
 de verdad —el panel tarda ~30 s— en vez de comerse un 403: eso es el árbitro
 de conexión, que sigue pendiente.
 
+### Lo que ya se ha visto se releva, no se queda
+
+Una película se da por vista al **90 %** y un capítulo al **95 %**
+(`FIN_PELICULA` y `FIN_EPISODIO`). Son distintos a propósito: los créditos de
+una película son largos, y encadenar el capítulo siguiente exige más certeza de
+que el anterior ha terminado de verdad.
+
+Y "visto" no significa lo mismo en los dos sitios:
+
+- **Una película vista se cae de "seguir viendo".** Estaba quedándose ahí para
+  siempre, con la barrita al 99 %.
+- **Un capítulo visto da paso al siguiente.** Una serie se ve en orden, así que
+  lo que uno quiere ver es el que viene, no el que acaba de terminar; dejar el
+  terminado obliga a entrar en la serie y buscar. Lo resuelve
+  `Biblioteca.episodioSiguiente`, que salta de temporada si el que se acabó era
+  el último de la suya. Sin siguiente, la serie se ha terminado y sale de la
+  fila.
+
+**La reproducción continua es un ajuste del perfil** (`continua`, encendido por
+defecto), no del aparato: hay a quien le gusta que siga solo y hay a quien le
+parece que le roban la noche. Se cambia desde el menú del perfil y viaja con la
+sincronización como el resto de sus ajustes.
+
 ### En "seguir viendo", una fila por serie
 
 Una serie se ve en orden, así que lo que hace falta es **por dónde vas**, no
@@ -578,6 +601,29 @@ queda bloqueada hasta que el panel la caduca por su cuenta.
 - **La extensión de la URL miente a veces** (un `.mkv` que por dentro es MP4).
   Las descargas deben nombrarse por el contenedor real, leyendo los primeros
   bytes; `tools/probe/src/sniff.mjs` ya identifica contenedores así.
+
+### El mando dentro del reproductor
+
+Las flechas saltan diez segundos y el OK pausa, que es lo que uno espera con un
+mando delante de la tele. **Bajando se entra en la fila de botones** —desde el
+principio, audio, subtítulos, siguiente— y ahí las flechas los recorren; con un
+panel de pistas abierto, el mando es suyo hasta elegir una. Subiendo se vuelve
+al vídeo.
+
+Dos cosas que costaron encontrar, y que valen para cualquier pantalla nueva:
+
+- **`focusable={false}` en todo lo del reproductor.** Con el foco del sistema
+  puesto en los botones, Android le entregaba el OK al botón enfocado y la
+  pulsación **no llegaba nunca** al manejador de teclas: se podía llegar a los
+  botones con el mando pero no activarlos. Es la misma regla que ya seguía la
+  biblioteca, y el síntoma es el contrario del clásico: no es que la pulsación
+  cuente dos veces, es que no cuenta ninguna.
+- **El foco tiene que cantar sobre cualquier fotograma.** El 18 % de blanco que
+  marcaba lo enfocado desaparecía sobre una imagen clara. Va el verde de la
+  marca sobre fondo oscuro, como en el resto de la aplicación.
+
+La primera pulsación con los controles escondidos solo los enseña —igual que el
+OK—, así que para entrar en los botones desde el vídeo parado hacen falta dos.
 
 ### Reproducción: mpv, no `<video>`
 

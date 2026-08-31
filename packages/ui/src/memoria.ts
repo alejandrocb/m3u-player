@@ -10,7 +10,7 @@
  */
 
 import type { Episode, Library, Season, Series } from '@m3u/core';
-import { esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
+import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
 
 import type {
   Ambito,
@@ -210,6 +210,33 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
           logo: pelicula.logo,
           genero: null,
         }));
+    },
+
+    async episodioSiguiente(clave: string): Promise<EpisodioDeSerieFicha | null> {
+      const donde = leerClaveDeEpisodio(clave);
+      const serie = donde ? library.series.find((una) => una.id === donde.serieId) : undefined;
+      if (!donde || !serie) return null;
+
+      // Todos los de la serie en orden, y el primero que vaya por delante.
+      const enOrden = serie.seasons
+        .flatMap((temporada) => temporada.episodes.map((uno) => ({ temporada: temporada.number, uno })))
+        .sort((a, b) => a.temporada - b.temporada || a.uno.episode - b.uno.episode);
+
+      const siguiente = enOrden.find(
+        ({ temporada, uno }) =>
+          temporada > donde.temporada || (temporada === donde.temporada && uno.episode > donde.numero),
+      );
+      if (!siguiente) return null;
+
+      return {
+        clave: claveDeEpisodio(serie.id, siguiente.temporada, siguiente.uno.episode),
+        serieId: serie.id,
+        serieTitulo: serie.title,
+        serieLogo: serie.logo ?? null,
+        temporada: siguiente.temporada,
+        numero: siguiente.uno.episode,
+        titulo: siguiente.uno.title ?? null,
+      };
     },
 
     async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {

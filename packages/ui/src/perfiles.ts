@@ -210,6 +210,14 @@ export interface Ajustes {
   columnas: number;
   /** Cómo se ordenan: alfabéticamente, por nota o por lo último que entró. */
   orden: Orden;
+  /**
+   * Encadenar con el episodio siguiente al terminar uno.
+   *
+   * Es de cada persona y no de la casa: hay a quien le gusta que siga solo y
+   * hay a quien le parece que le roban la noche. Por eso es un ajuste del
+   * perfil, que además viaja con la sincronización.
+   */
+  continua: boolean;
 }
 
 /** Los criterios de orden admitidos, para descartar lo que venga guardado mal. */
@@ -218,7 +226,11 @@ const ORDENES: Orden[] = ['titulo', 'valoracion', 'reciente'];
 /** Cuántas columnas se admiten: menos de tres no aprovecha, más de ocho no se lee. */
 export const COLUMNAS_POSIBLES = [3, 4, 5, 6, 8] as const;
 
-export const AJUSTES_POR_DEFECTO: Ajustes = { columnas: 4, orden: 'titulo' };
+/**
+ * Encadenada por defecto, que es lo que hacen todos y lo que uno espera de una
+ * serie. Se apaga desde el menú del perfil.
+ */
+export const AJUSTES_POR_DEFECTO: Ajustes = { columnas: 4, orden: 'titulo', continua: true };
 
 /** Interpreta lo guardado, que siempre es texto, y descarta lo que no vale. */
 export function ajustesDesde(guardado: Record<string, string>): Ajustes {
@@ -228,6 +240,8 @@ export function ajustesDesde(guardado: Record<string, string>): Ajustes {
       ? columnas
       : AJUSTES_POR_DEFECTO.columnas,
     orden: ORDENES.includes(guardado.orden as Orden) ? (guardado.orden as Orden) : AJUSTES_POR_DEFECTO.orden,
+    // Lo guardado es texto: solo un "no" explícito la apaga.
+    continua: guardado.continua === undefined ? AJUSTES_POR_DEFECTO.continua : guardado.continua !== 'no',
   };
 }
 
@@ -235,10 +249,20 @@ export function ajustesDesde(guardado: Record<string, string>): Ajustes {
 export const COLORES_PERFIL = ['#35d07f', '#4aa3f0', '#f0a24a', '#c86cf0', '#f05a5a'] as const;
 
 /**
- * Se considera terminado a partir del 95 %: los últimos minutos son títulos de
- * crédito, y dejarlo en "seguir viendo" al 98 % es molesto.
+ * A partir de dónde se da algo por visto.
+ *
+ * Los últimos minutos son títulos de crédito, y dejar algo en "seguir viendo"
+ * al 98 % es molesto. **Una película se da por vista antes que un capítulo**:
+ * los créditos de una película son largos, y encadenar el capítulo siguiente
+ * exige más certeza de que el anterior ha terminado de verdad.
  */
-export const FIN_PROPORCION = 0.95;
+export const FIN_PELICULA = 0.9;
+export const FIN_EPISODIO = 0.95;
+
+/** El umbral que le toca a cada clase. */
+export function finDe(clase: ClaseMedio): number {
+  return clase === 'pelicula' ? FIN_PELICULA : FIN_EPISODIO;
+}
 
 /** Lo que falta por ver, entre 0 y 1. Sirve para pintar la barrita de avance. */
 export function proporcionVista(avance: Avance): number {
@@ -248,7 +272,7 @@ export function proporcionVista(avance: Avance): number {
 
 /** ¿Se puede dar por visto? */
 export function estaTerminado(avance: Avance): boolean {
-  return proporcionVista(avance) >= FIN_PROPORCION;
+  return proporcionVista(avance) >= finDe(avance.clase);
 }
 
 /**

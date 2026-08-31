@@ -119,6 +119,14 @@ interface Props {
    */
   arbitro?: Arbitro;
   /**
+   * Encadenar con el siguiente al terminar.
+   *
+   * Es un ajuste del perfil, no del aparato: lo decide quien está viendo. Solo
+   * aplica a lo que tiene cola —los capítulos de una serie—; una película no
+   * encadena con nada.
+   */
+  continua?: boolean;
+  /**
    * El mando está sobre la vista previa.
    *
    * El resalte lo dibuja el reproductor y no la columna: el vídeo va por
@@ -184,6 +192,7 @@ export function Reproductor({
   onCambiar,
   programacion,
   arbitro,
+  continua = false,
   caja,
   resaltado,
   onAbrir,
@@ -223,6 +232,18 @@ export function Reproductor({
   // -1 es "sin subtítulos", que es como debe empezar.
   const [subtitulo, setSubtitulo] = useState(-1);
   const [panel, setPanel] = useState<'ninguno' | 'audio' | 'subtitulos'>('ninguno');
+  /*
+    Dónde está el mando dentro del reproductor.
+
+    En `video`, las flechas saltan y el OK pausa, que es lo que uno espera con
+    un mando delante de la tele. Bajando se entra en la fila de botones
+    —principio, audio, subtítulos, siguiente—, que hasta ahora **no había
+    forma de alcanzar**: con el dedo se tocan, pero un televisor no tiene dedo.
+    Y con un panel de pistas abierto, el mando es suyo.
+  */
+  const [zona, setZona] = useState<'video' | 'botones' | 'pistas'>('video');
+  const [focoBoton, setFocoBoton] = useState(0);
+  const [focoPista, setFocoPista] = useState(0);
 
   /** Segundo por el que se quedó la última vez, si es que ya lo había visto. */
   const [reanudar, setReanudar] = useState<number | null>(null);
@@ -398,9 +419,141 @@ export function Reproductor({
     [despertar, tiempo, total],
   );
 
+  /*
+    La fila de abajo, armada como datos y no como JSX suelto.
+
+    Es lo que permite que el mando la recorra: para saber cuál está enfocado y
+    activarlo desde el manejador de teclas hace falta una lista, no una
+    sucesión de etiquetas.
+  */
+  const secundarios: Array<{ clave: string; etiqueta: string; activo?: boolean; onPress: () => void }> = [
+    ...(enDirecto
+      ? []
+      : [
+          {
+            clave: 'principio',
+            etiqueta: 'Desde el principio',
+            onPress: () => saltar(-tiempo),
+          },
+        ]),
+    ...(audios.length > 1
+      ? [
+          {
+            clave: 'audio',
+            etiqueta: 'Audio',
+            activo: panel === 'audio',
+            onPress: () => setPanel((abierto) => (abierto === 'audio' ? 'ninguno' : 'audio')),
+          },
+        ]
+      : []),
+    ...(subtitulos.length > 0
+      ? [
+          {
+            clave: 'subtitulos',
+            etiqueta: 'Subtítulos',
+            activo: panel === 'subtitulos' || subtitulo >= 0,
+            onPress: () => setPanel((abierto) => (abierto === 'subtitulos' ? 'ninguno' : 'subtitulos')),
+          },
+        ]
+      : []),
+    ...(!enDirecto && siguiente
+      ? [{ clave: 'siguiente', etiqueta: 'Siguiente', onPress: () => onCambiar?.(siguiente) }]
+      : []),
+  ];
+
+  /** Las pistas del panel abierto, para poder recorrerlas con el mando. */
+  const pistas: Array<{ etiqueta: string; onPress: () => void }> =
+    panel === 'ninguno'
+      ? []
+      : [
+          ...(panel === 'subtitulos'
+            ? [
+                {
+                  etiqueta: 'Sin subtítulos',
+                  onPress: () => {
+                    setSubtitulo(-1);
+                    setPanel('ninguno');
+                    setZona('botones');
+                  },
+                },
+              ]
+            : []),
+          ...(panel === 'audio' ? audios : subtitulos).map((pista) => ({
+            etiqueta: pista.nombre,
+            onPress: () => {
+              if (panel === 'audio') setAudio(pista.indice);
+              else setSubtitulo(pista.indice);
+              setPanel('ninguno');
+              setZona('botones');
+            },
+          })),
+        ];
+
+  // Al cerrarse los controles, el mando vuelve al vídeo: si no, al despertarlos
+  // el foco seguiría en un botón que ya no se recuerda dónde estaba.
+  useEffect(() => {
+    if (!visible) {
+      setZona('video');
+      setPanel('ninguno');
+    }
+  }, [visible]);
+
+  // Un panel de pistas que se abre se lleva el foco: es lo que se acaba de
+  // pedir, y sin esto habría que bajar otra vez a ciegas.
+  useEffect(() => {
+    if (panel !== 'ninguno') {
+      setZona('pistas');
+      setFocoPista(0);
+    }
+  }, [panel]);
+
   useTVEventHandler((evento) => {
     // En pequeño manda la lista de canales, no el reproductor.
     if (compacto) return;
+    despertar();
+
+    // Con las pistas abiertas, el mando es suyo hasta que se elija una.
+    if (zona === 'pistas') {
+      switch (evento.eventType) {
+        case 'left':
+          setFocoPista((actual) => Math.max(0, actual - 1));
+          return;
+        case 'right':
+          setFocoPista((actual) => Math.min(pistas.length - 1, actual + 1));
+          return;
+        case 'select':
+          pistas[focoPista]?.onPress();
+          return;
+        case 'up':
+        case 'down':
+          setPanel('ninguno');
+          setZona('botones');
+          return;
+        default:
+          return;
+      }
+    }
+
+    if (zona === 'botones') {
+      switch (evento.eventType) {
+        case 'left':
+          setFocoBoton((actual) => Math.max(0, actual - 1));
+          return;
+        case 'right':
+          setFocoBoton((actual) => Math.min(secundarios.length - 1, actual + 1));
+          return;
+        case 'select':
+          secundarios[focoBoton]?.onPress();
+          return;
+        // Subiendo se vuelve al vídeo, donde las flechas saltan otra vez.
+        case 'up':
+          setZona('video');
+          return;
+        default:
+          return;
+      }
+    }
+
     switch (evento.eventType) {
       // En directo no hay a dónde saltar: las flechas cambian de canal, que es
       // lo que uno hace con un mando delante de la tele.
@@ -421,11 +574,17 @@ export function Reproductor({
       case 'select':
         // Si los controles estaban escondidos, el primer OK solo los enseña.
         if (visible) setPausado((estaba) => !estaba);
-        despertar();
         break;
-      case 'up':
+      /*
+        Bajando se entra en la fila de botones. Es el recorrido de cualquier
+        televisor —flechas para saltar, abajo para los ajustes del vídeo— y es
+        lo que faltaba para poder cambiar el audio o los subtítulos sin dedo.
+      */
       case 'down':
-        despertar();
+        if (visible && secundarios.length > 0) {
+          setZona('botones');
+          setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
+        }
         break;
     }
   });
@@ -526,6 +685,15 @@ export function Reproductor({
               (textTracks ?? []).map((pista, indice) => ({ indice, nombre: nombreDePista(pista, indice) })),
             )
           }
+          /*
+            Al terminar, el siguiente si así lo quiere el perfil.
+
+            Solo con cola y solo hacia delante: en directo no hay final, y una
+            película no encadena con nada.
+          */
+          onEnd={() => {
+            if (continua && !enDirecto && siguiente) onCambiar?.(siguiente);
+          }}
           onError={(fallo) => {
             // El detalle completo, al registro: se lee con `adb logcat`.
             console.warn('[reproductor]', JSON.stringify(fallo));
@@ -665,6 +833,7 @@ export function Reproductor({
             <Text style={estilos.tiempo}>{reloj(tiempo)}</Text>
 
             <Pressable
+              focusable={false}
               style={estilos.barra}
               onLayout={(evento) => setAnchoBarra(evento.nativeEvent.layout.width)}
               onPress={(evento) => {
@@ -725,66 +894,49 @@ export function Reproductor({
           </View>
 
           <View style={estilos.secundarios}>
-            {/* Volver al principio: hace falta sobre todo cuando se ha
-                reanudado por donde se iba y resulta que uno quería empezar. */}
-            {enDirecto ? null : (
-              <Icono etiqueta="Desde el principio" apagado={tiempo < 5} onPress={() => saltar(-tiempo)}>
-                <IconoPrincipio />
-              </Icono>
-            )}
-
-            {audios.length > 1 ? (
-              <Icono
-                etiqueta="Audio"
-                activo={panel === 'audio'}
-                onPress={() => setPanel((abierto) => (abierto === 'audio' ? 'ninguno' : 'audio'))}
-              >
-                <IconoAudio color={panel === 'audio' ? VERDE : undefined} />
-              </Icono>
-            ) : null}
-
-            {subtitulos.length > 0 ? (
-              <Icono
-                etiqueta="Subtítulos"
-                activo={panel === 'subtitulos' || subtitulo >= 0}
-                onPress={() => setPanel((abierto) => (abierto === 'subtitulos' ? 'ninguno' : 'subtitulos'))}
-              >
-                <IconoSubtitulos color={panel === 'subtitulos' || subtitulo >= 0 ? VERDE : undefined} />
-              </Icono>
-            ) : null}
-
-            {/* El siguiente episodio, que es lo que uno busca al acabar uno. */}
-            {!enDirecto && siguiente ? (
-              <Icono etiqueta="Siguiente" onPress={() => onCambiar?.(siguiente)}>
-                <IconoSiguiente />
-              </Icono>
-            ) : null}
+            {secundarios.map((boton, indice) => {
+              const enfocado = zona === 'botones' && focoBoton === indice;
+              const marcado = Boolean(boton.activo);
+              return (
+                <Icono
+                  key={boton.clave}
+                  etiqueta={boton.etiqueta}
+                  activo={marcado}
+                  enfocado={enfocado}
+                  apagado={boton.clave === 'principio' && tiempo < 5}
+                  onPress={boton.onPress}
+                >
+                  {boton.clave === 'principio' ? <IconoPrincipio /> : null}
+                  {boton.clave === 'audio' ? <IconoAudio color={marcado ? VERDE : undefined} /> : null}
+                  {boton.clave === 'subtitulos' ? (
+                    <IconoSubtitulos color={marcado ? VERDE : undefined} />
+                  ) : null}
+                  {boton.clave === 'siguiente' ? <IconoSiguiente /> : null}
+                </Icono>
+              );
+            })}
           </View>
 
-          {panel !== 'ninguno' ? (
+          {pistas.length > 0 ? (
             <ScrollView style={estilos.pistas} horizontal showsHorizontalScrollIndicator={false}>
-              {panel === 'subtitulos' ? (
-                <Pastilla
-                  texto="Sin subtítulos"
-                  activo={subtitulo === -1}
-                  onPress={() => {
-                    setSubtitulo(-1);
-                    setPanel('ninguno');
-                  }}
-                />
-              ) : null}
-              {(panel === 'audio' ? audios : subtitulos).map((pista) => (
-                <Pastilla
-                  key={pista.indice}
-                  texto={pista.nombre}
-                  activo={panel === 'audio' ? audio === pista.indice : subtitulo === pista.indice}
-                  onPress={() => {
-                    if (panel === 'audio') setAudio(pista.indice);
-                    else setSubtitulo(pista.indice);
-                    setPanel('ninguno');
-                  }}
-                />
-              ))}
+              {pistas.map((pista, indice) => {
+                // Cuál está puesta ahora mismo, para marcarla.
+                const puesta =
+                  panel === 'audio'
+                    ? audios[indice]?.indice === audio
+                    : indice === 0
+                      ? subtitulo === -1
+                      : subtitulos[indice - 1]?.indice === subtitulo;
+                return (
+                  <Pastilla
+                    key={pista.etiqueta}
+                    texto={pista.etiqueta}
+                    activo={puesta}
+                    enfocada={zona === 'pistas' && focoPista === indice}
+                    onPress={pista.onPress}
+                  />
+                );
+              })}
             </ScrollView>
           ) : null}
         </View>
@@ -808,6 +960,7 @@ function Icono({
   onPress,
   principal,
   activo,
+  enfocado,
   apagado,
 }: {
   children: React.ReactNode;
@@ -817,6 +970,14 @@ function Icono({
   onPress: () => void;
   principal?: boolean;
   activo?: boolean;
+  /**
+   * Enfocado **por el mando**, que no es el foco del sistema.
+   *
+   * En esta pantalla el recorrido lo lleva la aplicación —igual que en la
+   * biblioteca— porque si además lo llevara Android, cada OK contaría dos
+   * veces.
+   */
+  enfocado?: boolean;
   /** Sin destino: se deja a la vista pero atenuado, para que no baile la fila. */
   apagado?: boolean;
 }) {
@@ -824,12 +985,22 @@ function Icono({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={etiqueta}
+      /*
+        El foco del sistema no entra aquí, igual que en la biblioteca: en esta
+        pantalla el recorrido lo lleva la aplicación, y si Android además le
+        entregara el OK al botón enfocado, la pulsación no llegaría nunca al
+        manejador de teclas. Era justo lo que pasaba: con el mando se podía
+        llegar a los botones pero no activarlos.
+      */
+      focusable={false}
       disabled={apagado}
       style={({ focused, pressed }) => [
         estilos.icono,
         principal && estilos.iconoPrincipal,
         apagado && estilos.iconoApagado,
-        (focused || pressed) && !apagado && (principal ? estilos.iconoPrincipalEnfocado : estilos.iconoEnfocado),
+        (focused || pressed || enfocado) &&
+          !apagado &&
+          (principal ? estilos.iconoPrincipalEnfocado : estilos.iconoEnfocado),
       ]}
       onPress={onPress}
     >
@@ -841,13 +1012,25 @@ function Icono({
 }
 
 /** Opción de una lista de pistas: aquí sí hay que leer el idioma. */
-function Pastilla({ texto, onPress, activo }: { texto: string; onPress: () => void; activo?: boolean }) {
+function Pastilla({
+  texto,
+  onPress,
+  activo,
+  enfocada,
+}: {
+  texto: string;
+  onPress: () => void;
+  activo?: boolean;
+  /** Enfocada por el mando; con el dedo manda el foco del sistema. */
+  enfocada?: boolean;
+}) {
   return (
     <Pressable
+      focusable={false}
       style={({ focused, pressed }) => [
         estilos.pastilla,
         activo && estilos.pastillaActiva,
-        (focused || pressed) && estilos.pastillaEnfocada,
+        (focused || pressed || enfocada) && estilos.pastillaEnfocada,
       ]}
       onPress={onPress}
     >
@@ -986,8 +1169,16 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
     width: 56,
   },
+  /*
+    Lo enfocado con el mando tiene que cantar desde el sofá, y el 18 % de
+    blanco que había antes se pierde sobre un fotograma claro. Va el verde de
+    la marca, que es como se marca el foco en el resto de la aplicación, sobre
+    un fondo oscuro que garantiza el contraste sea cual sea la imagen.
+  */
   iconoEnfocado: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderColor: VERDE,
+    borderWidth: 2,
   },
   // El de reproducir es el único con círculo, y translúcido: un botón opaco
   // encima de la imagen es lo que hacía que esto pareciera un aparato viejo.

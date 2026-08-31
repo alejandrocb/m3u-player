@@ -1276,6 +1276,19 @@ function BibliotecaVista({
     [perfiles, perfil],
   );
 
+  /**
+   * Encadenar o no con el capítulo siguiente.
+   *
+   * Va en el menú del perfil y no en los ajustes de la rejilla porque es de
+   * cada persona y se cambia de vez en cuando: hay a quien le gusta que siga
+   * solo y hay a quien le parece que le roban la noche.
+   */
+  const alternarContinua = useCallback(async () => {
+    const siguiente = !ajustes.continua;
+    await perfiles.guardarAjuste(perfil.id, 'continua', siguiente ? 'si' : 'no');
+    setAjustes((previos) => ({ ...previos, continua: siguiente }));
+  }, [ajustes.continua, perfiles, perfil]);
+
   const cambiarOrden = useCallback(
     async (clave: Ajustes['orden']) => {
       await perfiles.guardarAjuste(perfil.id, 'orden', clave);
@@ -1372,6 +1385,10 @@ function BibliotecaVista({
       retrato: otro,
       onPress: () => onElegirPerfil(otro),
     })),
+    {
+      texto: `Reproducción continua: ${ajustes.continua ? 'sí' : 'no'}`,
+      onPress: () => void alternarContinua(),
+    },
     { texto: 'Perfiles', onPress: onCambiarPerfil },
     { texto: 'Actualizar catálogo', onPress: onActualizar },
     { texto: 'Cerrar sesión', onPress: onCerrarSesion },
@@ -1832,6 +1849,7 @@ function BibliotecaVista({
           onCambiar={setReproduciendo}
           programacion={programacion}
           arbitro={arbitro}
+          continua={ajustes.continua}
           onAbrir={() => setAPantallaCompleta(true)}
         />
       ) : null}

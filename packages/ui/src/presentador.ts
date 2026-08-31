@@ -16,7 +16,7 @@ import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
 import type { PortadaRemota } from './cliente-sync.ts';
 import type { Biblioteca, CanalFicha, FichaLarga, GrupoFicha, Orden, Resultado } from './puerto.ts';
-import { claveDeMedio, proporcionVista } from './perfiles.ts';
+import { claveDeMedio, estaTerminado, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
 import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
 
@@ -687,8 +687,32 @@ export class Presentador {
       .slice(0, EN_CONTINUAR);
     if (avances.length === 0) return null;
 
+    /*
+      Lo terminado no se queda: releva.
+
+      Una película vista se cae de la fila —para eso está el umbral, distinto
+      en película y capítulo—. Un capítulo visto **da paso al siguiente**, que
+      es lo que uno quiere ver: la serie se ve en orden, y dejar en la fila el
+      que ya se acabó obliga a entrar en la serie y buscar el que toca. Si no
+      hay siguiente, la serie se ha terminado y sale de la fila.
+    */
+    const alDia: Array<{ avance: Avance; relevo: string | null }> = [];
+    for (const avance of avances) {
+      if (!estaTerminado(avance)) {
+        alDia.push({ avance, relevo: null });
+        continue;
+      }
+      if (avance.clase !== 'episodio') continue;
+
+      const siguiente = await this.#biblioteca.episodioSiguiente(avance.itemId);
+      if (siguiente) alDia.push({ avance, relevo: siguiente.clave });
+    }
+    if (alDia.length === 0) return null;
+
     const idsDe = (clase: ClaseMedio): string[] =>
-      avances.filter((avance) => avance.clase === clase).map((avance) => avance.itemId);
+      alDia
+        .filter(({ avance }) => avance.clase === clase)
+        .map(({ avance, relevo }) => relevo ?? avance.itemId);
 
     const [peliculas, episodios] = await Promise.all([
       this.#biblioteca.peliculasPorId(idsDe('pelicula')),
@@ -698,8 +722,10 @@ export class Presentador {
     const porEpisodio = new Map(episodios.map((ficha) => [ficha.clave, ficha]));
 
     const elementos: Elemento[] = [];
-    for (const avance of avances) {
-      const visto = proporcionVista(avance);
+    for (const { avance, relevo } of alDia) {
+      // Con relevo, el capítulo es otro y empieza de cero: la barrita del que
+      // ya se vio no dice nada del que viene.
+      const visto = relevo ? 0 : proporcionVista(avance);
 
       if (avance.clase === 'pelicula') {
         const ficha = porPelicula.get(avance.itemId);
@@ -722,7 +748,7 @@ export class Presentador {
       }
 
       if (avance.clase === 'episodio') {
-        const ficha = porEpisodio.get(avance.itemId);
+        const ficha = porEpisodio.get(relevo ?? avance.itemId);
         if (!ficha) continue;
         const codigo = `T${ficha.temporada} E${ficha.numero}`;
         elementos.push({
