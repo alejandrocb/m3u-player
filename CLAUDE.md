@@ -27,6 +27,16 @@ npm run bench -- .probe-cache/<lista>.m3u # medir el almacenamiento
 ejecución de scripts del equipo bloquea `npm.ps1`. Usa `npm.cmd` / `npx.cmd`, o
 los lanzadores directos (`.\app.cmd`, `.\node_modules\.bin\electron.cmd`).
 
+**Y `npm.cmd` parte por el `&` cualquier URL que le pases**, entrecomillada o
+no: es un fichero por lotes, así que el argumento acaba pasando por `cmd.exe`,
+que vuelve a interpretar el `&` como separador de comandos. Al `probe` le
+llegaba `get.php?username=U` a secas y el panel contestaba `403`. Para pasarle
+una URL, llama a Node directamente y sáltate el intermediario:
+
+```bash
+node tools/probe/src/index.ts 'http://servidor:8080/get.php?username=U&password=P&type=m3u_plus'
+```
+
 ## Cómo se ejecuta el TypeScript
 
 **No hay paso de compilación.** Node ejecuta los `.ts` directamente borrando los
@@ -131,6 +141,23 @@ El EPG se pide con `get_short_epg` canal a canal, con un retardo de 350 ms
 desde que el foco se para —el foco se mueve más rápido de lo que responde el
 panel— y se cachea media hora en memoria. Medido: 3,4 KB por canal frente a
 los 186 KB de `get_simple_data_table`, que trae la semana entera.
+
+**Y el EPG entero sale a cuenta: lo prepara el servidor.** Medido con el
+`probe` contra la lista real: `xmltv.php` son **5,5 MB en 4,9 s, con 191
+canales y 11.515 programas** —unos dos o tres días de parrilla—. Es una
+descarga al día por lista, y a los aparatos les basta con el resumen de lo que
+hay ahora, que son unas decenas de kilobytes. Encaja con lo que el VPS ya hace
+con las portadas, y quita de en medio la petición por canal cada vez que el
+foco se para.
+
+Lo que había que comprobar antes de fiarse era **si los identificadores
+casan**, y casan: los `channel id` del XMLTV son exactamente nuestros `tvg-id`,
+191 de 191. No hace falta ninguna tabla de equivalencias por nombre.
+
+La otra cara: **272 de los 463 canales no traen `tvg-id`**, así que no tienen
+EPG por ningún camino —ni por aquí ni con `get_short_epg`—. Son sobre todo los
+de eventos: NBA, NFL, jornadas de liga. La ficha de un canal tiene que quedar
+bien **sin** programación, porque en más de la mitad no la habrá nunca.
 
 ### Un perfil es una persona: solo suena en un sitio
 
