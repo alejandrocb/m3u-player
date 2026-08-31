@@ -142,6 +142,22 @@ export interface Preparado {
   generos: GeneroRemoto[];
 }
 
+/**
+ * Un programa de la parrilla que prepara el servidor.
+ *
+ * El canal es el `tvg-id`, que es el identificador con el que el aparato tiene
+ * guardado ese canal: comprobado contra la lista real, los del EPG del panel
+ * casan 191 de 191. Las horas vienen en ISO y en UTC, y las convierte a la
+ * hora local quien las pinta.
+ */
+export interface ProgramaRemoto {
+  canal: string;
+  desde: string;
+  hasta: string;
+  titulo: string;
+  sinopsis: string | null;
+}
+
 export class ClienteSync {
   #almacen: AlmacenSync;
   #perfiles: FuenteDeCambios;
@@ -306,6 +322,37 @@ export class ClienteSync {
     } catch {
       // Sin red, el inicio sale igual. Que esto no impida arrancar.
       return vacio;
+    }
+  }
+
+  /**
+   * Lo que echan ahora en el directo, según la parrilla del servidor.
+   *
+   * El servidor se trae el EPG entero del panel —5,5 MB, una petición al
+   * día— y de ahí manda solo el resumen: dos programas por canal, el de ahora
+   * y el siguiente. Al aparato le llegan decenas de kilobytes en una sola
+   * petición, en vez de una por canal cada vez que el foco se para.
+   *
+   * Como todo lo que prepara el servidor, es un acelerador y no un requisito:
+   * sin respuesta se devuelve vacío y la programación se pide al panel canal a
+   * canal, que es lo que se hacía antes de que existiera esto.
+   */
+  async epg(): Promise<ProgramaRemoto[]> {
+    const estado = await this.#almacen.leer();
+    if (!estado) return [];
+
+    try {
+      const respuesta = await this.#buscar(`${estado.servidor}/api/epg`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${estado.token}` },
+      });
+      if (!respuesta.ok) return [];
+
+      const datos = (await respuesta.json()) as { programas?: ProgramaRemoto[] };
+      return Array.isArray(datos.programas) ? datos.programas : [];
+    } catch {
+      // Sin red, el directo sigue funcionando: solo se queda sin parrilla.
+      return [];
     }
   }
 

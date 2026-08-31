@@ -1,16 +1,14 @@
 /**
- * Lo que queda de la columna del directo: la hora y el hueco del vídeo.
+ * La hora y el hueco del vídeo.
  *
- * La columna entera —vista previa a un lado, programación al otro— se fue
- * cuando TV en directo pasó a tener la forma del inicio, con una fila por
- * grupo de canales. Lo que sigue en pie es lo que usa el reproductor: escribir
- * una hora con el huso del aparato, y el tipo del hueco donde se coloca el
- * vídeo cuando no ocupa la pantalla entera.
+ * Lo que queda de la columna del directo, que se fue cuando TV en directo pasó
+ * a tener la forma del inicio: escribir una hora con el huso del aparato —el
+ * panel manda los tiempos en UTC— y el tipo del hueco donde se coloca el vídeo
+ * cuando no ocupa la pantalla entera.
  *
- * Queda pendiente devolver la programación al directo: ahora mismo, lo que
- * echan solo se ve dentro del reproductor.
+ * La hora la usan los dos sitios donde hoy se ve la programación: la ficha del
+ * canal en las filas del directo y la barra del reproductor.
  */
-
 
 /** "20:15", con la hora del aparato: el panel manda los tiempos en UTC. */
 export function hora(fecha: Date): string {

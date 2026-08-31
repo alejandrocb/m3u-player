@@ -179,8 +179,23 @@ export interface Variante {
  * funciona igual pero sin parrilla.
  */
 export interface Programacion {
-  /** Lo que echan ahora y lo que viene, o vacío si el canal no tiene EPG. */
+  /**
+   * Lo que echan ahora y lo que viene, o vacío si el canal no tiene EPG.
+   *
+   * Puede acabar preguntándole al panel, así que se pide **para un canal**:
+   * el que tenga el foco encima.
+   */
   deCanal(canalId: string): Promise<Programa[]>;
+  /**
+   * Lo mismo para varios canales, pero **solo de lo ya preparado**.
+   *
+   * Es lo que permite pintar la programación en una fila entera: con la
+   * parrilla del servidor en memoria, saber qué echan en veinte canales no
+   * cuesta ninguna petición. Los que no estén salen sin nada, y no se le
+   * pregunta al panel por ellos: veinte fichas a la vista serían veinte
+   * peticiones.
+   */
+  deCanales(canalIds: string[]): Promise<Record<string, Programa[]>>;
 }
 
 export interface Biblioteca {

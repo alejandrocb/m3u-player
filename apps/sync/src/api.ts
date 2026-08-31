@@ -80,7 +80,7 @@ export async function manejarApi(
   const token = tokenDe(req);
   const aparato = token ? panel.porToken(token) : null;
   if (!aparato || !aparato.grupoId) {
-    if (ruta === '/api/sync' || ruta === '/api/listas' || ruta === '/api/portadas') {
+    if (ruta === '/api/sync' || ruta === '/api/listas' || ruta === '/api/portadas' || ruta === '/api/epg') {
       json(res, 401, { error: 'token no válido' });
       return true;
     }
@@ -90,6 +90,29 @@ export async function manejarApi(
   // --- Las listas del grupo ----------------------------------------------
   if (ruta === '/api/listas' && req.method === 'GET') {
     json(res, 200, { listas: panel.listasDe(aparato.grupoId).map(({ id, nombre, url }) => ({ id, nombre, url })) });
+    return true;
+  }
+
+  // --- Lo que echan ahora en el directo ------------------------------------
+  if (ruta === '/api/epg' && req.method === 'GET') {
+    /*
+      El resumen de la parrilla: dos programas por canal, el de ahora y el
+      siguiente. No se manda la parrilla entera —son 11.515 programas— porque
+      lo que cabe en la ficha de un canal son dos líneas.
+
+      Los identificadores de canal son los `tvg-id`, que es como los llama
+      también el aparato: no hay nada que traducir.
+    */
+    const desde = new Date().toISOString();
+    const listas = panel.listasDe(aparato.grupoId);
+
+    const programas = listas.flatMap((lista) => panel.loQueEchan(lista.id, desde));
+    const generado = listas
+      .map((lista) => panel.parrillaDe(lista.id)?.generado)
+      .filter((cuando): cuando is string => typeof cuando === 'string')
+      .sort()[0];
+
+    json(res, 200, { generado: generado ?? null, programas });
     return true;
   }
 

@@ -10,7 +10,7 @@
  * traducen las dos formas de manejarlo: las teclas del mando y el toque.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -30,6 +30,8 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { avanceDePrograma, programaActual } from '@m3u/core';
+import type { Programa } from '@m3u/core';
 import type {
   Ajustes,
   AlmacenPerfiles,
@@ -81,12 +83,26 @@ import type { Avance, Medicion } from './src/carga';
 import { PantallaEmparejar } from './src/pantalla-emparejar';
 import { PantallaListas } from './src/listas';
 import { PantallaPerfiles } from './src/pantalla-perfiles';
+import { hora } from './src/reloj';
 import { Retrato } from './src/retrato';
 import { Reproductor } from './src/reproductor';
 import type { Cola } from './src/reproductor';
 
 /** Margen para que un segundo "atrás" cierre la app, como en Android. */
 const MARGEN_SALIDA_MS = 3000;
+
+/**
+ * Lo que se espera antes de pedirle al panel la parrilla del canal enfocado.
+ *
+ * El foco se mueve más rápido de lo que responde el panel: sin esto, recorrer
+ * una fila de canales sería una petición por pulsación. Con la parrilla del
+ * servidor puesta no hace falta —eso sale de memoria—, pero el respaldo sigue
+ * siendo el panel.
+ */
+const ESPERA_EPG_MS = 350;
+
+/** Cada cuánto se repinta la parrilla, para que la barra avance sola. */
+const RELOJ_EPG_MS = 30_000;
 
 /**
  * Cuánto se espera con el foco quieto antes de arrancar la vista previa.
@@ -237,7 +253,9 @@ function Raiz() {
       } = await cargarCatalogo(
         elegida,
         (avance) => setFase({ tipo: 'conectando', nombre: elegida.nombre, avance }),
-        { forzar },
+        // La parrilla del directo la prepara el servidor de la casa; si no
+        // hay, la programación se le pide al panel canal a canal.
+        { forzar, parrilla: () => sync.current.epg() },
       );
       biblioteca.current = datos;
       perfiles.current = almacen;
@@ -546,6 +564,16 @@ function BibliotecaVista({
   const [focoPerfil, setFocoPerfil] = useState(0);
   /** Los demás perfiles de la casa, para poder pasarse a uno desde el menú. */
   const [otrosPerfiles, setOtrosPerfiles] = useState<Perfil[]>([]);
+  /** Lo que echan en cada canal, para las filas de TV en directo. */
+  const [programas, setProgramas] = useState<Record<string, Programa[]>>({});
+  /**
+   * Un contador que sube con el reloj.
+   *
+   * Las filas son `FlatList`, que solo repinta sus fichas cuando cambia
+   * `extraData`: sin esto, el programa en curso se quedaría clavado en el que
+   * había al abrir la pantalla y la barra no avanzaría nunca.
+   */
+  const [sello, setSello] = useState(0);
 
   /*
     Estos dos van aquí arriba, con el resto de hooks, y no junto al menú que
@@ -564,6 +592,71 @@ function BibliotecaVista({
     if (!verPerfil) return;
     perfiles.perfiles().then((todos) => setOtrosPerfiles(todos.filter((uno) => uno.id !== perfil.id)));
   }, [verPerfil, perfiles, perfil.id]);
+
+  /*
+    La parrilla de los canales que están a la vista.
+
+    Se piden **todos los de la fila de una vez** y solo de lo que el servidor
+    tenga preparado: con la parrilla en memoria no cuesta ninguna petición.
+    Caer al panel canal a canal aquí serían veinte peticiones por fila.
+  */
+  const canalesALaVista = (estado?.inicio?.filas ?? [])
+    .flatMap((fila) => (fila.tipo === 'carrusel' && fila.formato === 'canal' ? fila.elementos : []))
+    .map((elemento) => elemento.id)
+    .join(',');
+
+  useEffect(() => {
+    if (!canalesALaVista) return;
+    let vivo = true;
+    void programacion.deCanales(canalesALaVista.split(',')).then((traidos) => {
+      if (!vivo) return;
+      setProgramas((antes) => ({ ...antes, ...traidos }));
+      setSello((antes) => antes + 1);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [canalesALaVista, programacion]);
+
+  /*
+    Y el que tiene el foco encima, con un respiro.
+
+    Este sí puede acabar preguntándole al panel —es el camino para las casas
+    sin servidor—, y el foco se mueve más rápido de lo que el panel responde:
+    sin la espera, recorrer una fila de canales sería una petición por
+    pulsación.
+  */
+  const filaEnfocada = estado?.inicio?.filas[estado.inicio.fila];
+  const canalEnfocado =
+    filaEnfocada?.tipo === 'carrusel' && filaEnfocada.formato === 'canal'
+      ? (filaEnfocada.elementos[estado?.inicio?.columna ?? 0]?.id ?? null)
+      : null;
+
+  useEffect(() => {
+    if (!canalEnfocado || programas[canalEnfocado]) return;
+    let vivo = true;
+    const espera = setTimeout(() => {
+      void programacion.deCanal(canalEnfocado).then((suyos) => {
+        if (!vivo || suyos.length === 0) return;
+        setProgramas((antes) => ({ ...antes, [canalEnfocado]: suyos }));
+        setSello((antes) => antes + 1);
+      });
+    }, ESPERA_EPG_MS);
+    return () => {
+      vivo = false;
+      clearTimeout(espera);
+    };
+  }, [canalEnfocado, programacion, programas]);
+
+  /*
+    El reloj de la parrilla. Solo corre si hay canales a la vista: en las
+    demás pestañas no hay nada que repintar cada minuto.
+  */
+  useEffect(() => {
+    if (!canalesALaVista) return;
+    const reloj = setInterval(() => setSello((antes) => antes + 1), RELOJ_EPG_MS);
+    return () => clearInterval(reloj);
+  }, [canalesALaVista]);
 
   /** El mando está en la cabecera —buscar, ajustes, perfil— y no en la rejilla. */
   const [enCabecera, setEnCabecera] = useState(false);
@@ -1536,6 +1629,8 @@ function BibliotecaVista({
         <PantallaInicio
           enCabecera={enCabecera}
           inicio={estado.inicio}
+          programas={programas}
+          sello={sello}
           onMantener={mantenerEnInicio}
           onTurno={(siguiente) => setEstado(presentador.current!.rotarDestacado(siguiente))}
           onTocar={(fila, columna) => {
@@ -1608,6 +1703,8 @@ function BibliotecaVista({
 function PantallaInicio({
   enCabecera,
   inicio,
+  programas,
+  sello,
   onTocar,
   onMantener,
   onTurno,
@@ -1615,6 +1712,10 @@ function PantallaInicio({
   /** El mando está arriba, en la lupa o el perfil. */
   enCabecera: boolean;
   inicio: Inicio;
+  /** Lo que echan en cada canal, para las filas de TV en directo. */
+  programas: Record<string, Programa[]>;
+  /** Sube con el reloj: es lo que hace que las fichas se repinten. */
+  sello: number;
   onTocar: (fila: number, columna: number) => void;
   /** Mantener pulsado añade a Mi Lista, igual que en la rejilla. */
   onMantener: (fila: number, columna: number) => void;
@@ -1714,6 +1815,8 @@ function PantallaInicio({
             formato={item.formato}
             activa={activa}
             columna={inicio.columna}
+            programas={programas}
+            sello={sello}
             onTocar={(columna) => onTocar(index, columna)}
             onMantener={(columna) => onMantener(index, columna)}
           />
@@ -2067,6 +2170,8 @@ function Carrusel({
   formato,
   activa,
   columna,
+  programas,
+  sello,
   onTocar,
   onMantener,
 }: {
@@ -2076,6 +2181,9 @@ function Carrusel({
   formato?: FormatoFila;
   activa: boolean;
   columna: number;
+  /** La parrilla, por canal. Vacía en las filas que no son de directo. */
+  programas: Record<string, Programa[]>;
+  sello: number;
   onTocar: (columna: number) => void;
   onMantener: (columna: number) => void;
 }) {
@@ -2101,7 +2209,7 @@ function Carrusel({
         horizontal
         data={elementos}
         keyExtractor={(elemento) => elemento.id}
-        extraData={`${activa}-${columna}`}
+        extraData={`${activa}-${columna}-${sello}`}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={estilos.filaLista}
         initialNumToRender={8}
@@ -2111,6 +2219,7 @@ function Carrusel({
             item={item}
             formato={formato}
             enfocado={activa && index === columna}
+            programas={programas[item.id]}
             onTocar={() => onTocar(index)}
             onMantener={() => onMantener(index)}
           />
@@ -2148,17 +2257,37 @@ function FichaDeFila({
   item,
   formato,
   enfocado,
+  programas,
   onTocar,
   onMantener,
 }: {
   item: Elemento;
   formato?: FormatoFila;
   enfocado: boolean;
+  /** Lo que echan en este canal, si es un canal y hay parrilla. */
+  programas?: Programa[];
   onTocar: () => void;
   onMantener: () => void;
 }) {
   const esCanal = formato === 'canal';
   const escala = useRef(new Animated.Value(1)).current;
+
+  /*
+    El programa en curso se decide **con la hora del aparato**, no con lo que
+    diga el panel: `now_playing` lo calcula el servidor al responder y
+    envejece en cuanto la pantalla lleva un rato abierta.
+
+    El minuto se recuerda para no rehacer esto en cada pintado, que en una
+    fila de veinte canales es veinte veces por pulsación del mando.
+  */
+  const minuto = Math.floor(Date.now() / 60_000);
+  const enCurso = useMemo(
+    () => (programas?.length ? programaActual(programas, new Date()) : null),
+    // El minuto es la dependencia de verdad: es lo que hace que la barra avance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [programas, minuto],
+  );
+  const avanceEnCurso = enCurso ? avanceDePrograma(enCurso, new Date()) : item.avance;
 
   /*
     Con el dedo **no hay foco**, así que no hay ficha que enseñar al enfocar:
@@ -2234,11 +2363,30 @@ function FichaDeFila({
                   </Text>
                 ) : null}
               </View>
+              {/*
+                Y en un canal, lo que están echando: la hora y el título.
+
+                Sin programación no se pinta nada ni se reserva hueco: 272 de
+                los 463 canales de la lista real no traen tvg-id y no tienen
+                EPG por ningún camino, así que la ficha vacía no es la
+                excepción sino más de la mitad de los casos.
+              */}
+              {enCurso ? (
+                <Text style={estilos.fichaVeloTexto} numberOfLines={1}>
+                  {hora(enCurso.desde)}  {enCurso.titulo}
+                </Text>
+              ) : null}
             </View>
           ) : null}
-          {item.avance !== null ? (
+          {/*
+            La barra dice dos cosas distintas según qué ficha sea: en una
+            película, por dónde ibas; en un canal, por dónde va el programa.
+            No se pisan —un canal no tiene avance guardado— y las dos
+            contestan a lo mismo: cuánto queda.
+          */}
+          {avanceEnCurso !== null ? (
             <View style={estilos.fichaBarra}>
-              <View style={[estilos.fichaBarraVista, { width: `${Math.round(item.avance * 100)}%` }]} />
+              <View style={[estilos.fichaBarraVista, { width: `${Math.round(avanceEnCurso * 100)}%` }]} />
             </View>
           ) : null}
         </View>

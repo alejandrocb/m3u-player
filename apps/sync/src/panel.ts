@@ -91,6 +91,35 @@ CREATE TABLE IF NOT EXISTS portada (
   datos    TEXT NOT NULL
 );
 
+-- La programación del directo, del EPG completo del panel (xmltv.php).
+--
+-- Aquí sí van columnas y no un JSON como en la tabla portada: lo que se
+-- entrega no es la tabla entera sino "qué echan ahora", que cambia cada minuto
+-- y hay que consultarlo por hora. Guardarlo en un JSON obligaría a leer y
+-- analizar los 11.515 programas de la lista en cada petición.
+--
+-- El canal es el identificador del XMLTV, que es el tvg-id del aparato:
+-- comprobado contra la lista real, casan 191 de 191.
+CREATE TABLE IF NOT EXISTS programa (
+  lista_id TEXT NOT NULL,
+  canal    TEXT NOT NULL,
+  -- En ISO y en UTC, que es como se comparan sin depender del huso de nadie.
+  desde    TEXT NOT NULL,
+  hasta    TEXT NOT NULL,
+  titulo   TEXT NOT NULL,
+  sinopsis TEXT
+);
+-- Por canal y hora, que es como se pregunta: "lo de este canal a partir de ahora".
+CREATE INDEX IF NOT EXISTS programa_por_canal ON programa (lista_id, canal, desde);
+
+-- Cuándo se trajo la parrilla de cada lista, para saber si toca rehacerla.
+CREATE TABLE IF NOT EXISTS parrilla (
+  lista_id TEXT PRIMARY KEY,
+  generado TEXT NOT NULL,
+  canales  INTEGER NOT NULL,
+  programas INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS admin (
   usuario    TEXT PRIMARY KEY,
   contrasena TEXT NOT NULL,
@@ -127,6 +156,21 @@ export interface Lista {
   grupoId: string;
   nombre: string;
   url: string;
+}
+
+/**
+ * Un programa tal como se guarda y se entrega.
+ *
+ * Las horas van en texto ISO y no como `Date`: es lo que entra en SQLite, lo
+ * que viaja por JSON y lo que el aparato vuelve a convertir con su propio
+ * huso. Convertirlas aquí a hora local sería decidir por él.
+ */
+export interface ProgramaGuardado {
+  canal: string;
+  desde: string;
+  hasta: string;
+  titulo: string;
+  sinopsis: string | null;
 }
 
 function ahora(): string {
@@ -438,6 +482,93 @@ export class Panel {
     } catch {
       return null;
     }
+  }
+
+  // --- Parrilla del directo -------------------------------------------------
+
+  /**
+   * Guarda la parrilla de una lista, reemplazando la que hubiera.
+   *
+   * Se borra y se vuelve a escribir entera en una transacción: no hay nada que
+   * fusionar —el panel manda la verdad completa cada vez— y así no quedan
+   * programas viejos de un canal que ya no venga. Esto **no** es el historial:
+   * aquí no hay lápidas que valgan, es una copia de lo que dice el panel.
+   */
+  guardarParrilla(listaId: string, programas: ProgramaGuardado[]): void {
+    // BEGIN y COMMIT no llevan parámetros y `prepare` los rechaza: van por
+    // `exec`, como en `comoBaseSQL`.
+    this.#db.exec('BEGIN');
+    try {
+      this.#ejecutar('DELETE FROM programa WHERE lista_id = ?', [listaId]);
+      for (const uno of programas) {
+        this.#ejecutar(
+          'INSERT INTO programa (lista_id, canal, desde, hasta, titulo, sinopsis) VALUES (?, ?, ?, ?, ?, ?)',
+          [listaId, uno.canal, uno.desde, uno.hasta, uno.titulo, uno.sinopsis],
+        );
+      }
+      const canales = new Set(programas.map((uno) => uno.canal)).size;
+      this.#ejecutar(
+        `INSERT INTO parrilla (lista_id, generado, canales, programas) VALUES (?, ?, ?, ?)
+         ON CONFLICT(lista_id) DO UPDATE SET generado = excluded.generado,
+           canales = excluded.canales, programas = excluded.programas`,
+        [listaId, ahora(), canales, programas.length],
+      );
+      this.#db.exec('COMMIT');
+    } catch (fallo) {
+      this.#db.exec('ROLLBACK');
+      throw fallo;
+    }
+  }
+
+  /** Cuándo se trajo la parrilla de una lista, o `null` si nunca. */
+  parrillaDe(listaId: string): { generado: string; canales: number; programas: number } | null {
+    const fila = this.#filas('SELECT generado, canales, programas FROM parrilla WHERE lista_id = ?', [
+      listaId,
+    ])[0];
+    if (!fila) return null;
+    return {
+      generado: fila.generado as string,
+      canales: Number(fila.canales),
+      programas: Number(fila.programas),
+    };
+  }
+
+  /**
+   * Lo que echan ahora en cada canal de una lista, y lo que viene después.
+   *
+   * Dos filas por canal y no la parrilla entera: es lo que cabe en la ficha de
+   * un canal, y lo que hace que la respuesta sean decenas de kilobytes en vez
+   * de megas. Lo que ya terminó no se manda: para eso está la hora.
+   */
+  loQueEchan(listaId: string, desde: string, porCanal = 2): ProgramaGuardado[] {
+    const filas = this.#filas(
+      `SELECT canal, desde, hasta, titulo, sinopsis FROM programa
+       WHERE lista_id = ? AND hasta > ?
+       ORDER BY canal, desde`,
+      [listaId, desde],
+    );
+
+    // El recorte por canal se hace aquí y no en SQL: SQLite no tiene funciones
+    // de ventana en todas las compilaciones y esto son unos cientos de filas.
+    const salida: ProgramaGuardado[] = [];
+    let canal = '';
+    let cuantos = 0;
+    for (const fila of filas) {
+      if (fila.canal !== canal) {
+        canal = fila.canal as string;
+        cuantos = 0;
+      }
+      if (cuantos >= porCanal) continue;
+      cuantos += 1;
+      salida.push({
+        canal: fila.canal as string,
+        desde: fila.desde as string,
+        hasta: fila.hasta as string,
+        titulo: fila.titulo as string,
+        sinopsis: (fila.sinopsis ?? null) as string | null,
+      });
+    }
+    return salida;
   }
 
   /** Todas las listas del servidor, para el trabajo diario. */

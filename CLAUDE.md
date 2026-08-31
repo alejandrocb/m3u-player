@@ -126,38 +126,60 @@ se deduce del contenido: `carteles` (2:3, el buscador), `episodios` (fila con
 fotograma y sinopsis) y `lista`. Las filas del inicio no pasan por ahí: cada
 una lleva su propio `formato` —cartel o canal—.
 
-### La parrilla del directo, hoy a medias
+### La parrilla del directo: la trae el servidor de una vez
 
-Lo que echan solo se ve **dentro del reproductor**: al abrir un canal, donde
-iría "0:00 / 0:00" van la hora de inicio, el título del programa y la hora de
-fin, con la barra marcando por dónde va.
+En la ficha de cada canal —la enfocada en el televisor, todas con el dedo— van
+la hora de inicio y el título de lo que están echando, con la barra marcando
+por dónde va. Y dentro del reproductor, donde iría "0:00 / 0:00", lo mismo con
+la hora de fin.
 
-La columna que lo enseñaba antes de abrir —con la vista previa del canal
-enfocado— se fue con la rejilla. Queda pendiente devolverla a la pantalla de
-directo, que ahora son filas por grupo de canales, y ahí es donde encajará lo
-que prepare el servidor con el EPG completo.
+De dónde salen esos datos, por este orden:
 
-El EPG se pide con `get_short_epg` canal a canal, con un retardo de 350 ms
-desde que el foco se para —el foco se mueve más rápido de lo que responde el
-panel— y se cachea media hora en memoria. Medido: 3,4 KB por canal frente a
-los 186 KB de `get_simple_data_table`, que trae la semana entera.
+1. **La parrilla que prepara el servidor de la casa.** Se trae el EPG completo
+   (`xmltv.php`) dos veces al día por lista, lo guarda en la tabla `programa` y
+   entrega por `GET /api/epg` **solo el resumen**: dos programas por canal, el
+   de ahora y el siguiente. Son decenas de kilobytes en una sola petición.
+2. **El panel, canal a canal**, para lo que el servidor no tenga: una casa sin
+   servidor, una lista aún sin preparar, o un canal que no salía en el EPG.
+   `get_short_epg` con un retardo de 350 ms desde que el foco se para —el foco
+   se mueve más rápido de lo que responde el panel— y media hora de caché en
+   memoria.
 
-**Y el EPG entero sale a cuenta: lo prepara el servidor.** Medido con el
-`probe` contra la lista real: `xmltv.php` son **5,5 MB en 4,9 s, con 191
-canales y 11.515 programas** —unos dos o tres días de parrilla—. Es una
-descarga al día por lista, y a los aparatos les basta con el resumen de lo que
-hay ahora, que son unas decenas de kilobytes. Encaja con lo que el VPS ya hace
-con las portadas, y quita de en medio la petición por canal cada vez que el
-foco se para.
+Medido contra la lista real, que es lo que decidió el reparto: `xmltv.php` son
+**5,5 MB en 4,9 s, 191 canales y 11.515 programas**; `get_short_epg` son 3,4 KB
+pero **una petición por canal**, y `get_simple_data_table` 186 KB por canal.
+Para un televisor lo primero es inviable; para el servidor es una descarga que
+aprovechan los tres aparatos, igual que las portadas.
 
-Lo que había que comprobar antes de fiarse era **si los identificadores
-casan**, y casan: los `channel id` del XMLTV son exactamente nuestros `tvg-id`,
-191 de 191. No hace falta ninguna tabla de equivalencias por nombre.
+Lo que había que comprobar antes de montarlo era **si los identificadores
+casan**: los `channel id` del XMLTV son nuestros `tvg-id`, 191 de 191. Sin eso
+habría hecho falta emparejar por nombre.
 
-La otra cara: **272 de los 463 canales no traen `tvg-id`**, así que no tienen
-EPG por ningún camino —ni por aquí ni con `get_short_epg`—. Son sobre todo los
-de eventos: NBA, NFL, jornadas de liga. La ficha de un canal tiene que quedar
-bien **sin** programación, porque en más de la mitad no la habrá nunca.
+Por eso el puerto tiene **dos formas de preguntar**, y no son intercambiables:
+
+- `deCanal(id)` puede acabar en el panel, así que se pide **solo para el canal
+  enfocado**.
+- `deCanales(ids)` devuelve **únicamente lo ya preparado** y no pregunta nada:
+  es lo que permite pintar la fila entera. Si cayera al panel, veinte fichas a
+  la vista serían veinte peticiones.
+
+**272 de los 463 canales no traen `tvg-id`** y no tienen programación por
+ninguno de los dos caminos: son los de eventos —NBA, NFL, jornadas de liga,
+UFC—. La ficha tiene que quedar bien sin ella, y por eso no se reserva hueco
+para lo que falte: sin programa no se pinta nada.
+
+Se probó también el EPG público de davidmuma (`guiatv.xml`), por si cubría a
+los que no tienen: **31,3 MB, 641 canales y 80.704 programas**, pero sus
+identificadores son nombres ("La 1 HD") y no `tvg-id`, así que solo casan 130
+de los 191. Casando además por nombre se llega a 190 canales, uno menos que los
+que ya cubre el panel, y de los 272 sin `tvg-id` rescataría 27. O sea: cuesta
+seis veces más, obliga a emparejar por nombre y aporta veintisiete canales.
+Queda como complemento posible —lo haría el servidor, que no gasta conexiones
+del panel—, no como sustituto.
+
+La vista previa del canal enfocado, que se fue con la rejilla vieja, sigue
+pendiente: depende del árbitro de conexión, porque previsualizar es una
+reproducción más.
 
 ### Un perfil es una persona: solo suena en un sitio
 

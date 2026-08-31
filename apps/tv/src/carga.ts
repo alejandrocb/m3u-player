@@ -17,7 +17,14 @@
 import { buildLibrary, parseM3U } from '@m3u/core';
 import { XtreamClient, construirCatalogo, credentialsFromUrl, fichaDeSerie, temporadasDeSerie } from '@m3u/core/xtream';
 import type { Library } from '@m3u/core';
-import type { AlmacenPerfiles, Biblioteca, Cuenta, FichaLarga, Programacion } from '@m3u/ui';
+import type {
+  AlmacenPerfiles,
+  Biblioteca,
+  Cuenta,
+  FichaLarga,
+  Programacion,
+  ProgramaRemoto,
+} from '@m3u/ui';
 
 import { abrirBase, estadoGuardado, guardarCatalogo } from './basedatos';
 import { bibliotecaEnBase } from './biblioteca-base';
@@ -58,6 +65,13 @@ export interface Avance {
 export interface OpcionesCarga {
   /** El botón de actualizar: reimporta aunque lo guardado esté fresco. */
   forzar?: boolean;
+  /**
+   * La parrilla que prepara el servidor de la casa.
+   *
+   * Es opcional porque no todas las casas tienen servidor: sin esto, la
+   * programación se le pide al panel canal a canal, como siempre.
+   */
+  parrilla?: () => Promise<ProgramaRemoto[]>;
 }
 
 export async function cargarCatalogo(
@@ -88,7 +102,7 @@ export async function cargarCatalogo(
     return {
       biblioteca,
       perfiles,
-      programacion: programacionDelPanel(cliente, biblioteca),
+      programacion: programacionDelPanel({ cliente, biblioteca, parrilla: opciones.parrilla }),
       medicion: {
         total: Date.now() - arranque,
         via: 'guardada',
@@ -114,7 +128,7 @@ export async function cargarCatalogo(
   return {
     biblioteca,
     perfiles,
-    programacion: programacionDelPanel(cliente, biblioteca),
+    programacion: programacionDelPanel({ cliente, biblioteca, parrilla: opciones.parrilla }),
     medicion: {
       total: Date.now() - arranque,
       via: cliente ? 'panel' : 'm3u',
