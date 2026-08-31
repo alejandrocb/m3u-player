@@ -55,6 +55,7 @@ import {
   ClienteSync,
   GestorCuentas,
   MODOS_INICIO,
+  canalDeElemento,
   elementosDeFila,
   Presentador,
   cantidad,
@@ -602,7 +603,8 @@ function BibliotecaVista({
   */
   const canalesALaVista = (estado?.inicio?.filas ?? [])
     .flatMap((fila) => (fila.tipo === 'carrusel' && fila.formato === 'canal' ? fila.elementos : []))
-    .map((elemento) => elemento.id)
+    .map((elemento) => canalDeElemento(elemento))
+    .filter((canal): canal is string => canal !== null)
     .join(',');
 
   useEffect(() => {
@@ -627,10 +629,11 @@ function BibliotecaVista({
     pulsación.
   */
   const filaEnfocada = estado?.inicio?.filas[estado.inicio.fila];
-  const canalEnfocado =
+  const fichaEnfocada =
     filaEnfocada?.tipo === 'carrusel' && filaEnfocada.formato === 'canal'
-      ? (filaEnfocada.elementos[estado?.inicio?.columna ?? 0]?.id ?? null)
-      : null;
+      ? filaEnfocada.elementos[estado?.inicio?.columna ?? 0]
+      : undefined;
+  const canalEnfocado = fichaEnfocada ? canalDeElemento(fichaEnfocada) : null;
 
   useEffect(() => {
     if (!canalEnfocado || programas[canalEnfocado]) return;
@@ -2219,7 +2222,7 @@ function Carrusel({
             item={item}
             formato={formato}
             enfocado={activa && index === columna}
-            programas={programas[item.id]}
+            programas={programas[canalDeElemento(item) ?? '']}
             onTocar={() => onTocar(index)}
             onMantener={() => onMantener(index)}
           />

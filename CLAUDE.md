@@ -155,6 +155,15 @@ Lo que había que comprobar antes de montarlo era **si los identificadores
 casan**: los `channel id` del XMLTV son nuestros `tvg-id`, 191 de 191. Sin eso
 habría hecho falta emparejar por nombre.
 
+**El identificador de un canal no es el que lleva la ficha.** Un `Elemento`
+lleva la clase delante —`canal:tvg:24 Horas`— para que dos fichas de la misma
+fila no compartan clave, y el canal de verdad sale de su acción
+(`canalDeElemento`). Y el de la biblioteca lleva a su vez el prefijo `tvg:`,
+que el EPG no usa. Son dos traducciones seguidas, y saltarse cualquiera de las
+dos da el mismo síntoma: la parrilla llega entera del servidor, no casa con un
+solo canal y la fila sale sin programación **sin un solo error por ninguna
+parte**. Pasó con las dos.
+
 Por eso el puerto tiene **dos formas de preguntar**, y no son intercambiables:
 
 - `deCanal(id)` puede acabar en el panel, así que se pide **solo para el canal

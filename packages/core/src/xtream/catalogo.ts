@@ -24,6 +24,7 @@ import type {
   Series,
   Variant,
 } from '../models.ts';
+import { idDeCanalPorNombre, idDeCanalPorTvg } from '../canales.ts';
 import { cleanGroup, parseChannelName, parseName, qualityRank, slug } from '../normalize.ts';
 import { anioDeFecha, epoch, segundosDeEpisodio, tituloDeEpisodio } from '../episodios.ts';
 import { ordenarPor } from '../ordenar.ts';
@@ -174,7 +175,7 @@ function anadirCanal(
   // Las categorías del panel llevan la misma decoración que los grupos del
   // M3U ("== NOTICIAS"), puesta para forzar el orden alfabético.
   const grupo = cleanGroup(categoria.category_name);
-  const id = tvgId ? `tvg:${tvgId}` : `name:${slug(name)}@${slug(grupo)}`;
+  const id = tvgId ? idDeCanalPorTvg(tvgId) : idDeCanalPorNombre(name, grupo);
 
   let canal = canales.get(id);
   if (!canal) {

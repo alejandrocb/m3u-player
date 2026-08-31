@@ -24,7 +24,7 @@
  * bien sin ella.
  */
 
-import { programasDesde, streamIdDeUrl } from '@m3u/core';
+import { idDeCanalPorTvg, programasDesde, streamIdDeUrl } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 import type { XtreamClient } from '@m3u/core/xtream';
 import type { Biblioteca, Programacion, ProgramaRemoto } from '@m3u/ui';
@@ -56,7 +56,16 @@ export interface OpcionesProgramacion {
   parrilla?: () => Promise<ProgramaRemoto[]>;
 }
 
-/** Pasa lo que manda el servidor a la forma en que lo usa la interfaz. */
+/**
+ * Pasa lo que manda el servidor a la forma en que lo usa la interfaz.
+ *
+ * Y traduce el identificador, que es la parte que no se ve: el EPG habla de
+ * `tvg-id` pelados —`La1.es`— y la biblioteca guarda sus canales como
+ * `tvg:La1.es`, para que un canal sin `tvg-id` que se llamara igual no se
+ * llevara por delante el historial de otro. Sin esta traducción la parrilla
+ * llega entera y no casa con un solo canal, que es exactamente lo que pasó la
+ * primera vez.
+ */
 function comoProgramas(remotos: ProgramaRemoto[]): Map<string, Programa[]> {
   const porCanal = new Map<string, Programa[]>();
   for (const remoto of remotos) {
@@ -65,14 +74,15 @@ function comoProgramas(remotos: ProgramaRemoto[]): Map<string, Programa[]> {
     // Una fecha ilegible tumbaría la comparación con la hora del aparato.
     if (Number.isNaN(desde.getTime()) || Number.isNaN(hasta.getTime())) continue;
 
-    const suyos = porCanal.get(remoto.canal) ?? [];
+    const canalId = idDeCanalPorTvg(remoto.canal);
+    const suyos = porCanal.get(canalId) ?? [];
     suyos.push({
       titulo: remoto.titulo,
       descripcion: remoto.sinopsis,
       desde,
       hasta,
     });
-    porCanal.set(remoto.canal, suyos);
+    porCanal.set(canalId, suyos);
   }
   for (const suyos of porCanal.values()) suyos.sort((a, b) => a.desde.getTime() - b.desde.getTime());
   return porCanal;

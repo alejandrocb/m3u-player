@@ -2,6 +2,7 @@ export * from './models.ts';
 export * from './normalize.ts';
 export * from './ordenar.ts';
 export * from './recomendar.ts';
+export * from './canales.ts';
 export * from './classify.ts';
 export * from './epg.ts';
 export * from './xmltv.ts';

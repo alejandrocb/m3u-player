@@ -387,3 +387,57 @@ test('dos tandas seguidas no comparten sello', async () => {
     await m.cerrar();
   }
 });
+
+test('la parrilla del directo llega por /api/epg, y solo la de tu casa', async () => {
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.crearGrupo('Casa Fariones');
+    // Sin `id`, que con él `guardarLista` actualiza en vez de dar de alta.
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    m.panel.guardarLista('casa-fariones', 'Otra', 'http://otro:8080/get.php?username=u&password=p');
+    const deTriana = m.panel.listasDe('casa-triana')[0]!.id;
+    const deFariones = m.panel.listasDe('casa-fariones')[0]!.id;
+
+    const ahora = Date.now();
+    const enHoras = (horas: number): string => new Date(ahora + horas * 3_600_000).toISOString();
+
+    m.panel.guardarParrilla(deTriana, [
+      // Terminado: no tiene que salir, o parecería que lo están echando.
+      { canal: '24h', desde: enHoras(-4), hasta: enHoras(-3), titulo: 'Lo de antes', sinopsis: null },
+      { canal: '24h', desde: enHoras(-1), hasta: enHoras(1), titulo: 'Telediario', sinopsis: 'Noticias' },
+      { canal: '24h', desde: enHoras(1), hasta: enHoras(2), titulo: 'Lo siguiente', sinopsis: null },
+      { canal: '24h', desde: enHoras(2), hasta: enHoras(3), titulo: 'Y lo de después', sinopsis: null },
+    ]);
+    m.panel.guardarParrilla(deFariones, [
+      { canal: 'otro', desde: enHoras(-1), hasta: enHoras(1), titulo: 'De la otra casa', sinopsis: null },
+    ]);
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+    const respuesta = await pedir(m.url, '/api/epg', { metodo: 'GET', token });
+    const programas = respuesta.datos.programas as Array<Record<string, unknown>>;
+
+    assert.equal(respuesta.estado, 200);
+    // Dos por canal —el de ahora y el siguiente— y nada de la otra casa.
+    assert.deepEqual(
+      programas.map((uno) => uno.titulo),
+      ['Telediario', 'Lo siguiente'],
+    );
+    // El identificador es el `tvg-id` pelado: traducirlo al de la biblioteca
+    // (`tvg:24h`) es cosa del aparato.
+    assert.equal(programas[0]!.canal, '24h');
+    assert.ok(respuesta.datos.generado, 'debería decir cuándo se preparó');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('sin token no se ve la parrilla', async () => {
+  const m = await montar();
+  try {
+    const respuesta = await pedir(m.url, '/api/epg', { metodo: 'GET' });
+    assert.equal(respuesta.estado, 401);
+  } finally {
+    await m.cerrar();
+  }
+});

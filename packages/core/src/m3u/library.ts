@@ -14,6 +14,7 @@
  *   - Episodio: temporada + número, dentro de su serie.
  */
 
+import { idDeCanalPorNombre, idDeCanalPorTvg } from '../canales.ts';
 import { classify, parseEpisodeTag, parseSeriesHead } from '../classify.ts';
 import type {
   Channel,
@@ -238,7 +239,7 @@ function addChannel(
   // calidad. Se incluye el grupo en la clave del fallback para no fusionar
   // dos canales distintos que casualmente se llamen igual en secciones
   // diferentes (un "Deportes 1" de fútbol y otro de motor).
-  const id = tvgId ? `tvg:${tvgId}` : `name:${slug(name)}@${slug(group)}`;
+  const id = tvgId ? idDeCanalPorTvg(tvgId) : idDeCanalPorNombre(name, group);
 
   let channel = channels.get(id);
   if (!channel) {

@@ -196,6 +196,21 @@ export function elementosDeFila(fila: FilaInicio): Elemento[] {
   return fila.elementos;
 }
 
+/**
+ * El identificador del canal de una ficha, o `null` si no es un canal.
+ *
+ * Sale de su acción y **no de `Elemento.id`**, que lleva delante la clase
+ * —`canal:tvg:24 Horas`— para que dos fichas distintas de la misma fila no
+ * compartan clave. Preguntar la parrilla con ese identificador compuesto es
+ * preguntar por un canal que no existe: la fila salía entera sin programación
+ * y sin ningún error por ninguna parte.
+ */
+export function canalDeElemento(elemento: Elemento): string | null {
+  const accion = elemento.accion;
+  if (accion?.tipo !== 'reproducir' || accion.medio.clase !== 'canal') return null;
+  return accion.medio.id;
+}
+
 /** Cuántas sugerencias se turnan en la portada. */
 export const DESTACADAS = 4;
 
