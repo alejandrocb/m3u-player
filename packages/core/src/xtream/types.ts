@@ -99,6 +99,8 @@ export interface XtreamSeriesInfo {
     genre?: string;
     /** Imagen apaisada, en una lista, igual que en las películas. */
     backdrop_path?: string[];
+    /** El tráiler de YouTube, igual que en las películas. */
+    youtube_trailer?: string;
   };
   /** Clave = número de temporada. */
   episodes?: Record<string, XtreamEpisode[]>;

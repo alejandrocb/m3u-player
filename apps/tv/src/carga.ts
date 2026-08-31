@@ -209,8 +209,13 @@ async function detalleDePelicula(cliente: XtreamClient, panelIds: number[]): Pro
     // `backdrop_path` llega como lista aunque traiga una sola imagen.
     const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
     const genero = info.genre?.trim() || null;
+    // El tráiler no se reproduce aquí: se abre en YouTube, que además no gasta
+    // conexión del panel.
+    const trailer = info.youtube_trailer?.trim() || null;
 
-    if (sinopsis || reparto || fondo || genero) return { sinopsis, reparto, fondo, genero };
+    if (sinopsis || reparto || fondo || genero || trailer) {
+      return { sinopsis, reparto, fondo, genero, trailer };
+    }
   }
   return null;
 }

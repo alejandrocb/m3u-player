@@ -18,6 +18,7 @@ import {
   BackHandler,
   FlatList,
   Image,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -35,10 +36,12 @@ import type { Programa } from '@m3u/core';
 import type {
   Ajustes,
   AlmacenPerfiles,
+  Marcable,
   Biblioteca,
   Cuenta,
   Elemento,
   EstadoPantalla,
+  Ficha as FichaDetalle,
   FilaInicio,
   Formato,
   FormatoFila,
@@ -57,6 +60,7 @@ import {
   Arbitro,
   MODOS_INICIO,
   canalDeElemento,
+  medioDeElemento,
   elementosDeFila,
   Presentador,
   cantidad,
@@ -583,6 +587,17 @@ function BibliotecaVista({
   /** Lo que echan en cada canal, para las filas de TV en directo. */
   const [programas, setProgramas] = useState<Record<string, Programa[]>>({});
   /**
+   * El menú de mantener pulsado, con lo que se puede hacer con una ficha.
+   *
+   * Antes, mantener pulsado añadía a Mi Lista y ya. Ahora abre esto, porque
+   * hay tres cosas que hacer con una película y solo una de ellas cabía en un
+   * gesto: información, Mi Lista y descargar.
+   */
+  const [menuFicha, setMenuFicha] = useState<Marcable | null>(null);
+  const [focoFicha, setFocoFicha] = useState(0);
+  /** Un aviso corto abajo, para lo que no abre pantalla: "Añadido a Mi Lista". */
+  const [aviso, setAviso] = useState<string | null>(null);
+  /**
    * Un contador que sube con el reloj.
    *
    * Las filas son `FlatList`, que solo repinta sus fichas cuando cambia
@@ -608,6 +623,13 @@ function BibliotecaVista({
     if (!verPerfil) return;
     perfiles.perfiles().then((todos) => setOtrosPerfiles(todos.filter((uno) => uno.id !== perfil.id)));
   }, [verPerfil, perfiles, perfil.id]);
+
+  /* El aviso de abajo se va solo: es un acuse de recibo, no un mensaje. */
+  useEffect(() => {
+    if (!aviso) return;
+    const reloj = setTimeout(() => setAviso(null), 3000);
+    return () => clearTimeout(reloj);
+  }, [aviso]);
 
   /*
     La parrilla de los canales que están a la vista.
@@ -926,6 +948,10 @@ function BibliotecaVista({
     if (!instancia) return false;
 
     // Lo que esté encima se cierra antes que nada, de más reciente a menos.
+    if (menuFicha) {
+      setMenuFicha(null);
+      return true;
+    }
     if (verPerfil) {
       setVerPerfil(false);
       return true;
@@ -962,7 +988,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -993,14 +1019,35 @@ function BibliotecaVista({
       return;
     }
 
-    instancia.aceptar().then(({ estado: nuevo, reproducir }) => {
+    instancia.aceptar().then(({ estado: nuevo, reproducir, abrir, descargar }) => {
       setEstado(nuevo);
+      // El tráiler lo pone YouTube: aquí no hay reproductor que valga para él,
+      // y además no gasta conexión del panel.
+      if (abrir) {
+        Linking.openURL(abrir).catch(() => setAviso('No se pudo abrir el tráiler'));
+        return;
+      }
+      if (descargar) {
+        setAviso('Las descargas llegan en la próxima versión');
+        return;
+      }
       if (!reproducir) return;
       // Los canales estrenan en la columna; lo demás va a pantalla completa.
       setReproduciendo(reproducir);
       setAPantallaCompleta(reproducir.clase !== 'canal');
     });
   }, [reproduciendo, aPantallaCompleta]);
+
+  /** Pulsar un botón de la ficha con el dedo: se enfoca y se acepta. */
+  const aceptarEn = useCallback(
+    (indice: number) => {
+      const instancia = presentador.current;
+      if (!instancia) return;
+      setEstado(instancia.enfocar(indice));
+      aceptar();
+    },
+    [aceptar],
+  );
 
   /** En una tablet no hay mando: el dedo elige la ficha y la abre de una vez. */
   const tocar = useCallback(
@@ -1019,11 +1066,22 @@ function BibliotecaVista({
    * Es el gesto que no choca con el toque normal, que reproduce o entra, y en
    * un mando le corresponde la tecla larga de OK.
    */
+  /*
+    Mantener pulsado abre el menú de la ficha.
+
+    El toque normal reproduce o entra, que es lo que uno quiere casi siempre;
+    lo demás —ver la información, marcar, descargar— cuelga del gesto largo,
+    que es el mismo con el dedo y con el OK del mando.
+  */
   const mantener = useCallback(
     (indice: number) => {
       const instancia = presentador.current;
       if (!instancia || reproduciendo) return;
-      instancia.alternarFavorito(indice).then(setEstado);
+      const elemento = instancia.estado().elementos[indice];
+      const medio = elemento ? medioDeElemento(elemento) : null;
+      if (!medio) return;
+      setFocoFicha(0);
+      setMenuFicha(medio);
     },
     [reproduciendo],
   );
@@ -1033,7 +1091,11 @@ function BibliotecaVista({
     (fila: number, columna: number) => {
       const instancia = presentador.current;
       if (!instancia || reproduciendo) return;
-      instancia.alternarFavoritoEnInicio(fila, columna).then(setEstado);
+      const elemento = instancia.estado().inicio?.filas[fila]?.elementos[columna];
+      const medio = elemento ? medioDeElemento(elemento) : null;
+      if (!medio) return;
+      setFocoFicha(0);
+      setMenuFicha(medio);
     },
     [reproduciendo],
   );
@@ -1068,6 +1130,15 @@ function BibliotecaVista({
         // La cabecera: se entra subiendo desde la primera fila y se sale
         // bajando. Sin esto, en un televisor no hay forma de llegar a buscar
         // ni a los ajustes, porque no hay dedo que los toque.
+        // Igual que el del perfil: mientras está abierto, el menú manda.
+        if (menuFicha) {
+          if (evento.eventType === 'up') setFocoFicha((actual) => Math.max(0, actual - 1));
+          else if (evento.eventType === 'down') {
+            setFocoFicha((actual) => Math.min(opcionesFicha.length - 1, actual + 1));
+          }
+          return;
+        }
+
         // El menú del perfil, mientras está abierto, se queda con las teclas.
         if (verPerfil) {
           if (evento.eventType === 'up') {
@@ -1146,12 +1217,18 @@ function BibliotecaVista({
         marcar nada: el gesto solo existía por pantalla táctil.
       */
       case 'longSelect':
-        if (verAjustes || verPerfil || enCabecera || reproduciendo || !estado) return;
+        if (verAjustes || verPerfil || menuFicha || enCabecera || reproduciendo || !estado) return;
         if (estado.inicio) mantenerEnInicio(estado.inicio.fila, estado.inicio.columna);
         else if (!estado.lateral?.dentro) mantener(estado.foco);
         return;
 
       case 'select':
+        if (menuFicha) {
+          const opcion = opcionesFicha[focoFicha];
+          setMenuFicha(null);
+          opcion?.onPress();
+          return;
+        }
         if (verAjustes) {
           opcionesAjustes[focoAjustes]?.();
           return;
@@ -1236,6 +1313,47 @@ function BibliotecaVista({
    * poder señalar cuál está enfocado y ejecutarlo desde el manejador de
    * teclas: en la tele no hay dedo que los alcance.
    */
+  /**
+   * Lo que se puede hacer con una ficha, desde el menú de mantener pulsado.
+   *
+   * Un canal no tiene información que enseñar —ni sinopsis, ni reparto, ni
+   * tráiler— así que ahí solo queda Mi Lista. Y una serie no se descarga: se
+   * descargan sus episodios, desde dentro.
+   */
+  const opcionesFicha: Array<{ texto: string; onPress: () => void }> = menuFicha
+    ? [
+        ...(menuFicha.clase === 'pelicula' || menuFicha.clase === 'serie'
+          ? [
+              {
+                texto: 'Información',
+                onPress: () =>
+                  void presentador.current
+                    ?.abrirFicha(menuFicha.clase as 'pelicula' | 'serie', menuFicha.id, menuFicha.titulo)
+                    .then(setEstado),
+              },
+            ]
+          : []),
+        {
+          texto: 'Mi Lista',
+          onPress: () => {
+            void presentador.current?.marcar(menuFicha).then(() => {
+              setAviso(`${menuFicha.titulo} · Mi Lista`);
+              // Y se recarga, que el corazón de la carátula tiene que cambiar.
+              void presentador.current?.cargar().then(setEstado);
+            });
+          },
+        },
+        ...(menuFicha.clase === 'pelicula'
+          ? [
+              {
+                texto: 'Descargar',
+                onPress: () => setAviso('Las descargas llegan en la próxima versión'),
+              },
+            ]
+          : []),
+      ]
+    : [];
+
   /**
    * Lo que cuelga del círculo del perfil.
    *
@@ -1349,7 +1467,7 @@ function BibliotecaVista({
           <View style={estilos.tituloBloque}>
             {/* En el inicio no va ninguno: lo dicen las pestañas, y el
                 subtítulo se comía el sitio de la portada. */}
-            {estado.inicio ? null : <Text style={estilos.titulo}>{estado.titulo}</Text>}
+            {estado.inicio || estado.ficha ? null : <Text style={estilos.titulo}>{estado.titulo}</Text>}
             {enInicio && !estado.inicio ? (
               <Text style={estilos.subtitulo}>
                 {cuenta.nombre} · {cantidad(medicion.entradas, 'ficha', 'fichas')} ·{' '}
@@ -1563,6 +1681,33 @@ function BibliotecaVista({
       ) : null}
 
       {/*
+        El menú de la ficha: lo que se puede hacer con lo que se mantuvo
+        pulsado. Cuelga del centro y no de la carátula: con el mando no hay
+        puntero al que anclarlo, y con el dedo la carátula puede estar en un
+        borde.
+      */}
+      {menuFicha ? (
+        <View style={estilos.menuPerfil}>
+          <Text style={estilos.menuNombre} numberOfLines={2}>
+            {menuFicha.titulo}
+          </Text>
+          {opcionesFicha.map((opcion, indice) => (
+            <Pressable
+              key={opcion.texto}
+              focusable={false}
+              style={[estilos.menuOpcion, focoFicha === indice && estilos.menuOpcionEnfocada]}
+              onPress={() => {
+                setMenuFicha(null);
+                opcion.onPress();
+              }}
+            >
+              <Text style={estilos.menuOpcionTexto}>{opcion.texto}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {/*
         La barra flota sobre la portada, así que hay que quitarla a mano
         cuando el vídeo ocupa la pantalla: el reproductor se pinta por encima
         de todo lo demás, pero esto va en su propia capa y se quedaba puesto
@@ -1664,8 +1809,14 @@ function BibliotecaVista({
       ) : null}
 
       <View style={[estilos.cuerpo, estado.inicio && estilos.cuerpoOculto]}>
-        {barraLateral}
-        {rejilla}
+        {estado.ficha ? (
+          <PantallaFicha ficha={estado.ficha} botones={estado.elementos} foco={estado.foco} onTocar={aceptarEn} />
+        ) : (
+          <>
+            {barraLateral}
+            {rejilla}
+          </>
+        )}
       </View>
       </View>
 
@@ -1691,6 +1842,13 @@ function BibliotecaVista({
         </View>
       ) : null}
 
+      {/* Lo que no abre pantalla se dice aquí abajo y se va solo. */}
+      {aviso ? (
+        <View style={estilos.aviso}>
+          <Text style={estilos.avisoTexto}>{aviso}</Text>
+        </View>
+      ) : null}
+
       {interrumpido ? (
         <View style={estilos.aviso}>
           <Text style={estilos.avisoTexto}>
@@ -1702,6 +1860,105 @@ function BibliotecaVista({
   );
 }
 
+
+/**
+ * El reparto, tal como lo manda el panel: "Seth Rogen,Olivia Wilde,…".
+ *
+ * Sin espacio detrás de la coma, así que se separa aquí con el mismo punto
+ * medio que usa el resto de la interfaz.
+ */
+function separado(lista: string): string {
+  return lista
+    .split(',')
+    .map((uno) => uno.trim())
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * La pantalla de información de una película o de una serie.
+ *
+ * Es la única a la que no se llega pulsando: el toque normal reproduce, y esto
+ * cuelga del menú de mantener pulsado. Enseña lo que no cabe en una carátula
+ * —sinopsis, reparto, género— y los botones de lo que se puede hacer.
+ *
+ * El fondo apaisado va detrás y degradado hacia el negro de la aplicación:
+ * cuando el panel no lo trae —que pasa a menudo—, queda el negro y ya está,
+ * sin hueco ni marco vacío.
+ */
+function PantallaFicha({
+  ficha,
+  botones,
+  foco,
+  onTocar,
+}: {
+  ficha: FichaDetalle;
+  /** Los botones vienen como elementos: así el mando los recorre igual. */
+  botones: Elemento[];
+  foco: number;
+  onTocar: (indice: number) => void;
+}) {
+  return (
+    <ScrollView style={estilos.infoPantalla} contentContainerStyle={estilos.infoContenido}>
+      {ficha.fondo ? (
+        <Image source={{ uri: ficha.fondo }} style={estilos.infoFondo} resizeMode="cover" />
+      ) : null}
+      <View style={estilos.infoVeloFondo} pointerEvents="none" />
+
+      <View style={estilos.infoCuerpo}>
+        {ficha.cartel ? (
+          <Image source={{ uri: ficha.cartel }} style={estilos.infoCartel} resizeMode="cover" />
+        ) : null}
+
+        <View style={estilos.infoTexto}>
+          <Text style={estilos.infoTitulo}>{ficha.titulo}</Text>
+
+          <View style={estilos.infoDatos}>
+            {ficha.valoracion !== null ? (
+              <>
+                <Estrellas valoracion={ficha.valoracion} />
+                <Text style={estilos.infoNota}>{nota(ficha.valoracion)}</Text>
+              </>
+            ) : null}
+            {ficha.anio !== null ? <Text style={estilos.infoDato}>{ficha.anio}</Text> : null}
+            {ficha.genero ? <Text style={estilos.infoDato}>{ficha.genero}</Text> : null}
+          </View>
+
+          {ficha.sinopsis ? <Text style={estilos.infoSinopsis}>{ficha.sinopsis}</Text> : null}
+          {ficha.reparto ? (
+            <Text style={estilos.infoReparto} numberOfLines={2}>
+              {separado(ficha.reparto)}
+            </Text>
+          ) : null}
+
+          <View style={estilos.infoBotones}>
+            {botones.map((boton, indice) => (
+              <Pressable
+                key={boton.id}
+                focusable={false}
+                style={[
+                  estilos.infoBoton,
+                  indice === 0 && estilos.infoBotonPrincipal,
+                  foco === indice && estilos.infoBotonEnfocado,
+                ]}
+                onPress={() => onTocar(indice)}
+              >
+                <Text
+                  style={[
+                    estilos.infoBotonTexto,
+                    indice === 0 && estilos.infoBotonTextoPrincipal,
+                  ]}
+                >
+                  {boton.titulo}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
 
 /**
  * Una ficha de la lista, en los cuatro formatos que hay.
@@ -3565,6 +3822,107 @@ const estilos = StyleSheet.create({
     color: TINTA_TENUE,
     fontSize: 16,
     marginTop: 6,
+  },
+  infoPantalla: {
+    flex: 1,
+  },
+  infoContenido: {
+    paddingBottom: 40,
+  },
+  /*
+    El fondo apaisado, a sangre y detrás de todo. Va en posición absoluta para
+    que el texto se monte encima: recortado a una banda dejaba una costura
+    justo donde empieza la sinopsis.
+  */
+  infoFondo: {
+    height: 420,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  infoVeloFondo: {
+    experimental_backgroundImage: `linear-gradient(to bottom, rgba(${FONDO_RGB},0.35) 0%, rgba(${FONDO_RGB},0.85) 45%, rgba(${FONDO_RGB},1) 100%)`,
+    height: 420,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  infoCuerpo: {
+    flexDirection: 'row',
+    gap: 28,
+    paddingTop: MARGEN_CABECERA,
+  },
+  infoCartel: {
+    backgroundColor: SUPERFICIE,
+    borderRadius: 10,
+    height: 300,
+    width: 200,
+  },
+  infoTexto: {
+    flex: 1,
+    gap: 12,
+  },
+  infoTitulo: {
+    color: TINTA,
+    fontSize: 34,
+    fontWeight: '700',
+  },
+  infoDatos: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  infoNota: {
+    color: '#f0c14a',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  infoDato: {
+    color: TINTA_TENUE,
+    fontSize: 16,
+  },
+  infoSinopsis: {
+    color: TINTA_SUAVE,
+    fontSize: 17,
+    lineHeight: 25,
+    maxWidth: 900,
+  },
+  infoReparto: {
+    color: TINTA_TENUE,
+    fontSize: 15,
+  },
+  infoBotones: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginTop: 8,
+  },
+  infoBoton: {
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    borderColor: 'transparent',
+    borderRadius: 8,
+    borderWidth: 2,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+  },
+  infoBotonPrincipal: {
+    backgroundColor: VERDE,
+  },
+  // Con mando no hay puntero: lo enfocado tiene que cantar desde el sofá.
+  infoBotonEnfocado: {
+    borderColor: '#fff',
+    transform: [{ scale: 1.04 }],
+  },
+  infoBotonTexto: {
+    color: TINTA,
+    fontSize: 17,
+  },
+  infoBotonTextoPrincipal: {
+    color: FONDO,
+    fontWeight: '700',
   },
   aviso: {
     alignSelf: 'center',

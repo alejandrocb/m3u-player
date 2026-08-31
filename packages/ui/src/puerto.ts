@@ -70,6 +70,15 @@ export interface FichaLarga {
   fondo: string | null;
   /** Géneros tal y como los da el panel: "Comedia, Animación". */
   genero: string | null;
+  /**
+   * El tráiler, tal como lo da el panel: un identificador de YouTube.
+   *
+   * A veces es el identificador pelado —`dQw4w9WgXcQ`— y a veces la URL
+   * entera; quien lo use tiene que aceptar las dos formas. No se reproduce
+   * dentro: se abre en la aplicación de YouTube del aparato, que es la que
+   * sabe hacerlo y no gasta una conexión del panel.
+   */
+  trailer: string | null;
 }
 
 export interface TemporadaFicha {

@@ -111,6 +111,7 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
         reparto: 'Actriz Primera, Actor Segundo, Actriz Tercera',
         fondo: `http://host/fondo-${id}.jpg`,
         genero: 'Comedia, Animación',
+        trailer: 'dQw4w9WgXcQ',
       };
     },
     async guardarGeneros() {},
@@ -122,7 +123,13 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
     async detalleDeSerie(id: string) {
       // Doctor Who sí tiene imagen apaisada: es la que preside "Series".
       return id === 'dw'
-        ? { sinopsis: 'Un viajero del tiempo.', reparto: null, fondo: 'http://host/dw-fondo.jpg', genero: 'Aventura' }
+        ? {
+            sinopsis: 'Un viajero del tiempo.',
+            reparto: null,
+            fondo: 'http://host/dw-fondo.jpg',
+            genero: 'Aventura',
+            trailer: null,
+          }
         : null;
     },
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
@@ -955,4 +962,81 @@ test('un canal del buscador lleva su grupo como detalle', async () => {
   const estado = await presentador.buscar('lo que sea');
 
   assert.equal(estado.elementos[2]!.detalle, 'NOTICIAS');
+});
+
+test('la ficha reúne la sinopsis y los botones de lo que se puede hacer', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
+  await presentador.cargar();
+
+  const estado = await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
+
+  assert.equal(estado.formato, 'ficha');
+  assert.equal(estado.ficha?.sinopsis, 'Una película de prueba con su sinopsis.');
+  assert.equal(estado.ficha?.reparto, 'Actriz Primera, Actor Segundo, Actriz Tercera');
+  assert.deepEqual(
+    estado.elementos.map((boton) => boton.titulo),
+    ['Reproducir', 'Añadir a Mi Lista', 'Descargar', 'Ver tráiler'],
+  );
+});
+
+test('una serie no se reproduce ni se descarga: se entra en sus episodios', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
+  await presentador.cargar();
+
+  const estado = await presentador.abrirFicha('serie', 'dw', 'Doctor Who');
+
+  assert.deepEqual(
+    estado.elementos.map((boton) => boton.titulo),
+    ['Ver episodios', 'Añadir a Mi Lista'],
+  );
+});
+
+test('el botón de Mi Lista dice lo que va a hacer, y cambia al pulsarlo', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
+  await presentador.cargar();
+  await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
+
+  // El foco empieza en Reproducir; se baja al de la lista.
+  await presentador.mover('abajo');
+  const despues = await presentador.aceptar();
+
+  assert.equal(despues.estado.elementos[1]!.titulo, 'Quitar de Mi Lista');
+  assert.equal(despues.estado.ficha?.favorito, true);
+});
+
+test('el tráiler se abre fuera: la vista recibe la dirección', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
+  await presentador.cargar();
+  const estado = await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
+
+  const indice = estado.elementos.findIndex((boton) => boton.id === 'trailer');
+  for (let paso = 0; paso < indice; paso++) await presentador.mover('abajo');
+  const hecho = await presentador.aceptar();
+
+  assert.equal(hecho.abrir, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  assert.equal(hecho.reproducir, null);
+});
+
+test('descargar no reproduce: se lo pasa a quien lleve la cola', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
+  await presentador.cargar();
+  const estado = await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
+
+  const indice = estado.elementos.findIndex((boton) => boton.id === 'descargar');
+  for (let paso = 0; paso < indice; paso++) await presentador.mover('abajo');
+  const hecho = await presentador.aceptar();
+
+  assert.equal(hecho.descargar?.id, 'p1');
+  assert.equal(hecho.reproducir, null);
+});
+
+test('atrás sale de la ficha y devuelve al inicio', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(), { favoritos: favoritosFalsos() });
+  await presentador.cargar();
+  await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
+
+  const { resultado, estado } = await presentador.atras();
+  assert.equal(resultado, 'retrocedido');
+  assert.equal(estado.ficha, null);
+  assert.ok(estado.inicio, 'debería volver al inicio');
 });

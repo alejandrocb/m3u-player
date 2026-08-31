@@ -19,7 +19,16 @@ export type Pantalla =
   // Igual: temporadas a la izquierda, episodios de la marcada a la derecha.
   | { tipo: 'serie'; serieId: string; titulo: string; temporada?: number }
   // El buscador hereda dónde se abrió: en una categoría busca solo ahí.
-  | { tipo: 'buscador'; ambito?: { tipo?: 'canal' | 'pelicula' | 'serie'; grupo?: string }; texto?: string };
+  | { tipo: 'buscador'; ambito?: { tipo?: 'canal' | 'pelicula' | 'serie'; grupo?: string }; texto?: string }
+  /*
+    La ficha de una película o de una serie: carátula, sinopsis, reparto y los
+    botones de lo que se puede hacer con ella.
+
+    Es la única pantalla a la que **no se llega pulsando**: el toque normal
+    reproduce, que es lo que uno quiere el 90 % de las veces. Se llega
+    manteniendo pulsado, desde el menú, junto a Mi Lista y Descargar.
+  */
+  | { tipo: 'ficha'; clase: 'pelicula' | 'serie'; id: string; titulo: string };
 
 /** Lo que la vista debe hacer cuando el usuario pulsa "atrás". */
 export type ResultadoAtras = 'retrocedido' | 'salir';

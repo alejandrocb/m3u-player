@@ -313,6 +313,8 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   /** Imagen apaisada, la que luce en la portada. El cartel es vertical. */
   { tabla: 'movie', columna: 'backdrop', tipo: 'TEXT' },
   { tabla: 'movie', columna: 'genre', tipo: 'TEXT' },
+  /** El tráiler de YouTube, que viene en la misma ficha larga. */
+  { tabla: 'movie', columna: 'trailer', tipo: 'TEXT' },
   /** Marca de que ya se preguntó, aunque el panel no contestara nada. */
   { tabla: 'movie', columna: 'detalle_pedido', tipo: 'TEXT' },
   /*
@@ -325,6 +327,7 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'series', columna: 'actors', tipo: 'TEXT' },
   { tabla: 'series', columna: 'backdrop', tipo: 'TEXT' },
   { tabla: 'series', columna: 'genre', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'trailer', tipo: 'TEXT' },
   { tabla: 'series', columna: 'detalle_pedido', tipo: 'TEXT' },
   { tabla: 'episode', columna: 'rating', tipo: 'REAL' },
   { tabla: 'episode', columna: 'year', tipo: 'INTEGER' },

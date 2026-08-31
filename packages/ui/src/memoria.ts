@@ -242,7 +242,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
       if (!pelicula) return null;
       // Aquí no hay panel al que preguntar y el M3U no trae sinopsis: la
       // ficha larga solo existe con un panel Xtream detrás.
-      return { sinopsis: null, reparto: null, fondo: null, genero: null };
+      return { sinopsis: null, reparto: null, fondo: null, genero: null, trailer: null };
     },
 
     async guardarGeneros(): Promise<void> {
@@ -257,7 +257,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
     async detalleDeSerie(id: string): Promise<FichaLarga | null> {
       const serie = library.series.find((una) => una.id === id);
       if (!serie) return null;
-      return { sinopsis: null, reparto: null, fondo: null, genero: null };
+      return { sinopsis: null, reparto: null, fondo: null, genero: null, trailer: null };
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {

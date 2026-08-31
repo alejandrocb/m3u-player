@@ -27,10 +27,34 @@ export interface Reproducible {
   titulo: string;
 }
 
+/**
+ * Lo que se puede marcar en Mi Lista.
+ *
+ * No es lo mismo que `Reproducible`: una serie **se marca pero no se
+ * reproduce** —lo que se ve es un episodio— y un episodio suelto no se marca,
+ * porque lo que uno guarda es la serie entera.
+ */
+export interface Marcable {
+  clase: ClaseMedio;
+  id: string;
+  titulo: string;
+}
+
 export type Accion =
   | { tipo: 'entrar'; pantalla: Pantalla }
   | { tipo: 'reproducir'; medio: Reproducible }
-  | { tipo: 'filtrar'; filtro: FiltroLista };
+  | { tipo: 'filtrar'; filtro: FiltroLista }
+  /** Marcar o desmarcar en Mi Lista, desde el botón de la ficha. */
+  | { tipo: 'marcar'; medio: Marcable }
+  | { tipo: 'descargar'; medio: Reproducible }
+  /**
+   * Abrir algo fuera de la aplicación: hoy solo el tráiler.
+   *
+   * El tráiler es de YouTube y lo reproduce YouTube: montar un reproductor de
+   * vídeo de otra plataforma dentro sería mucho trabajo para un minuto y
+   * medio, y además no gasta conexión del panel.
+   */
+  | { tipo: 'enlace'; url: string };
 
 /** Una celda de la rejilla, ya lista para pintar. */
 export interface Elemento {
@@ -106,7 +130,7 @@ export interface Lateral {
  * fila de un episodio con su fotograma y su sinopsis. La vista no puede
  * deducirlo del contenido, así que se lo dice el presentador.
  */
-export type Formato = 'lista' | 'carteles' | 'canales' | 'episodios';
+export type Formato = 'lista' | 'carteles' | 'canales' | 'episodios' | 'ficha';
 
 /**
  * Una banda de la pantalla de inicio.
@@ -205,6 +229,25 @@ export function elementosDeFila(fila: FilaInicio): Elemento[] {
  * preguntar por un canal que no existe: la fila salía entera sin programación
  * y sin ningún error por ninguna parte.
  */
+/**
+ * Qué contenido hay detrás de una ficha, para el menú de mantener pulsado.
+ *
+ * Una carátula de película lleva su acción de reproducir; una de serie, la de
+ * entrar en ella. En los dos casos lo que hace falta es lo mismo —qué es y
+ * cuál es—, y sacarlo de `Elemento.id` no vale: lleva la clase delante y, en
+ * los episodios, el número de fila.
+ */
+export function medioDeElemento(elemento: Elemento): Marcable | null {
+  if (elemento.accion.tipo === 'reproducir') {
+    const medio = elemento.accion.medio;
+    return { clase: medio.clase, id: medio.id, titulo: elemento.titulo };
+  }
+  if (elemento.accion.tipo === 'entrar' && elemento.accion.pantalla.tipo === 'serie') {
+    return { clase: 'serie', id: elemento.accion.pantalla.serieId, titulo: elemento.titulo };
+  }
+  return null;
+}
+
 export function canalDeElemento(elemento: Elemento): string | null {
   const accion = elemento.accion;
   if (accion?.tipo !== 'reproducir' || accion.medio.clase !== 'canal') return null;
@@ -255,6 +298,19 @@ const GENEROS_VISIBLES = 3;
  * El panel los da separados por comas y a veces son cinco. Tres bastan para
  * saber si te apetece, que es para lo que sirven.
  */
+/**
+ * La dirección del tráiler a partir de lo que da el panel.
+ *
+ * Unas veces manda el identificador pelado —`dQw4w9WgXcQ`— y otras la URL
+ * entera. Con el identificador se monta la de YouTube; con una URL se deja
+ * como está, que puede no ser de YouTube.
+ */
+export function urlDeTrailer(trailer: string): string {
+  const limpio = trailer.trim();
+  if (/^https?:\/\//i.test(limpio)) return limpio;
+  return `https://www.youtube.com/watch?v=${limpio}`;
+}
+
 export function primerosGeneros(genero: string | null): string | null {
   if (!genero) return null;
 
@@ -339,6 +395,32 @@ export interface EstadoPantalla {
   busqueda: string | null;
   /** La pantalla de inicio con sus filas. `null` en el resto de pantallas. */
   inicio: Inicio | null;
+  /**
+   * La ficha de una película o serie. `null` en el resto de pantallas.
+   *
+   * Va aparte de `elementos` por lo mismo que `inicio`: lo que se pinta no es
+   * una rejilla. En `elementos` quedan solo los botones, que así se recorren
+   * con el mando sin inventar otro sitio donde pueda estar el foco.
+   */
+  ficha: Ficha | null;
+}
+
+/** Lo que se enseña de una película o de una serie en su pantalla. */
+export interface Ficha {
+  clase: 'pelicula' | 'serie';
+  id: string;
+  titulo: string;
+  anio: number | null;
+  valoracion: number | null;
+  /** Géneros del panel, ya en limpio: "Comedia · Animación". */
+  genero: string | null;
+  sinopsis: string | null;
+  reparto: string | null;
+  /** El cartel vertical, que es el que identifica la película. */
+  cartel: string | null;
+  /** La imagen apaisada, para el fondo. Puede no haberla. */
+  fondo: string | null;
+  favorito: boolean;
 }
 
 export interface OpcionesPresentador {
@@ -401,6 +483,15 @@ export class Presentador {
   #cargandoMas = false;
   #lateral: Lateral | null = null;
   #inicio: Inicio | null = null;
+  /** La ficha abierta, si la pantalla de arriba es una ficha. */
+  #ficha: Ficha | null = null;
+  /**
+   * El tráiler de la ficha abierta.
+   *
+   * Va aparte de `Ficha` porque no es algo que se pinte: es la URL del botón,
+   * y la vista no tiene que saber de dónde sale.
+   */
+  #trailer: string | null = null;
   /**
    * Dónde estaba el foco del inicio la última vez.
    *
@@ -458,6 +549,9 @@ export class Presentador {
     switch (this.#navegador.actual.tipo) {
       case 'serie':
         return 'episodios';
+      // La ficha no es una lista de nada: los "elementos" son sus botones.
+      case 'ficha':
+        return 'ficha';
       // El buscador enseña carátulas como cualquier otra rejilla. En lista, un
       // resultado era una línea de texto: para reconocer una película de un
       // vistazo hace falta el cartel, y para eso ya está el mismo formato que
@@ -497,6 +591,7 @@ export class Presentador {
       lateral: this.#lateral ? { ...this.#lateral, opciones: [...this.#lateral.opciones] } : null,
       busqueda: pantalla.tipo === 'buscador' ? (pantalla.texto ?? '') : null,
       inicio: this.#inicio ? { ...this.#inicio, filas: [...this.#inicio.filas] } : null,
+      ficha: this.#ficha ? { ...this.#ficha } : null,
     };
   }
 
@@ -1058,6 +1153,7 @@ export class Presentador {
   async cargar(): Promise<EstadoPantalla> {
     this.#cargandoMas = false;
     const pantalla = this.#navegador.actual;
+    await this.#montarFicha(pantalla);
     await this.#montarInicio(pantalla);
     await this.#montarLateral(pantalla);
     const { titulo, elementos, hayMas } = await this.#contenido(pantalla, 0);
@@ -1159,6 +1255,61 @@ export class Presentador {
   }
 
   /**
+   * Reúne lo que se enseña de una película o de una serie.
+   *
+   * Dos consultas: la ficha corta —título, año, nota y cartel—, que ya está en
+   * la base, y la larga —sinopsis, reparto, fondo y tráiler—, que la primera
+   * vez cuesta una petición al panel y luego queda guardada. Si la larga no
+   * llega, la pantalla sale igual con lo que haya: es lo mismo que hace la
+   * portada del inicio.
+   */
+  async #montarFicha(pantalla: Pantalla): Promise<void> {
+    if (pantalla.tipo !== 'ficha') {
+      this.#ficha = null;
+      return;
+    }
+
+    const esPelicula = pantalla.clase === 'pelicula';
+    const [corta] = esPelicula
+      ? await this.#biblioteca.peliculasPorId([pantalla.id])
+      : await this.#biblioteca.seriesPorId([pantalla.id]);
+
+    const larga = await (esPelicula
+      ? this.#biblioteca.detalleDePelicula(pantalla.id)
+      : this.#biblioteca.detalleDeSerie(pantalla.id));
+
+    const marcados = this.#favoritos ? await this.#favoritos.listar(pantalla.clase) : [];
+
+    this.#ficha = {
+      clase: pantalla.clase,
+      id: pantalla.id,
+      titulo: corta?.titulo ?? pantalla.titulo,
+      anio: corta?.anio ?? null,
+      valoracion: corta?.valoracion ?? null,
+      // El género largo del panel —"Comedia, Animación, Familia"— se recorta
+      // igual que en las carátulas: tres caben, seis no.
+      genero: primerosGeneros(larga?.genero ?? corta?.genero ?? null),
+      sinopsis: larga?.sinopsis ?? null,
+      reparto: larga?.reparto ?? null,
+      cartel: corta?.logo ?? null,
+      fondo: larga?.fondo ?? null,
+      favorito: marcados.includes(pantalla.id),
+    };
+    this.#trailer = larga?.trailer ?? null;
+  }
+
+  /**
+   * Abre la ficha de una película o de una serie.
+   *
+   * No se llega pulsando —el toque normal reproduce— sino desde el menú de
+   * mantener pulsado, que es donde están también Mi Lista y Descargar.
+   */
+  async abrirFicha(clase: 'pelicula' | 'serie', id: string, titulo: string): Promise<EstadoPantalla> {
+    this.#navegador.entrar({ tipo: 'ficha', clase, id, titulo });
+    return this.cargar();
+  }
+
+  /**
    * Trae la página siguiente sin tocar el foco.
    *
    * Con mando, `mover` ya la pide sola al acercarse el foco al final. Con el
@@ -1211,7 +1362,14 @@ export class Presentador {
   }
 
   /** El usuario pulsa OK sobre lo enfocado. */
-  async aceptar(): Promise<{ estado: EstadoPantalla; reproducir: Reproducible | null }> {
+  async aceptar(): Promise<{
+    estado: EstadoPantalla;
+    reproducir: Reproducible | null;
+    /** Algo que abrir fuera de la aplicación: el tráiler. */
+    abrir?: string;
+    /** Algo que mandar a la cola de descargas. */
+    descargar?: Reproducible;
+  }> {
     // En el inicio, aceptar actúa sobre la ficha enfocada de su fila. Si es
     // una película, reproduce —y el reproductor ya reanuda por donde iba, que
     // eso lo decide él con `avanceDe`—; si es una sección o una serie, entra.
@@ -1230,6 +1388,9 @@ export class Presentador {
       if (elemento.accion.tipo === 'filtrar') {
         return { estado: await this.elegirFiltro(elemento.accion.filtro), reproducir: null };
       }
+      // Las demás acciones son botones de una ficha, y en el inicio no hay.
+      if (elemento.accion.tipo !== 'entrar') return { estado: this.estado(), reproducir: null };
+
       this.#navegador.entrar(elemento.accion.pantalla, 0);
       return { estado: await this.cargar(), reproducir: null };
     }
@@ -1254,6 +1415,20 @@ export class Presentador {
     }
     if (elemento.accion.tipo === 'filtrar') {
       return { estado: await this.elegirFiltro(elemento.accion.filtro), reproducir: null };
+    }
+    if (elemento.accion.tipo === 'marcar') {
+      // Se recarga la pantalla porque el botón cambia de texto: "Añadir a Mi
+      // Lista" pasa a "Quitar de Mi Lista".
+      await this.marcar(elemento.accion.medio);
+      return { estado: await this.cargar(), reproducir: null };
+    }
+    if (elemento.accion.tipo === 'descargar') {
+      return { estado: this.estado(), reproducir: null, descargar: elemento.accion.medio };
+    }
+    if (elemento.accion.tipo === 'enlace') {
+      // La vista es quien sabe abrir algo fuera: aquí no hay ni navegador ni
+      // aplicaciones del sistema.
+      return { estado: this.estado(), reproducir: null, abrir: elemento.accion.url };
     }
 
     this.#navegador.entrar(elemento.accion.pantalla, this.#foco);
@@ -1356,6 +1531,19 @@ export class Presentador {
         ),
       };
     });
+  }
+
+  /**
+   * Marca o desmarca algo por su identificador, sin pasar por una ficha.
+   *
+   * Es lo que usa el botón de la pantalla de información, donde no hay
+   * carátula enfocada que alternar.
+   */
+  async marcar(medio: Marcable): Promise<void> {
+    if (!this.#favoritos) return;
+    // Un episodio suelto no se marca: lo que uno guarda es la serie.
+    if (medio.clase === 'episodio') return;
+    await this.#favoritos.alternar(medio.clase, medio.id, medio.titulo);
   }
 
   /** Marca o desmarca una ficha y deja que quien llame se apunte el cambio. */
@@ -1541,6 +1729,70 @@ export class Presentador {
       // monta `#montarInicio`. Aquí solo queda el título.
       case 'inicio':
         return { titulo: 'Biblioteca', hayMas: false, elementos: [] };
+
+      /*
+        Los "elementos" de una ficha son sus botones. Se modelan como el resto
+        para que el mando los recorra igual —arriba, abajo, aceptar— sin
+        inventar otro sitio donde pueda estar el foco, que es lo mismo que se
+        hizo con el selector de Mi Lista.
+      */
+      case 'ficha': {
+        const ficha = this.#ficha;
+        const titulo = ficha?.titulo ?? pantalla.titulo;
+        /*
+          Una serie se marca pero no se reproduce: lo que se ve es un
+          episodio. Por eso hay dos formas del mismo contenido y no una.
+        */
+        const marcable: Marcable = { clase: pantalla.clase, id: pantalla.id, titulo };
+        const medio: Reproducible = { clase: 'pelicula', id: pantalla.id, titulo };
+
+        const botones: Elemento[] = [];
+        const boton = (id: string, titulo: string, accion: Accion): Elemento => ({
+          id,
+          titulo,
+          detalle: null,
+          genero: null,
+          valoracion: null,
+          anio: null,
+          resumen: null,
+          logo: null,
+          avance: null,
+          favorito: false,
+          accion,
+        });
+
+        if (pantalla.clase === 'pelicula') {
+          botones.push(boton('reproducir', 'Reproducir', { tipo: 'reproducir', medio }));
+        } else {
+          // En una serie no hay nada que reproducir todavía: hay que elegir
+          // episodio, y para eso está su pantalla.
+          botones.push(
+            boton('episodios', 'Ver episodios', {
+              tipo: 'entrar',
+              pantalla: { tipo: 'serie', serieId: pantalla.id, titulo },
+            }),
+          );
+        }
+
+        botones.push(
+          boton('lista', ficha?.favorito ? 'Quitar de Mi Lista' : 'Añadir a Mi Lista', {
+            tipo: 'marcar',
+            medio: marcable,
+          }),
+        );
+
+        // Descargar solo lo que es un fichero: una serie no se descarga, se
+        // descargan sus episodios.
+        if (pantalla.clase === 'pelicula') {
+          botones.push(boton('descargar', 'Descargar', { tipo: 'descargar', medio }));
+        }
+
+        if (this.#trailer) {
+          botones.push(boton('trailer', 'Ver tráiler', { tipo: 'enlace', url: urlDeTrailer(this.#trailer) }));
+        }
+
+        return { titulo, elementos: botones, hayMas: false };
+      }
 
       case 'serie': {
         // La temporada elegida está en la barra de la izquierda; sin elegir,
@@ -1788,6 +2040,8 @@ function claseFavorita(elemento: Elemento): { clase: ClaseMedio; id: string } | 
   }
   // Un filtro no es contenido: no hay corazón que ponerle.
   if (elemento.accion.tipo === 'filtrar') return null;
+  // Ni los botones de una ficha: el corazón va en las carátulas.
+  if (elemento.accion.tipo !== 'entrar') return null;
 
   const destino = elemento.accion.pantalla;
   return destino.tipo === 'serie' ? { clase: 'serie', id: destino.serieId } : null;

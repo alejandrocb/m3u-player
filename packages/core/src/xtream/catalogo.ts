@@ -300,7 +300,13 @@ function anadirSerie(series: Map<string, Series>, ficha: XtreamSeries, categoria
 export async function fichaDeSerie(
   cliente: XtreamClient,
   panelIds: number[],
-): Promise<{ sinopsis: string | null; reparto: string | null; fondo: string | null; genero: string | null } | null> {
+): Promise<{
+  sinopsis: string | null;
+  reparto: string | null;
+  fondo: string | null;
+  genero: string | null;
+  trailer: string | null;
+} | null> {
   for (const panelId of panelIds) {
     let info;
     try {
@@ -314,8 +320,11 @@ export async function fichaDeSerie(
     const reparto = info.cast?.trim() || null;
     const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
     const genero = info.genre?.trim() || null;
+    const trailer = info.youtube_trailer?.trim() || null;
 
-    if (sinopsis || reparto || fondo || genero) return { sinopsis, reparto, fondo, genero };
+    if (sinopsis || reparto || fondo || genero || trailer) {
+      return { sinopsis, reparto, fondo, genero, trailer };
+    }
   }
   return null;
 }

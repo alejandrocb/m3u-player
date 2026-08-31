@@ -105,10 +105,32 @@ lo tenemos de un puñado; las categorías vienen con el catálogo y están todas
 Dicen casi lo mismo, solo que a gritos —"PELICULAS ACCION"—, y por eso el
 rótulo se limpia con `nombreDeCategoria`.
 
-### Solo hay tres pantallas
+### Cuatro pantallas, y a la cuarta se llega manteniendo pulsado
 
-El **inicio** —que se filtra con las pestañas y no se apila—, **una serie** y
-el **buscador**. Nada más.
+El **inicio** —que se filtra con las pestañas y no se apila—, **una serie**, el
+**buscador** y la **información** de una película o una serie.
+
+A la información no se llega pulsando: **el toque normal reproduce**, que es lo
+que uno quiere casi siempre. Mantener pulsado abre un menú con las tres cosas
+que se pueden hacer con una ficha —Información, Mi Lista y Descargar—, y es el
+mismo gesto con el dedo y con el OK del mando. Antes ese gesto marcaba en Mi
+Lista directamente; cabía una sola acción y ahora hacen falta tres.
+
+La pantalla de información enseña lo que no cabe en una carátula: el fondo
+apaisado degradado hacia el negro, el cartel, la sinopsis, el reparto y los
+botones. **Los botones son `elementos`**, como las carátulas de una fila: así
+el mando los recorre con el mismo código y no hay otro sitio donde pueda estar
+el foco. Lo que se pinta va aparte, en `EstadoPantalla.ficha`, por lo mismo que
+`inicio`: no es una rejilla.
+
+Un canal no tiene información que enseñar —ni sinopsis, ni reparto, ni
+tráiler—, así que su menú solo trae Mi Lista. Y una serie no se descarga: se
+descargan sus episodios.
+
+**El tráiler lo pone YouTube.** Viene en la ficha larga (`youtube_trailer`), a
+veces como identificador pelado y a veces como URL entera, y se abre fuera con
+`Linking`: montar un reproductor de otra plataforma dentro es mucho trabajo
+para minuto y medio, y además así no gasta una conexión del panel.
 
 Hubo una cuarta forma: la rejilla completa de películas, series y directo, con
 su barra de categorías a la izquierda. Se llegaba a ella pulsando dos veces la
