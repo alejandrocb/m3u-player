@@ -32,9 +32,19 @@ import type {
   Perfil,
   Programacion,
   Reproducible,
+  Segmento,
   Uso,
 } from '@m3u/ui';
-import { FIN_EPISODIO, esLimiteDeConexiones, reloj, vaAnotado } from '@m3u/ui';
+import {
+  FIN_EPISODIO,
+  ambitoDeTemporada,
+  dentroDelSegmento,
+  esLimiteDeConexiones,
+  reloj,
+  segmentoQueManda,
+  segmentoValido,
+  vaAnotado,
+} from '@m3u/ui';
 import { avanceDePrograma, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
@@ -55,6 +65,14 @@ import {
 
 /** Cuánto tarda en esconderse el rótulo si no se toca nada. */
 const OCULTAR_MS = 4000;
+/**
+ * Hasta qué minuto se ofrece marcar la careta.
+ *
+ * Pasados diez minutos, lo que hay en pantalla es la serie, no su intro: el
+ * botón solo estorbaría el resto del capítulo.
+ */
+const MARCAR_HASTA_S = 600;
+
 /** Salto de las flechas y de los botones de avance. */
 const SALTO_S = 10;
 /** Cada cuánto se apunta por dónde va. Escribir en cada fotograma sobra. */
@@ -126,6 +144,17 @@ interface Props {
    * encadena con nada.
    */
   continua?: boolean;
+  /** Lo marcado por la casa para este capítulo: la careta, y algún día más. */
+  segmentosDe?: (clave: string) => Promise<Segmento[]>;
+  guardarSegmento?: (segmento: Segmento) => Promise<void>;
+  /**
+   * Al marcar, guardar para la temporada entera en vez de para el capítulo.
+   *
+   * Es lo que vale en la mayoría de las series —la careta empieza siempre en
+   * el mismo minuto—; se apaga para las que arrancan con una escena y la
+   * llevan en otro sitio cada vez.
+   */
+  marcarTemporada?: boolean;
   /**
    * El mando está sobre la vista previa.
    *
@@ -193,6 +222,9 @@ export function Reproductor({
   programacion,
   arbitro,
   continua = false,
+  segmentosDe,
+  guardarSegmento,
+  marcarTemporada = true,
   caja,
   resaltado,
   onAbrir,
@@ -242,6 +274,17 @@ export function Reproductor({
     Y con un panel de pistas abierto, el mando es suyo.
   */
   const [zona, setZona] = useState<'video' | 'botones' | 'pistas'>('video');
+  /** Lo marcado para este capítulo y su temporada. */
+  const [segmentos, setSegmentos] = useState<Segmento[]>([]);
+  /**
+   * El segundo en que se pulsó "marcar intro", esperando la segunda pulsación.
+   *
+   * Se marca en dos tiempos porque las dos horas hacen falta: cuándo aparece
+   * el botón y adónde salta. Y el reproductor sigue andando entre las dos, que
+   * es justo lo que uno está haciendo —viendo la careta— así que no hay nada
+   * que interrumpir.
+   */
+  const [marcando, setMarcando] = useState<number | null>(null);
   const [focoBoton, setFocoBoton] = useState(0);
   const [focoPista, setFocoPista] = useState(0);
 
@@ -434,6 +477,53 @@ export function Reproductor({
   );
 
   /*
+    Lo marcado para este capítulo, si alguien de la casa lo marcó alguna vez.
+
+    Se pide al abrir y no hace falta más: nadie marca una intro mientras otro
+    la está viendo, y lo que se marque aquí se apunta en el momento.
+  */
+  useEffect(() => {
+    if (medio.clase !== 'episodio' || !segmentosDe) {
+      setSegmentos([]);
+      return;
+    }
+    let vigente = true;
+    segmentosDe(medio.id)
+      .then((suyos) => vigente && setSegmentos(suyos))
+      .catch(() => vigente && setSegmentos([]));
+    return () => {
+      vigente = false;
+    };
+  }, [medio.clase, medio.id, segmentosDe]);
+
+  /** La careta de este capítulo, sea suya o de su temporada. */
+  const intro = medio.clase === 'episodio' ? segmentoQueManda(segmentos, medio.id, 'intro') : null;
+  const enIntro = Boolean(intro && dentroDelSegmento(intro, tiempo));
+
+  /**
+   * Guarda lo marcado.
+   *
+   * **Por temporada**, que es lo que vale para la mayoría de las series: la
+   * careta empieza siempre en el mismo minuto. Las que arrancan con una escena
+   * la llevan en otro sitio cada vez, y para esas se marca el capítulo, que es
+   * lo que manda al leer.
+   */
+  const anotarIntro = useCallback(
+    (desde: number, hasta: number) => {
+      if (medio.clase !== 'episodio' || !guardarSegmento) return;
+
+      const ambito = (marcarTemporada ? ambitoDeTemporada(medio.id) : medio.id) ?? medio.id;
+      const segmento: Segmento = { ambito, tipo: 'intro', desde, hasta };
+      // Una marca al revés o de dos segundos es un despiste, y estropearía la
+      // serie para toda la casa: se comparte con todos los aparatos.
+      if (!segmentoValido(segmento)) return;
+
+      void guardarSegmento(segmento).then(() => setSegmentos((antes) => [...antes, segmento]));
+    },
+    [medio, guardarSegmento, marcarTemporada],
+  );
+
+  /*
     La fila de abajo, armada como datos y no como JSX suelto.
 
     Es lo que permite que el mando la recorra: para saber cuál está enfocado y
@@ -448,6 +538,41 @@ export function Reproductor({
     */
     ...(enCreditos && siguiente
       ? [{ clave: 'proximo', etiqueta: 'Siguiente capítulo', onPress: () => onCambiar?.(siguiente) }]
+      : []),
+    /*
+      Saltar la careta, cuando alguien la ha marcado. Va delante de todo por lo
+      mismo que el de los créditos: mientras suena la intro no hay otra cosa
+      que uno quiera hacer.
+    */
+    ...(enIntro && intro
+      ? [
+          {
+            clave: 'saltar',
+            etiqueta: 'Saltar intro',
+            onPress: () => saltar(intro.hasta - tiempo),
+          },
+        ]
+      : []),
+    /*
+      Y marcarla, en dos tiempos: la primera pulsación apunta dónde empieza y
+      la segunda dónde acaba. Solo se ofrece si no hay ninguna marcada ya y
+      dentro de los primeros minutos, que es donde puede haber una careta.
+    */
+    ...(medio.clase === 'episodio' && guardarSegmento && !intro && tiempo < MARCAR_HASTA_S
+      ? [
+          {
+            clave: 'marcar',
+            etiqueta: marcando === null ? 'Marcar intro' : 'La intro acaba aquí',
+            activo: marcando !== null,
+            onPress: () => {
+              if (marcando === null) setMarcando(tiempo);
+              else {
+                anotarIntro(marcando, tiempo);
+                setMarcando(null);
+              }
+            },
+          },
+        ]
       : []),
     ...(enDirecto
       ? []
@@ -756,9 +881,11 @@ export function Reproductor({
         es el momento en que uno mira la pantalla esperando que pase algo, y
         esconderlo obligaría a despertar los controles a ciegas.
       */}
-      {enCreditos && !visible ? (
+      {(enCreditos || enIntro) && !visible ? (
         <View style={estilos.creditos} pointerEvents="none">
-          <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
+          <Text style={estilos.creditosTexto}>
+            {enIntro ? 'Saltar intro  ›' : 'Siguiente capítulo  ›'}
+          </Text>
           <Text style={estilos.creditosPie}>Baja con el mando para ponerlo</Text>
         </View>
       ) : null}
@@ -934,11 +1061,12 @@ export function Reproductor({
 
               // El de los créditos lleva texto: es una oferta, no un ajuste,
               // y un icono suelto no se entiende a tiempo.
-              if (boton.clave === 'proximo') {
+              if (boton.clave === 'proximo' || boton.clave === 'saltar' || boton.clave === 'marcar') {
                 return (
                   <Pastilla
                     key={boton.clave}
-                    texto={`${boton.etiqueta}  ›`}
+                    texto={boton.clave === 'marcar' ? boton.etiqueta : `${boton.etiqueta}  ›`}
+                    activo={marcado}
                     enfocada={enfocado}
                     onPress={boton.onPress}
                   />

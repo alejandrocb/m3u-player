@@ -249,7 +249,7 @@ aparato que acaba de empezar. Lo que falta es que ese espere a que se libere
 de verdad —el panel tarda ~30 s— en vez de comerse un 403: eso es el árbitro
 de conexión, que sigue pendiente.
 
-### Saltar la intro: de dónde saldrían los segundos
+### Saltar la intro: la marca quien mira, y vale para toda la casa
 
 El botón de **"Siguiente capítulo"** sale al llegar a los créditos, y para eso
 no hace falta ningún dato de nadie: se toma el mismo umbral con el que se da un
@@ -258,31 +258,44 @@ capítulo por visto (95 %), así que en uno de cincuenta minutos aparece en los
 la escena— y el aviso se queda puesto aunque los controles se escondan, que es
 justo el momento en que uno mira la pantalla esperando que pase algo.
 
-**El "Saltar intro" es otra cosa**, y conviene tener claro por qué. Hay dos
-tipos de serie:
+**El "Saltar intro" necesita datos, y no hay de dónde sacarlos solos.** Medido
+contra la lista real con `tools/probe/src/intro.ts`: los ficheros son MKV y sí
+traen marcas de capítulo, pero **sin nombre** —lo que hay escrito es la propia
+hora, `00:06:16.251`— y repartidas cada cinco o seis minutos, que es un
+troceado automático del que codificó y no un capitulado que sepa dónde está la
+careta. Con eso no hay forma de decir cuál de las marcas es la intro.
 
-- La intro empieza **siempre en el mismo minuto**. Se reconoce por su posición,
-  así que marcarla una vez valdría para toda la temporada.
-- La serie **arranca con una escena** y la careta viene después, en un sitio
-  distinto en cada capítulo. Por posición no hay nada que hacer; lo único que
-  se repite es **el sonido**.
+Así que la marca quien mira, con **dos pulsaciones**: la primera apunta dónde
+empieza y la segunda dónde acaba. Hacen falta las dos —cuándo aparece el botón
+y adónde salta— y entre una y otra el vídeo sigue andando, que es exactamente
+lo que uno está haciendo. El botón solo se ofrece en los diez primeros minutos:
+pasados, lo que hay en pantalla es la serie.
 
-Por eso Jellyfin —y su plugin Intro Skipper— compara la huella de audio de dos
-capítulos y busca el trozo común, en vez de suponer un desplazamiento fijo. Su
-formato es el que conviene copiar si algún día se guardan segmentos, porque
-así se podrían importar tal cual: `tipo` (`intro`/`outro`), `start` y `end` por
-episodio.
+**La marca es de la casa, no de un perfil.** La careta de una serie es la misma
+para todos, así que quien la marque le ahorra el trabajo al siguiente y al
+resto de aparatos: la tabla `segment` viaja con la sincronización como el
+historial, y es la única de `SINCRONIZADAS` que no cuelga de `profile_id`.
 
-Lo que hay medido hasta ahora: **nada**, y hay una pregunta que decide el
-camino y se contesta barata. Muchos MKV llevan **capítulos con nombre** en la
-cabecera ("Intro", "Opening"), y leerla cuesta unos megas con `Range`, no el
-episodio entero. Si están, la intro sale exacta y en los dos tipos de serie.
-Eso es lo que mide `tools/probe/src/intro.ts`. Si no están, el único camino
-real es la huella de audio en el servidor de la casa, y ahí el coste no es la
-CPU sino la descarga: en un MKV el audio va entrelazado con el vídeo, así que
-bajarse quince minutos de audio es bajarse quince minutos de película —unos
-400 MB por capítulo—. Viable bajo demanda al abrir una serie; impensable para
-las 6.500 del catálogo.
+Hay dos clases de serie y por eso hay dos ámbitos:
+
+- La careta empieza **siempre en el mismo minuto**: se marca una vez y vale
+  para la temporada entera (`doctor-who:s1`). Es lo que se guarda por defecto.
+- La serie **arranca con una escena** y mete la careta después, en un sitio
+  distinto cada vez: ahí hay que marcar el capítulo (`doctor-who:s1e4`), y **lo
+  concreto manda sobre lo general**.
+
+El formato es el de Jellyfin —tipo, principio y final— a propósito: si algún
+día se automatiza o se importa de un servidor suyo, los datos encajan sin
+traducir nada. Y una marca al revés o de dos segundos no se guarda: estropearía
+la serie para toda la casa.
+
+Lo que quedaría por automatizar es la huella de audio, que es lo que hace el
+plugin de Jellyfin: comparar dos capítulos y buscar el trozo que se repite.
+Funcionaría con los dos tipos de serie, pero el coste no es la CPU sino la
+descarga —en un MKV el audio va entrelazado con el vídeo, así que bajarse
+quince minutos de audio es bajarse quince minutos de película, unos 400 MB por
+capítulo—. Viable bajo demanda al abrir una serie; impensable para las 6.500
+del catálogo.
 
 ### Lo que ya se ha visto se releva, no se queda
 

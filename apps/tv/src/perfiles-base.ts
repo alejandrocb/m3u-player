@@ -24,10 +24,12 @@ import type {
   Favorito,
   Perfil,
   Reproduccion,
+  Segmento,
 } from '@m3u/ui';
 import {
   CLAVE_REPRODUCCION,
   ajustesDesde,
+  ambitoDeTemporada,
   claveDeMedio,
   colorLibre,
   idDePerfil,
@@ -415,6 +417,40 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
 
     async guardarAjuste(perfilId: string, clave: string, valor: string): Promise<void> {
       guardarSetting(perfilId, clave, valor);
+    },
+
+    /*
+      Los segmentos —la intro, los créditos— son de la casa y no de un perfil:
+      la careta de una serie es la misma para todos, y quien la marque le
+      ahorra el trabajo al siguiente. Se piden los del capítulo y los de su
+      temporada de una vez; cuál manda lo decide `segmentoQueManda`.
+    */
+    async segmentosDeEpisodio(clave: string): Promise<Segmento[]> {
+      const ambitos = [clave, ambitoDeTemporada(clave)].filter((uno): uno is string => uno !== null);
+      const huecos = ambitos.map(() => '?').join(', ');
+
+      return filas(
+        db,
+        `SELECT ambito, kind, start_s, end_s FROM segment
+          WHERE ambito IN (${huecos}) AND deleted = 0`,
+        ambitos,
+      ).map((fila) => ({
+        ambito: fila.ambito as string,
+        tipo: fila.kind as Segmento['tipo'],
+        desde: Number(fila.start_s),
+        hasta: Number(fila.end_s),
+      }));
+    },
+
+    async guardarSegmento(segmento: Segmento): Promise<void> {
+      db.executeSync(
+        `INSERT INTO segment (ambito, kind, start_s, end_s, updated, deleted, origin)
+         VALUES (?, ?, ?, ?, ?, 0, ?)
+         ON CONFLICT(ambito, kind) DO UPDATE SET
+           start_s = excluded.start_s, end_s = excluded.end_s,
+           updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+        [segmento.ambito, segmento.tipo, segmento.desde, segmento.hasta, ahora(), aparato],
+      );
     },
 
     async favoritos(perfilId: string): Promise<Favorito[]> {
