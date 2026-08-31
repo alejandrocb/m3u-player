@@ -155,6 +155,16 @@ Lo que había que comprobar antes de montarlo era **si los identificadores
 casan**: los `channel id` del XMLTV son nuestros `tvg-id`, 191 de 191. Sin eso
 habría hecho falta emparejar por nombre.
 
+**Y se casa dos veces: primero por identificador y luego por nombre.** El EPG
+trae **una sola "Telecinco HD"** y el catálogo trae tres —FHD, HD y SD, cada
+una con su `tvg-id`—, así que casando estricto dos de las tres se quedan en
+blanco. Por eso hay una segunda vuelta con `claveDeParrilla`, que tira la
+calidad y las mayúsculas: `Telecinco FHD`, `Telecinco HD` y `Telecinco SD` caen
+en `telecinco`, y también `BE MAD` y `Be Mad`, que el proveedor manda como dos
+canales distintos. Es lo que hacen los reproductores comerciales, y es lo que
+hace que las tres calidades enseñen lo mismo. Nunca es el primer intento: el
+identificador no se equivoca, y esto solo entra donde no hay nada.
+
 **El identificador de un canal no es el que lleva la ficha.** Un `Elemento`
 lleva la clase delante —`canal:tvg:24 Horas`— para que dos fichas de la misma
 fila no compartan clave, y el canal de verdad sale de su acción

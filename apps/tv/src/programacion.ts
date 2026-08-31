@@ -24,7 +24,7 @@
  * bien sin ella.
  */
 
-import { idDeCanalPorTvg, programasDesde, streamIdDeUrl } from '@m3u/core';
+import { claveDeParrilla, claveDeParrillaDeId, idDeCanalPorTvg, programasDesde, streamIdDeUrl } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 import type { XtreamClient } from '@m3u/core/xtream';
 import type { Biblioteca, Programacion, ProgramaRemoto } from '@m3u/ui';
@@ -49,6 +49,20 @@ interface Guardado {
   pedido: number;
 }
 
+/**
+ * La parrilla del servidor en memoria, indexada de dos formas.
+ *
+ * Por identificador, que es exacto, y por nombre sin calidad, que es el
+ * respaldo. Las dos apuntan a las mismas listas de programas: no se duplica
+ * nada.
+ */
+interface Parrilla {
+  porCanal: Map<string, Programa[]>;
+  porNombre: Map<string, Programa[]>;
+}
+
+const PARRILLA_VACIA: Parrilla = { porCanal: new Map(), porNombre: new Map() };
+
 export interface OpcionesProgramacion {
   cliente: XtreamClient | null;
   biblioteca: Biblioteca;
@@ -66,7 +80,7 @@ export interface OpcionesProgramacion {
  * llega entera y no casa con un solo canal, que es exactamente lo que pasó la
  * primera vez.
  */
-function comoProgramas(remotos: ProgramaRemoto[]): Map<string, Programa[]> {
+function comoProgramas(remotos: ProgramaRemoto[]): Parrilla {
   const porCanal = new Map<string, Programa[]>();
   for (const remoto of remotos) {
     const desde = new Date(remoto.desde);
@@ -85,7 +99,31 @@ function comoProgramas(remotos: ProgramaRemoto[]): Map<string, Programa[]> {
     porCanal.set(canalId, suyos);
   }
   for (const suyos of porCanal.values()) suyos.sort((a, b) => a.desde.getTime() - b.desde.getTime());
-  return porCanal;
+
+  /*
+    Y la segunda vuelta, la laxa: la misma programación indexada por nombre sin
+    calidad. El EPG trae una sola "Telecinco HD" y el catálogo tres —FHD, HD y
+    SD, cada una con su tvg-id—, así que casando estricto dos de las tres se
+    quedan en blanco. Es lo que hacen los reproductores comerciales, y por eso
+    allí las tres enseñan lo mismo.
+
+    Si dos canales del EPG caen en la misma clave gana el primero: son la misma
+    cadena en dos calidades, y en programación dicen lo mismo.
+  */
+  const porNombre = new Map<string, Programa[]>();
+  for (const remoto of remotos) {
+    const clave = claveDeParrilla(remoto.canal);
+    if (!clave || porNombre.has(clave)) continue;
+    const suyos = porCanal.get(idDeCanalPorTvg(remoto.canal));
+    if (suyos) porNombre.set(clave, suyos);
+  }
+
+  return { porCanal, porNombre };
+}
+
+/** Lo que echan en un canal, buscando primero por identificador. */
+function programasDe(parrilla: Parrilla, canalId: string): Programa[] | undefined {
+  return parrilla.porCanal.get(canalId) ?? parrilla.porNombre.get(claveDeParrillaDeId(canalId));
 }
 
 export function programacionDelPanel({
@@ -98,12 +136,12 @@ export function programacionDelPanel({
   const enCurso = new Map<string, Promise<Programa[]>>();
 
   /** La parrilla del servidor, con su hora de traída y su petición en vuelo. */
-  let delServidor: Map<string, Programa[]> | null = null;
+  let delServidor: Parrilla | null = null;
   let traida = 0;
-  let trayendo: Promise<Map<string, Programa[]>> | null = null;
+  let trayendo: Promise<Parrilla> | null = null;
 
-  const parrillaDelServidor = async (): Promise<Map<string, Programa[]>> => {
-    if (!parrilla) return new Map();
+  const parrillaDelServidor = async (): Promise<Parrilla> => {
+    if (!parrilla) return PARRILLA_VACIA;
     if (delServidor && Date.now() - traida < FRESCURA_SERVIDOR_MS) return delServidor;
     if (trayendo) return trayendo;
 
@@ -113,7 +151,7 @@ export function programacionDelPanel({
         traida = Date.now();
         return delServidor;
       })
-      .catch(() => new Map<string, Programa[]>())
+      .catch(() => PARRILLA_VACIA)
       .finally(() => {
         trayendo = null;
       });
@@ -144,7 +182,7 @@ export function programacionDelPanel({
       const ahora = new Date();
       const salida: Record<string, Programa[]> = {};
       for (const canalId of canalIds) {
-        const suyos = preparada.get(canalId);
+        const suyos = programasDe(preparada, canalId);
         // Lo que ya terminó del todo no se enseña: es peor que no enseñar
         // nada, porque parece que están echando algo que acabó hace horas.
         if (suyos?.some((programa) => programa.hasta > ahora)) salida[canalId] = suyos;
@@ -161,7 +199,7 @@ export function programacionDelPanel({
         panel, que es quien sabe lo que hay ahora mismo.
       */
       const preparada = await parrillaDelServidor();
-      const suyos = preparada.get(canalId);
+      const suyos = programasDe(preparada, canalId);
       if (suyos?.length) {
         const ahora = new Date();
         if (suyos.some((programa) => programa.hasta > ahora)) return suyos;
