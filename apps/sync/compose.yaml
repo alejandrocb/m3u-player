@@ -28,6 +28,11 @@ services:
     environment:
       DATOS: /datos
       PUERTO: '3300'
+      # El token de TMDb, de donde salen los géneros de las películas. Vive en
+      # un fichero del VPS —fuera del repositorio, que es público— y se le pasa
+      # a Compose con `--env-file ~/m3u-sync.env`. Sin él, el servidor le
+      # pregunta al panel como antes: es un acelerador, no un requisito.
+      TMDB_TOKEN: ${TMDB_TOKEN:-}
     # Sin acceso a nada que no necesite.
     read_only: true
     tmpfs:

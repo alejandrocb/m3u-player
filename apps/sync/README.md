@@ -104,9 +104,38 @@ docker compose -f apps/sync/compose.yaml logs -f sync | grep portadas
 
 El catálogo del panel no trae el género de una película: está en
 `get_vod_info`, que es **una petición por título**, y hay 18.042. Así que el
-servidor va rellenando **quinientas al día**, de madrugada y empezando por lo
-último que ha entrado, y las guarda en la tabla `genero`. El catálogo entero
-queda cubierto en poco más de un mes.
+servidor los va averiguando poco a poco y los guarda en la tabla `genero`,
+empezando por lo último que ha entrado, que es lo que llena los carruseles.
+
+**Pregunta a dos sitios, en este orden.** Primero a **TMDb**, que no limita
+conexiones y devuelve una lista cerrada de géneros en español —"Ciencia
+ficción" siempre escrito igual, que es lo que hace que las filas del inicio
+salgan limpias—; lo que no reconozca o no case por título, **al panel**, que
+de su propio catálogo sabe más que nadie y acierta el 97 % de lo que se le
+pregunta.
+
+El ritmo depende de a quién se le pregunte: con TMDb son **dos mil por pasada
+y una pasada por hora**, así que el catálogo entero queda cubierto en una
+tarde. Sin token, solo el panel: **quinientas al día y de madrugada**, cuando
+no hay nadie viendo nada, y algo más de un mes para el catálogo entero.
+
+Casar nuestra película con la de TMDb se hace por **título y año**, y el sesgo
+es el contrario del que lleva el clasificador: **ante la duda, sin género**.
+Una película sin género sale igual en su fila; una con el género de otra
+ensucia una fila entera del inicio y nadie sabe por qué.
+
+El token se saca de la cuenta de TMDb (*Configuración → API → API Read Access
+Token*) y **no va en el repositorio, que es público**: vive en un fichero del
+VPS que se le pasa a Compose.
+
+```bash
+umask 077 && nano ~/m3u-sync.env       # TMDB_TOKEN=eyJ...
+sudo docker compose --env-file ~/m3u-sync.env -f apps/sync/compose.yaml up -d --build
+```
+
+Sin ese fichero el servidor arranca igual y se queda con el panel: TMDb
+acelera, no sostiene. Sus condiciones piden decir que los datos son suyos, así
+que eso hay que ponerlo en la pantalla de información de la aplicación.
 
 Los aparatos las recogen con `GET /api/generos?desde=<sello>`, donde el sello
 es la hora de la última pasada que se llevaron: así la primera vez baja lo que
@@ -139,3 +168,4 @@ docker run --rm -v m3u-sync-datos:/datos -v "$PWD":/copia alpine \
 | `PUERTO` | `3300` | Dónde escucha |
 | `ESCUCHA` | `0.0.0.0` | Interfaz; dentro del contenedor da igual, lo acota Docker |
 | `DATOS` | `/datos` | Dónde van las bases |
+| `TMDB_TOKEN` | (vacío) | Token de lectura de TMDb, para los géneros. Sin él se le pregunta al panel |

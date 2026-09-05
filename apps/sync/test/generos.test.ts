@@ -95,6 +95,34 @@ test('lo que el panel no sabe también se apunta, con el género vacío', async 
   assert.deepEqual(averiguados, [{ id: 'la-muda-2020', genero: '' }]);
 });
 
+test('TMDb contesta primero, y el panel solo lo que aquel no sepa', async () => {
+  const preguntadas: number[] = [];
+  const averiguados = await rellenarGeneros(URL_PANEL, {
+    conocidas: new Set(['la-de-en-medio-2015', 'la-muda-2020', 'la-vieja-2001']),
+    cuantas: 5,
+    fetch: panelFalso(preguntadas),
+    tmdb: { async generoDe() { return 'Comedia'; } },
+  });
+
+  assert.deepEqual(averiguados, [{ id: 'la-nueva-2024', genero: 'Comedia' }]);
+  assert.deepEqual(preguntadas, [], 'al panel no se le ha preguntado nada');
+});
+
+test('lo que TMDb no reconoce se le acaba preguntando al panel', async () => {
+  const preguntadas: number[] = [];
+  const averiguados = await rellenarGeneros(URL_PANEL, {
+    conocidas: new Set(['la-de-en-medio-2015', 'la-muda-2020', 'la-vieja-2001']),
+    cuantas: 5,
+    fetch: panelFalso(preguntadas),
+    // Vacío es "no la conozco": es el caso del cine local y de los títulos
+    // que el proveedor escribe a su manera.
+    tmdb: { async generoDe() { return ''; } },
+  });
+
+  assert.deepEqual(averiguados, [{ id: 'la-nueva-2024', genero: 'Género 2' }]);
+  assert.deepEqual(preguntadas, [2], 'el panel contesta por la que TMDb no sabe');
+});
+
 test('dos calidades de la misma película cuestan una sola pregunta', async () => {
   const preguntadas: number[] = [];
   await rellenarGeneros(URL_PANEL, {

@@ -24,6 +24,7 @@ import { rellenarGeneros } from './generos.ts';
 import type { Panel } from './panel.ts';
 import { traerParrilla } from './parrilla.ts';
 import { VERSION, prepararPortadas } from './portadas.ts';
+import { crearTmdb } from './tmdb.ts';
 
 /** Cada cuánto se rehacen las portadas. */
 const CADA_HORAS = 24;
@@ -37,17 +38,23 @@ const CADA_HORAS = 24;
  */
 const PARRILLA_CADA_HORAS = 12;
 
-/** Cada cuánto se rellenan géneros, y cuántos por pasada. */
-const GENEROS_CADA_HORAS = 24;
-const GENEROS_POR_PASADA = 500;
+/**
+ * Cada cuánto se rellenan géneros, y cuántos por pasada.
+ *
+ * **Depende de a quién se le pregunte.** Al panel hay que ir con cuidado: son
+ * peticiones a un servidor que cuenta conexiones, así que quinientas al día y
+ * de madrugada, cuando no hay nadie viendo nada. Con TMDb no hay tal
+ * problema, y entonces se va a por dos mil cada vez y a cualquier hora: el
+ * catálogo entero queda cubierto en una tarde en vez de en un mes.
+ */
+const GENEROS_POR_PASADA = { panel: 500, tmdb: 2000 };
+const GENEROS_CADA_HORAS = { panel: 24, tmdb: 1 };
 
 /**
- * A qué horas se rellenan géneros.
+ * A qué horas se le pregunta al panel.
  *
- * Son quinientas peticiones seguidas al panel, así que se hacen cuando no hay
- * nadie viendo nada: la ranura de conexión es la misma que usa la tele. La
- * primera pasada de una lista no espera —es la que hace que se note algo el
- * día que se despliega—, las demás sí.
+ * La primera pasada de una lista no espera —es la que hace que se note algo el
+ * día que se despliega—, las demás sí. Con TMDb no se aplica.
  */
 const MADRUGADA = { desde: 2, hasta: 7 };
 
@@ -147,6 +154,15 @@ export async function traerParrillasQueToquen(panel: Panel, ahora = new Date()):
 export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date()): Promise<number> {
   let hechas = 0;
 
+  /*
+    El token no está en el repositorio, que es público: lo pone el VPS en un
+    fichero suyo. Sin él esto sigue funcionando, solo que más despacio y
+    preguntándole al panel.
+  */
+  const token = process.env.TMDB_TOKEN?.trim();
+  const tmdb = token ? crearTmdb(token) : undefined;
+  const via = tmdb ? 'tmdb' : 'panel';
+
   for (const [url, mismas] of porUrl(panel)) {
     const primera = mismas[0];
     if (!primera) continue;
@@ -154,8 +170,8 @@ export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date())
     const cuenta = panel.cuantosGeneros(primera.id);
     const estrenando = cuenta.preguntadas === 0;
     const pasadas = (ahora.getTime() - cuenta.ultima) / 3_600_000;
-    if (!estrenando && pasadas < GENEROS_CADA_HORAS) continue;
-    if (!estrenando && (ahora.getHours() < MADRUGADA.desde || ahora.getHours() >= MADRUGADA.hasta)) continue;
+    if (!estrenando && pasadas < GENEROS_CADA_HORAS[via]) continue;
+    if (!estrenando && !tmdb && (ahora.getHours() < MADRUGADA.desde || ahora.getHours() >= MADRUGADA.hasta)) continue;
 
     const nombre = mismas.map((lista) => lista.nombre).join(', ');
     try {
@@ -165,7 +181,8 @@ export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date())
       */
       const averiguados = await rellenarGeneros(url, {
         conocidas: panel.generosConocidos(primera.id),
-        cuantas: GENEROS_POR_PASADA,
+        cuantas: GENEROS_POR_PASADA[via],
+        tmdb,
       });
       // El mismo sello para todas: es lo que hace que la marca de agua del
       // aparato valga aunque la casa tenga dos listas.
@@ -176,7 +193,7 @@ export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date())
       const total = panel.cuantosGeneros(primera.id);
       const conGenero = averiguados.filter((uno) => uno.genero !== '').length;
       console.log(
-        `[generos] ${nombre}: ${conGenero} de ${averiguados.length} preguntadas, ${total.conGenero} en total`,
+        `[generos] ${nombre} (${via}): ${conGenero} de ${averiguados.length} preguntadas, ${total.conGenero} en total`,
       );
     } catch (fallo) {
       console.error(`[generos] ${nombre} (${sinCredenciales(url)}) falló:`, fallo);

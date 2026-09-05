@@ -111,10 +111,27 @@ El problema es de dónde sale el tema. **De las series viene con el catálogo**
 (`get_series` trae el género), así que ahí los temas mandan desde el primer
 arranque. **De las películas no**: `get_vod_streams` da título, cartel, nota y
 año, y el género está en `get_vod_info`, que es **una petición por título** y
-hay 18.042. Así que lo va rellenando el servidor de la casa, **quinientas al
-día y de madrugada**, empezando por lo último que ha entrado, que es lo que
-llena los carruseles: el catálogo entero queda cubierto en poco más de un mes y
-se nota desde la primera semana.
+hay 18.042. Así que lo va rellenando el servidor de la casa, empezando por lo
+último que ha entrado, que es lo que llena los carruseles.
+
+**Y pregunta a dos sitios, en este orden.** Primero a **TMDb**: no limita
+conexiones y devuelve una **lista cerrada de géneros en español**, que es lo
+que hace que las filas salgan limpias —del panel viene texto libre, y por eso
+existe `contarTemas`—. Lo que no reconozca, **al panel**, que de su propio
+catálogo sabe más que nadie: acierta el 97 % de lo que se le pregunta.
+
+El ritmo sale de eso: con TMDb, dos mil por pasada y una por hora, y el
+catálogo entero cubierto en una tarde; sin token, quinientas al día y de
+madrugada, algo más de un mes. El token se lee de `TMDB_TOKEN` y **no está en
+el repositorio, que es público**: vive en un fichero del VPS. Sin él todo sigue
+funcionando, solo que más despacio.
+
+Casar nuestra película con la de TMDb se hace por **título y año**, y ahí el
+sesgo es **el contrario** del que lleva el clasificador: ante la duda, **sin
+género**. Una película sin género sale igual en su fila; una con el género de
+otra ensucia una fila entera del inicio y nadie sabe por qué. Por eso solo se
+acepta un resultado si el título cuadra —comparado con `fold`— o si, buscando
+con año, ha quedado un único candidato.
 
 Mientras tanto el inicio no se queda a medias: si no hay al menos cuatro temas
 que den para una fila entera (`TEMAS_SUFICIENTES`), se usan las categorías del
