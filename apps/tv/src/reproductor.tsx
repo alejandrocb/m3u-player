@@ -33,19 +33,9 @@ import type {
   Perfil,
   Programacion,
   Reproducible,
-  Segmento,
   Uso,
 } from '@m3u/ui';
-import {
-  FIN_EPISODIO,
-  ambitoDeTemporada,
-  dentroDelSegmento,
-  esLimiteDeConexiones,
-  reloj,
-  segmentoQueManda,
-  segmentoValido,
-  vaAnotado,
-} from '@m3u/ui';
+import { FIN_EPISODIO, esLimiteDeConexiones, reloj, vaAnotado } from '@m3u/ui';
 import { avanceDePrograma, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
@@ -66,23 +56,6 @@ import {
 
 /** Cuánto tarda en esconderse el rótulo si no se toca nada. */
 const OCULTAR_MS = 4000;
-/**
- * Hasta qué minuto se ofrece marcar la careta.
- *
- * Pasados diez minutos, lo que hay en pantalla es la serie, no su intro: el
- * botón solo estorbaría el resto del capítulo.
- */
-const MARCAR_HASTA_S = 600;
-
-/**
- * Cuánto antes de la marca se ofrece saltar.
- *
- * Solo se apunta dónde **acaba** la careta, así que el principio se supone:
- * dos minutos, que es lo que dura una larga. Por delante es aproximado y por
- * detrás exacto, que es como conviene equivocarse aquí.
- */
-const VENTANA_INTRO_S = 120;
-
 /** Salto de las flechas y de los botones de avance. */
 const SALTO_S = 10;
 /** Cada cuánto se apunta por dónde va. Escribir en cada fotograma sobra. */
@@ -154,19 +127,6 @@ interface Props {
    * encadena con nada.
    */
   continua?: boolean;
-  /** Lo marcado por la casa para este capítulo: la careta, y algún día más. */
-  segmentosDe?: (clave: string) => Promise<Segmento[]>;
-  guardarSegmento?: (segmento: Segmento) => Promise<void>;
-  /** Quitar la marca, desde el pulsado largo sobre "Saltar intro". */
-  borrarSegmento?: (ambito: string, tipo: Segmento['tipo']) => Promise<void>;
-  /**
-   * Al marcar, guardar para la temporada entera en vez de para el capítulo.
-   *
-   * Es lo que vale en la mayoría de las series —la careta empieza siempre en
-   * el mismo minuto—; se apaga para las que arrancan con una escena y la
-   * llevan en otro sitio cada vez.
-   */
-  marcarTemporada?: boolean;
   /**
    * El mando está sobre la vista previa.
    *
@@ -234,10 +194,6 @@ export function Reproductor({
   programacion,
   arbitro,
   continua = false,
-  segmentosDe,
-  guardarSegmento,
-  borrarSegmento,
-  marcarTemporada = true,
   caja,
   resaltado,
   onAbrir,
@@ -287,8 +243,6 @@ export function Reproductor({
     Y con un panel de pistas abierto, el mando es suyo.
   */
   const [zona, setZona] = useState<'video' | 'botones' | 'pistas'>('video');
-  /** Lo marcado para este capítulo y su temporada. */
-  const [segmentos, setSegmentos] = useState<Segmento[]>([]);
 
   const [focoBoton, setFocoBoton] = useState(0);
   const [focoPista, setFocoPista] = useState(0);
@@ -482,70 +436,6 @@ export function Reproductor({
   );
 
   /*
-    Lo marcado para este capítulo, si alguien de la casa lo marcó alguna vez.
-
-    Se pide al abrir y no hace falta más: nadie marca una intro mientras otro
-    la está viendo, y lo que se marque aquí se apunta en el momento.
-  */
-  useEffect(() => {
-    if (medio.clase !== 'episodio' || !segmentosDe) {
-      setSegmentos([]);
-      return;
-    }
-    let vigente = true;
-    segmentosDe(medio.id)
-      .then((suyos) => vigente && setSegmentos(suyos))
-      .catch(() => vigente && setSegmentos([]));
-    return () => {
-      vigente = false;
-    };
-  }, [medio.clase, medio.id, segmentosDe]);
-
-  /** La careta de este capítulo, sea suya o de su temporada. */
-  const intro = medio.clase === 'episodio' ? segmentoQueManda(segmentos, medio.id, 'intro') : null;
-  const enIntro = Boolean(intro && dentroDelSegmento(intro, tiempo));
-
-  /**
-   * Guarda la careta con **una sola pulsación**: dónde acaba.
-   *
-   * El principio no se pregunta. Hay series que empiezan por la careta, así
-   * que marcar dónde empieza sería siempre "en el cero" y una pulsación
-   * tirada; y en las que arrancan con una escena, lo que uno sabe decir es
-   * cuándo termina la careta, no cuándo empezó, que ya ha pasado.
-   *
-   * Así que el botón se ofrece durante los dos minutos anteriores a la marca,
-   * que es lo que dura una careta larga. Es aproximado por delante y exacto
-   * por detrás, que es como conviene equivocarse: el salto cae siempre donde
-   * empieza la serie.
-   *
-   * Se guarda **por temporada**, que es lo que vale para la mayoría: la careta
-   * empieza siempre en el mismo minuto. Las que la llevan en otro sitio cada
-   * vez se marcan por capítulo, y eso es lo que manda al leer.
-   */
-  const anotarIntro = useCallback(
-    (hasta: number) => {
-      if (medio.clase !== 'episodio' || !guardarSegmento) return;
-
-      const ambito = (marcarTemporada ? ambitoDeTemporada(medio.id) : medio.id) ?? medio.id;
-      const segmento: Segmento = { ambito, tipo: 'intro', desde: Math.max(0, hasta - VENTANA_INTRO_S), hasta };
-      // Una marca absurda es un despiste, y estropearía la serie para toda la
-      // casa: se comparte con todos los aparatos.
-      if (!segmentoValido(segmento)) return;
-
-      void guardarSegmento(segmento).then(() => setSegmentos((antes) => [...antes, segmento]));
-    },
-    [medio, guardarSegmento, marcarTemporada],
-  );
-
-  /** Quita la marca, para cuando se puso mal. Va en el pulsado largo. */
-  const olvidarIntro = useCallback(() => {
-    if (!intro || !borrarSegmento) return;
-    void borrarSegmento(intro.ambito, 'intro').then(() =>
-      setSegmentos((antes) => antes.filter((uno) => uno !== intro)),
-    );
-  }, [intro, borrarSegmento]);
-
-  /*
     La fila de abajo, armada como datos y no como JSX suelto.
 
     Es lo que permite que el mando la recorra: para saber cuál está enfocado y
@@ -566,31 +456,6 @@ export function Reproductor({
     */
     ...(enCreditos && siguiente
       ? [{ clave: 'proximo', etiqueta: 'Siguiente capítulo', onPress: () => onCambiar?.(siguiente) }]
-      : []),
-    /*
-      Saltar la careta, cuando alguien la ha marcado. Va delante de todo por lo
-      mismo que el de los créditos: mientras suena la intro no hay otra cosa
-      que uno quiera hacer.
-    */
-    ...(enIntro && intro
-      ? [
-          {
-            clave: 'saltar',
-            etiqueta: 'Saltar intro',
-            onPress: () => saltar(intro.hasta - tiempo),
-            // Mantener pulsado la quita: es el mismo gesto que en la
-            // biblioteca, y hace falta cuando la marca quedó mal puesta.
-            onLongPress: olvidarIntro,
-          },
-        ]
-      : []),
-    /*
-      Y marcarla, en dos tiempos: la primera pulsación apunta dónde empieza y
-      la segunda dónde acaba. Solo se ofrece si no hay ninguna marcada ya y
-      dentro de los primeros minutos, que es donde puede haber una careta.
-    */
-    ...(medio.clase === 'episodio' && guardarSegmento && !intro && tiempo < MARCAR_HASTA_S
-      ? [{ clave: 'marcar', etiqueta: 'La intro acaba aquí', onPress: () => anotarIntro(tiempo) }]
       : []),
     ...(enDirecto
       ? []
@@ -926,11 +791,9 @@ export function Reproductor({
         es el momento en que uno mira la pantalla esperando que pase algo, y
         esconderlo obligaría a despertar los controles a ciegas.
       */}
-      {(enCreditos || enIntro) && !visible ? (
+      {enCreditos && !visible ? (
         <View style={estilos.creditos} pointerEvents="none">
-          <Text style={estilos.creditosTexto}>
-            {enIntro ? 'Saltar intro  ›' : 'Siguiente capítulo  ›'}
-          </Text>
+          <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
           <Text style={estilos.creditosPie}>Baja con el mando para ponerlo</Text>
         </View>
       ) : null}
@@ -1106,11 +969,11 @@ export function Reproductor({
 
               // El de los créditos lleva texto: es una oferta, no un ajuste,
               // y un icono suelto no se entiende a tiempo.
-              if (boton.clave === 'proximo' || boton.clave === 'saltar' || boton.clave === 'marcar') {
+              if (boton.clave === 'proximo') {
                 return (
                   <Pastilla
                     key={boton.clave}
-                    texto={boton.clave === 'marcar' ? boton.etiqueta : `${boton.etiqueta}  ›`}
+                    texto={`${boton.etiqueta}  ›`}
                     activo={marcado}
                     enfocada={enfocado}
                     onPress={boton.onPress}

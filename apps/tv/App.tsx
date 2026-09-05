@@ -1850,14 +1850,6 @@ function BibliotecaVista({
           programacion={programacion}
           arbitro={arbitro}
           continua={ajustes.continua}
-          /*
-            La intro la marca quien mira, y la marca es de la casa: viaja con
-            la sincronización como el historial, así que quien la marque una
-            vez se la ahorra a los demás.
-          */
-          segmentosDe={(clave) => perfiles.segmentosDeEpisodio(clave)}
-          guardarSegmento={(segmento) => perfiles.guardarSegmento(segmento)}
-          borrarSegmento={(ambito, tipo) => perfiles.borrarSegmento(ambito, tipo)}
           onAbrir={() => setAPantallaCompleta(true)}
         />
       ) : null}

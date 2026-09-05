@@ -9,4 +9,3 @@ export * from './perfiles.ts';
 export * from './sincronizacion.ts';
 export * from './cliente-sync.ts';
 export * from './arbitro.ts';
-export * from './segmentos.ts';

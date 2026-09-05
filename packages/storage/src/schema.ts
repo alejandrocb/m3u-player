@@ -229,31 +229,6 @@ CREATE TABLE IF NOT EXISTS affinity (
   PRIMARY KEY (profile_id, clave)
 ) WITHOUT ROWID;
 
--- Dónde empieza y acaba la intro (o los créditos) de algo.
---
--- **No es de un perfil sino de la casa**: la careta de una serie es la misma
--- para todos, y marcarla una vez tiene que valer para quien la vea después, en
--- el aparato que sea. Por eso viaja con la sincronización aunque no cuelgue de
--- profile_id, que es lo único que la distingue del resto de estas tablas.
---
--- El ámbito es la clave de una temporada (doctor-who:s1) o la de un episodio
--- (doctor-who:s1e4). Con temporada basta en las series cuya careta empieza
--- siempre en el mismo minuto; las que arrancan con una escena y meten la
--- careta después la llevan en otro sitio en cada capítulo, y ahí hace falta
--- marcarlos uno a uno. Al buscar, **manda lo más concreto**.
---
--- start_s y end_s, y no start/end: END es palabra reservada de SQL, y eso ya
--- costó un rato una vez con la columna cast.
-CREATE TABLE IF NOT EXISTS segment (
-  ambito  TEXT NOT NULL,
-  kind    TEXT NOT NULL,
-  start_s REAL NOT NULL,
-  end_s   REAL NOT NULL,
-  updated TEXT NOT NULL,
-  deleted INTEGER NOT NULL DEFAULT 0,
-  origin  TEXT,
-  PRIMARY KEY (ambito, kind)
-) WITHOUT ROWID;
 `;
 
 /**
@@ -284,11 +259,6 @@ export const SINCRONIZADAS: Array<{ tabla: string; clave: string[]; campos: stri
   */
   { tabla: 'affinity', clave: ['profile_id', 'clave'], campos: ['veces'] },
   { tabla: 'profile_setting', clave: ['profile_id', 'key'], campos: ['value'] },
-  /*
-    Los segmentos son de la casa y no de un perfil: la careta de una serie es
-    la misma para todos, y marcarla una vez vale para quien la vea después.
-  */
-  { tabla: 'segment', clave: ['ambito', 'kind'], campos: ['start_s', 'end_s'] },
 ];
 
 /**

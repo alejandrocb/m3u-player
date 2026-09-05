@@ -249,62 +249,41 @@ aparato que acaba de empezar. Lo que falta es que ese espere a que se libere
 de verdad —el panel tarda ~30 s— en vez de comerse un 403: eso es el árbitro
 de conexión, que sigue pendiente.
 
-### Saltar la intro: la marca quien mira, y vale para toda la casa
+### El botón de los créditos, y por qué no hay "saltar intro"
 
-El botón de **"Siguiente capítulo"** sale al llegar a los créditos, y para eso
-no hace falta ningún dato de nadie: se toma el mismo umbral con el que se da un
-capítulo por visto (95 %), así que en uno de cincuenta minutos aparece en los
-últimos dos y medio. El error es siempre por defecto —tarde, nunca en mitad de
-la escena— y el aviso se queda puesto aunque los controles se escondan, que es
-justo el momento en que uno mira la pantalla esperando que pase algo.
+Al llegar a los créditos sale **"Siguiente capítulo"**, y para eso no hace falta
+ningún dato de nadie: se toma el mismo umbral con el que se da un capítulo por
+visto (95 %), así que en uno de cincuenta minutos aparece en los últimos dos y
+medio. El error es siempre por defecto —tarde, nunca en mitad de la escena— y
+el aviso se queda puesto aunque los controles se escondan, que es justo el
+momento en que uno mira la pantalla esperando que pase algo.
 
-**El "Saltar intro" necesita datos, y no hay de dónde sacarlos solos.** Medido
-contra la lista real con `tools/probe/src/intro.ts`: los ficheros son MKV y sí
-traen marcas de capítulo, pero **sin nombre** —lo que hay escrito es la propia
-hora, `00:06:16.251`— y repartidas cada cinco o seis minutos, que es un
-troceado automático del que codificó y no un capitulado que sepa dónde está la
-careta. Con eso no hay forma de decir cuál de las marcas es la intro.
+**Saltar la intro se probó y se quitó.** Queda escrito porque el trabajo de
+medir sí sirve, y para no volver a empezar por el mismo sitio:
 
-Así que la marca quien mira, con **una sola pulsación: "La intro acaba aquí"**.
-El principio no se pregunta, y no por ahorrar una pulsación: hay series que
-**empiezan por la careta**, así que marcar dónde empieza sería siempre "en el
-cero"; y en las que arrancan con una escena, lo que uno sabe decir es cuándo
-termina, no cuándo empezó, que ya ha pasado. El botón de saltar se ofrece
-durante los **dos minutos anteriores** a la marca, que es lo que dura una
-careta larga: aproximado por delante y exacto por detrás, que es como conviene
-equivocarse aquí —el salto cae siempre donde empieza la serie—.
+- **Los ficheros no lo saben.** Medido con `tools/probe/src/intro.ts` contra la
+  lista real: son MKV y traen marcas de capítulo, pero **sin nombre** —lo
+  escrito es la propia hora, `00:06:16.251`— y repartidas cada cinco o seis
+  minutos, que es un troceado automático del que codificó y no un capitulado
+  que sepa dónde está la careta. No hay forma de decir cuál de las marcas es la
+  intro.
+- **Hay dos clases de serie**, y eso descarta el atajo fácil: en unas la careta
+  empieza siempre en el mismo minuto —se reconocería por su posición— y en
+  otras la serie arranca con una escena y la mete después, en un sitio distinto
+  cada vez. Estas segundas solo se reconocen **por el sonido**.
+- Se llegó a montar el marcado a mano —un botón "La intro acaba aquí" que
+  guardaba el segmento para la temporada y lo repartía por la sincronización— y
+  **se descartó por cómo se usaba**: pedirle al que mira que marque la careta
+  no compensa lo que ahorra.
 
-Marcar solo se ofrece en los diez primeros minutos, y **mantener pulsado sobre
-"Saltar intro" quita la marca**, que es el mismo gesto que en la biblioteca y
-hace falta cuando quedó mal puesta. Quitarla deja lápida, como toda baja que se
-sincroniza: borrar la fila no dejaría nada que contar y el otro aparato la
-volvería a subir.
-
-**La marca es de la casa, no de un perfil.** La careta de una serie es la misma
-para todos, así que quien la marque le ahorra el trabajo al siguiente y al
-resto de aparatos: la tabla `segment` viaja con la sincronización como el
-historial, y es la única de `SINCRONIZADAS` que no cuelga de `profile_id`.
-
-Hay dos clases de serie y por eso hay dos ámbitos:
-
-- La careta empieza **siempre en el mismo minuto**: se marca una vez y vale
-  para la temporada entera (`doctor-who:s1`). Es lo que se guarda por defecto.
-- La serie **arranca con una escena** y mete la careta después, en un sitio
-  distinto cada vez: ahí hay que marcar el capítulo (`doctor-who:s1e4`), y **lo
-  concreto manda sobre lo general**.
-
-El formato es el de Jellyfin —tipo, principio y final— a propósito: si algún
-día se automatiza o se importa de un servidor suyo, los datos encajan sin
-traducir nada. Y una marca al revés o de dos segundos no se guarda: estropearía
-la serie para toda la casa.
-
-Lo que quedaría por automatizar es la huella de audio, que es lo que hace el
-plugin de Jellyfin: comparar dos capítulos y buscar el trozo que se repite.
-Funcionaría con los dos tipos de serie, pero el coste no es la CPU sino la
-descarga —en un MKV el audio va entrelazado con el vídeo, así que bajarse
+Lo que quedaría, si algún día se retoma, es la huella de audio: comparar dos
+capítulos y buscar el trozo que se repite, que es lo que hace el plugin de
+Jellyfin y funcionaría con los dos tipos de serie. El coste no es la CPU sino
+la descarga —en un MKV el audio va entrelazado con el vídeo, así que bajarse
 quince minutos de audio es bajarse quince minutos de película, unos 400 MB por
-capítulo—. Viable bajo demanda al abrir una serie; impensable para las 6.500
-del catálogo.
+capítulo—: viable bajo demanda al abrir una serie, impensable para las 6.500
+del catálogo. Y si se hiciera, el formato a guardar es el de Jellyfin —tipo,
+principio y final—, que es lo que permitiría importarlo de un servidor suyo.
 
 ### Lo que ya se ha visto se releva, no se queda
 

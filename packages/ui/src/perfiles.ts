@@ -15,7 +15,6 @@
  */
 
 import type { Orden } from './puerto.ts';
-import type { Segmento } from './segmentos.ts';
 import type { Cambio } from './sincronizacion.ts';
 
 /** Qué se puede tener a medias o marcado como favorito. */
@@ -180,17 +179,6 @@ export interface AlmacenPerfiles {
 
   /** Preferencias del perfil: columnas de la rejilla, orden... */
   ajustes(perfilId: string): Promise<Ajustes>;
-  /**
-   * Los segmentos que aplican a un capítulo: los suyos y los de su temporada.
-   *
-   * **No son de un perfil sino de la casa**, pero viven en esta misma base y
-   * viajan con la misma sincronización, así que se piden por aquí en vez de
-   * inventar otro puerto para dos consultas.
-   */
-  segmentosDeEpisodio(clave: string): Promise<Segmento[]>;
-  guardarSegmento(segmento: Segmento): Promise<void>;
-  /** Quita una marca: deja lápida, como toda baja que se sincroniza. */
-  borrarSegmento(ambito: string, tipo: Segmento['tipo']): Promise<void>;
   guardarAjuste(perfilId: string, clave: keyof Ajustes, valor: string): Promise<void>;
 
   favoritos(perfilId: string): Promise<Favorito[]>;
