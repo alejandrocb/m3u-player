@@ -303,6 +303,15 @@ const CATEGORIAS_EN_INICIO = 8;
 const TEMAS_SUFICIENTES = 4;
 
 /**
+ * Cuántas de más se piden por fila, para poder tirar las repetidas.
+ *
+ * Lo que ya se ha enseñado arriba no vuelve a salir abajo, así que una fila
+ * pide de sobra y se queda con las veinte primeras que aún no estén puestas.
+ * Cuatro veces es de sobra: una película tiene dos o tres géneros, no doce.
+ */
+const DE_SOBRA = 4;
+
+/**
  * Cuántas caben en "seguir viendo" **después** de dejar una por serie.
  *
  * Quien llama pide unas cuantas más de la cuenta, porque el recorte por serie
@@ -950,7 +959,15 @@ export class Presentador {
    * pone en el salón ordena el inicio de la tablet igual con unas que con
    * otros.
    */
-  async #anadirCategorias(filas: FilaInicio[], modo: ModoInicio): Promise<void> {
+  async #anadirCategorias(
+    filas: FilaInicio[],
+    modo: ModoInicio,
+    anadir: (
+      titulo: string,
+      fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
+      clase: 'pelicula' | 'serie',
+    ) => Promise<void>,
+  ): Promise<void> {
     const clase = modo === 'series' ? 'serie' : 'pelicula';
 
     let temas: GrupoFicha[] = [];
@@ -981,20 +998,21 @@ export class Presentador {
     const elegidas = ordenarCategorias(elegibles, cuenta).slice(0, CATEGORIAS_EN_INICIO);
 
     for (const categoria of elegidas) {
-      // El tema ya viene presentable; la categoría del proveedor viene a
-      // gritos y con la sección delante.
       const donde = porTema ? { tema: categoria.nombre } : { grupo: categoria.nombre };
+      /*
+        Se piden más de las que caben porque `anadir` va a tirar las que ya
+        estén puestas más arriba: una película con tres géneros sale de tres
+        consultas y solo se queda en la primera. Pidiendo veinte, una fila de
+        "Romance" detrás de "Drama" se quedaba en cuatro.
+      */
       const fichas =
         clase === 'pelicula'
-          ? await this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'recomendada', ...donde })
-          : await this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'recomendada', ...donde });
-      if (fichas.length === 0) continue;
+          ? await this.#biblioteca.peliculas({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'recomendada', ...donde })
+          : await this.#biblioteca.series({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'recomendada', ...donde });
 
-      filas.push({
-        tipo: 'carrusel',
-        titulo: porTema ? categoria.nombre : nombreDeCategoria(categoria.nombre),
-        elementos: await this.#aCarrusel(fichas, clase),
-      });
+      // El tema ya viene presentable; la categoría del proveedor viene a
+      // gritos y con la sección delante.
+      await anadir(porTema ? categoria.nombre : nombreDeCategoria(categoria.nombre), fichas, clase);
     }
   }
 
@@ -1135,11 +1153,18 @@ export class Presentador {
     const conPeliculas = modo !== 'series';
     const conSeries = modo !== 'peliculas';
 
+    /*
+      De sobra en todas: lo que ya esté puesto en una fila de arriba se cae de
+      las de abajo, y "Recomendadas" se solapa casi entera con "Novedades" —el
+      orden recomendado empieza por lo más reciente—. Pidiendo veinte justas,
+      esa fila se quedaba vacía.
+    */
+    const cuantas = CARRUSEL * DE_SOBRA;
     const [novedades, valoradas, series, seriesValoradas, continuar] = await Promise.all([
-      conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'reciente' }) : [],
-      conPeliculas ? this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'recomendada' }) : [],
-      conSeries ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'reciente' }) : [],
-      modo === 'series' ? this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'recomendada' }) : [],
+      conPeliculas ? this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'reciente' }) : [],
+      conPeliculas ? this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'recomendada' }) : [],
+      conSeries ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'reciente' }) : [],
+      modo === 'series' ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'recomendada' }) : [],
       this.#filaContinuar(modo),
     ]);
 
@@ -1216,14 +1241,30 @@ export class Presentador {
 
     if (continuar) filas.push(continuar);
 
+    /*
+      **Nada se repite entre filas.** Una película tiene varios géneros —"Drama,
+      Romance"— y sin esto sale en las dos, y encima justo debajo de
+      "Novedades", que es de donde acaba de salir. El inicio se llenaba de la
+      misma carátula tres veces y el catálogo parecía la mitad de grande.
+
+      Manda la fila de más arriba, que es la que uno ve antes: lo que ya se ha
+      enseñado no vuelve a aparecer más abajo.
+    */
+    const puestas = new Set<string>();
+
     const anadir = async (
       titulo: string,
       fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
       clase: 'pelicula' | 'serie',
     ): Promise<void> => {
-      if (fichas.length === 0) return;
-      const elementos = await this.#aCarrusel(fichas, clase);
-      if (elementos.length > 0) filas.push({ tipo: 'carrusel', titulo, elementos });
+      const nuevas = fichas.filter((ficha) => !puestas.has(ficha.id)).slice(0, CARRUSEL);
+      if (nuevas.length === 0) return;
+
+      const elementos = await this.#aCarrusel(nuevas, clase);
+      if (elementos.length === 0) return;
+
+      for (const ficha of nuevas) puestas.add(ficha.id);
+      filas.push({ tipo: 'carrusel', titulo, elementos });
     };
 
     await anadir(modo === 'peliculas' ? 'Novedades' : 'Películas recién llegadas', novedades, 'pelicula');
@@ -1235,7 +1276,7 @@ export class Presentador {
     */
     await anadir('Recomendadas', modo === 'series' ? seriesValoradas : valoradas, modo === 'series' ? 'serie' : 'pelicula');
 
-    await this.#anadirCategorias(filas, modo);
+    await this.#anadirCategorias(filas, modo, anadir);
 
     // El foco vuelve donde estaba, recortado por si las filas han cambiado.
     // Vale para dos casos: volver de una sección, y una sincronización que

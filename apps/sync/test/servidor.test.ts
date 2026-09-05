@@ -490,6 +490,30 @@ test('las fichas llegan por marca de agua, y solo las nuevas', async () => {
   }
 });
 
+test('la nota de TMDb viaja con la ficha', async () => {
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    const lista = m.panel.listasDe('casa-triana')[0]!.id;
+
+    m.panel.guardarFichas(
+      lista,
+      [{ id: 'el-aviso-2018', clase: 'pelicula', genero: 'Drama', nota: 6.4, votos: 1200, popularidad: 31.2 }],
+      1000,
+    );
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+    const traidas = await pedir(m.url, '/api/fichas?desde=0', { metodo: 'GET', token });
+
+    assert.deepEqual(traidas.datos.fichas, [
+      { id: 'el-aviso-2018', clase: 'pelicula', genero: 'Drama', nota: 6.4, votos: 1200, popularidad: 31.2 },
+    ]);
+  } finally {
+    await m.cerrar();
+  }
+});
+
 test('sin token no se ven las fichas', async () => {
   const m = await montar();
   try {

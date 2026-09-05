@@ -319,6 +319,18 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   /** Marca de que ya se preguntó, aunque el panel no contestara nada. */
   { tabla: 'movie', columna: 'detalle_pedido', tipo: 'TEXT' },
   /*
+    La nota de TMDb, con cuántos la han votado, y su popularidad.
+
+    La del proveedor no vale para ordenar: reparte dieces a mansalva, y un 10
+    no quiere decir que sea buena sino que no la ha valorado nadie. Estas tres
+    vienen de la misma búsqueda con la que se averigua el género, así que no
+    cuestan ni una petición de más, y con los votos delante ya se puede
+    distinguir un 8 de mil personas de un 10 de dos.
+  */
+  { tabla: 'movie', columna: 'nota_tmdb', tipo: 'REAL' },
+  { tabla: 'movie', columna: 'votos_tmdb', tipo: 'INTEGER' },
+  { tabla: 'movie', columna: 'popularidad', tipo: 'REAL' },
+  /*
     Y lo mismo para las series, que salen en la portada igual que las
     películas. Aquí la respuesta es `get_series_info`, la misma que trae los
     episodios, pero se pide aparte: la portada quiere la ficha de tres o
@@ -330,6 +342,9 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'series', columna: 'genre', tipo: 'TEXT' },
   { tabla: 'series', columna: 'trailer', tipo: 'TEXT' },
   { tabla: 'series', columna: 'detalle_pedido', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'nota_tmdb', tipo: 'REAL' },
+  { tabla: 'series', columna: 'votos_tmdb', tipo: 'INTEGER' },
+  { tabla: 'series', columna: 'popularidad', tipo: 'REAL' },
   { tabla: 'episode', columna: 'rating', tipo: 'REAL' },
   { tabla: 'episode', columna: 'year', tipo: 'INTEGER' },
   { tabla: 'episode', columna: 'seconds', tipo: 'INTEGER' },

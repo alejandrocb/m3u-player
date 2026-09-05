@@ -159,6 +159,10 @@ export interface FichaRemota {
   reparto?: string;
   fondo?: string;
   trailer?: string;
+  /** La nota de TMDb y cuántos la han votado. La del panel está inflada. */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
 }
 
 /** Lo que el servidor lleva averiguado desde la última vez que se preguntó. */

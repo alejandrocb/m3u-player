@@ -140,6 +140,14 @@ que se preguntó al panel por su cuenta es más de fiar.
 6.500 veces por una sinopsis sería bajarse el catálogo de capítulos completo
 para tirarlo. Su género, además, ya viene con el catálogo.
 
+**Y de la misma búsqueda sale la nota de TMDb**, con cuántos la han votado y
+su popularidad (`nota_tmdb`, `votos_tmdb`, `popularidad`). No cuestan ni una
+petición de más y arreglan lo que la del proveedor no puede: esa está inflada
+—cientos de dieces que solo quieren decir que no la ha votado nadie—, y por eso
+hoy solo sirve para descartar. Con los votos delante sí se distingue un 8 de
+mil personas de un 10 de dos. Una nota con cero votos **no se guarda**: no es
+un cero, es que no hay nota.
+
 Al guardar una ficha del servidor **solo se marca `detalle_pedido` si trae
 sinopsis**. Esa marca quiere decir "ya se preguntó" y evita que la pantalla de
 información vuelva al panel en cada arranque; ponerla con un género suelto
@@ -170,6 +178,13 @@ Tres detalles que no son opcionales:
   de ahí sale también cuándo fue la última pasada, sin una tabla aparte. El
   aparato la guarda en `meta` y pide `GET /api/generos?desde=…`; al reimportar
   el catálogo la pone a cero, porque lo recién traído no lleva ningún género.
+
+**Y nada se repite entre filas.** Una película es "Drama, Romance" y sale de
+las dos consultas; el orden recomendado, además, empieza por lo más reciente,
+así que "Recomendadas" se solapaba casi entera con "Novedades". El inicio
+acababa con la misma carátula tres veces y el catálogo parecía la mitad de
+grande. Manda la fila de más arriba —la que uno ve antes— y cada fila pide
+`CARRUSEL * DE_SOBRA` para poder tirar las repetidas sin quedarse a medias.
 
 Un tema cuenta para la afinidad igual que una categoría: `gruposDe` devuelve
 las dos cosas de cada ficha, y como los nombres no se pisan —"PELICULAS ACCION"

@@ -562,7 +562,12 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
                actors   = COALESCE(NULLIF(actors, ''),   NULLIF(?, '')),
                backdrop = COALESCE(NULLIF(backdrop, ''), NULLIF(?, '')),
                trailer  = COALESCE(NULLIF(trailer, ''),  NULLIF(?, '')),
-               detalle_pedido = COALESCE(detalle_pedido, ?)
+               detalle_pedido = COALESCE(detalle_pedido, ?),
+               -- Estas tres sí se pisan: no hay otra fuente que las ponga, y
+               -- si TMDb corrige una nota lo suyo es quedarse con la nueva.
+               nota_tmdb   = COALESCE(?, nota_tmdb),
+               votos_tmdb  = COALESCE(?, votos_tmdb),
+               popularidad = COALESCE(?, popularidad)
              WHERE id = ?`,
             [
               ficha.genero,
@@ -571,6 +576,9 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
               ficha.fondo ?? '',
               ficha.trailer ?? '',
               ficha.sinopsis ? new Date().toISOString() : null,
+              ficha.nota ?? null,
+              ficha.votos ?? null,
+              ficha.popularidad ?? null,
               ficha.id,
             ],
           );

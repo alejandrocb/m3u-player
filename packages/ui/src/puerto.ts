@@ -73,6 +73,17 @@ export interface FichaDelServidor {
   fondo?: string;
   /** El identificador de YouTube, para abrirlo fuera. */
   trailer?: string;
+  /**
+   * La nota de TMDb, cuántos la han votado y su popularidad.
+   *
+   * Van aparte de `valoracion`, que es la del proveedor: esa está inflada
+   * —cientos de dieces que solo quieren decir que no la ha votado nadie— y por
+   * eso solo sirve para descartar. Con los votos delante sí se distingue un 8
+   * de mil personas de un 10 de dos.
+   */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
 }
 
 export interface FichaLarga {

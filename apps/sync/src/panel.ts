@@ -219,6 +219,10 @@ export interface FichaGuardada {
   reparto?: string;
   fondo?: string;
   trailer?: string;
+  /** La nota de TMDb, sus votos y su popularidad. La del panel está inflada. */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
 }
 
 export interface ProgramaGuardado {
@@ -274,6 +278,41 @@ export class Panel {
     this.#db = new DatabaseSync(join(carpeta, 'panel.sqlite'));
     this.#db.exec('PRAGMA journal_mode = WAL');
     this.#db.exec(ESQUEMA_PANEL);
+    this.#migrarFicha();
+  }
+
+  /**
+   * Las columnas que se añadieron después de crear la tabla `ficha`.
+   *
+   * `CREATE TABLE IF NOT EXISTS` no toca una tabla que ya existe, así que en un
+   * servidor que lleve días funcionando estas columnas no aparecerían y la
+   * siguiente pasada reventaría con "no such column".
+   *
+   * Y al añadirlas se **borra la marca de preguntado**: todo lo que hubiera se
+   * averiguó sin ellas, así que hay que volver a pasar. Va aquí dentro y no
+   * fuera porque solo ocurre la vez que la columna se crea; puesto fuera, cada
+   * arranque mandaría a repreguntar el catálogo entero.
+   */
+  #migrarFicha(): void {
+    const existentes = new Set(
+      this.#filas('PRAGMA table_info(ficha)').map((fila) => fila.name as string),
+    );
+
+    const nuevas = [
+      { columna: 'nota', tipo: 'REAL' },
+      { columna: 'votos', tipo: 'INTEGER' },
+      { columna: 'popularidad', tipo: 'REAL' },
+    ].filter(({ columna }) => !existentes.has(columna));
+
+    if (nuevas.length === 0) return;
+
+    for (const { columna, tipo } of nuevas) {
+      this.#db.exec(`ALTER TABLE ficha ADD COLUMN ${columna} ${tipo}`);
+      console.log(`[panel] columna añadida: ficha.${columna}`);
+    }
+
+    this.#ejecutar('UPDATE ficha SET completa = 0', []);
+    console.log('[panel] las fichas se vuelven a preguntar: les falta la nota de TMDb');
   }
 
   cerrar(): void {
@@ -658,8 +697,10 @@ export class Panel {
           para atrás.
         */
         this.#ejecutar(
-          `INSERT INTO ficha (lista_id, item_id, clase, genero, sinopsis, reparto, fondo, trailer, completa, sello)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+          `INSERT INTO ficha
+                (lista_id, item_id, clase, genero, sinopsis, reparto, fondo, trailer,
+                 nota, votos, popularidad, completa, sello)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
            ON CONFLICT(lista_id, item_id) DO UPDATE SET
              clase    = excluded.clase,
              genero   = CASE WHEN excluded.genero <> '' THEN excluded.genero ELSE ficha.genero END,
@@ -667,6 +708,9 @@ export class Panel {
              reparto  = COALESCE(excluded.reparto, ficha.reparto),
              fondo    = COALESCE(excluded.fondo, ficha.fondo),
              trailer  = COALESCE(excluded.trailer, ficha.trailer),
+             nota     = COALESCE(excluded.nota, ficha.nota),
+             votos    = COALESCE(excluded.votos, ficha.votos),
+             popularidad = COALESCE(excluded.popularidad, ficha.popularidad),
              completa = 1,
              sello    = excluded.sello`,
           [
@@ -678,6 +722,9 @@ export class Panel {
             ficha.reparto ?? null,
             ficha.fondo ?? null,
             ficha.trailer ?? null,
+            ficha.nota ?? null,
+            ficha.votos ?? null,
+            ficha.popularidad ?? null,
             sello,
           ],
         );
@@ -718,9 +765,11 @@ export class Panel {
    */
   fichasDesde(listaId: string, desde: number, limite: number): { fichas: FichaGuardada[]; hasta: number } {
     const filas = this.#filas(
-      `SELECT item_id, clase, genero, sinopsis, reparto, fondo, trailer, sello FROM ficha
+      `SELECT item_id, clase, genero, sinopsis, reparto, fondo, trailer, nota, votos, popularidad, sello
+         FROM ficha
         WHERE lista_id = ? AND sello > ?
-          AND (genero <> '' OR sinopsis IS NOT NULL OR fondo IS NOT NULL OR trailer IS NOT NULL)
+          AND (genero <> '' OR sinopsis IS NOT NULL OR fondo IS NOT NULL OR trailer IS NOT NULL
+               OR nota IS NOT NULL)
         ORDER BY sello, item_id LIMIT ?`,
       [listaId, desde, limite],
     );
@@ -734,6 +783,9 @@ export class Panel {
         reparto: (fila.reparto as string | null) ?? undefined,
         fondo: (fila.fondo as string | null) ?? undefined,
         trailer: (fila.trailer as string | null) ?? undefined,
+        nota: (fila.nota as number | null) ?? undefined,
+        votos: (fila.votos as number | null) ?? undefined,
+        popularidad: (fila.popularidad as number | null) ?? undefined,
       })),
       hasta: filas.reduce((alto, fila) => Math.max(alto, Number(fila.sello)), desde),
     };

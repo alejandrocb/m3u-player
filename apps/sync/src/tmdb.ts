@@ -57,6 +57,9 @@ interface Resultado {
   overview?: string;
   backdrop_path?: string | null;
   genre_ids?: number[];
+  vote_average?: number;
+  vote_count?: number;
+  popularity?: number;
 }
 
 /** Lo que TMDb sabe de una ficha. Todo puede faltar. */
@@ -66,6 +69,17 @@ export interface FichaTmdb {
   reparto?: string;
   fondo?: string;
   trailer?: string;
+  /**
+   * La nota de TMDb, cuántos la han votado y su popularidad.
+   *
+   * Vienen en la misma respuesta de la búsqueda, así que no cuestan nada. La
+   * del proveedor no sirve para ordenar —reparte dieces a mansalva y un 10
+   * quiere decir que no la ha votado nadie—; con los votos delante sí se puede
+   * distinguir un 8 de mil personas de un 10 de dos.
+   */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
 }
 
 export type ClaseTmdb = 'pelicula' | 'serie';
@@ -258,6 +272,11 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
         genero,
         sinopsis: elegido.overview?.trim() || undefined,
         fondo: elegido.backdrop_path ? `${IMAGENES}${elegido.backdrop_path}` : undefined,
+        // Un cero de votos es "nadie la ha votado", no un cero de nota: se
+        // guarda como si no hubiera nota, que es lo que es.
+        nota: elegido.vote_count ? elegido.vote_average : undefined,
+        votos: elegido.vote_count || undefined,
+        popularidad: elegido.popularity || undefined,
         ...resto,
       };
     },

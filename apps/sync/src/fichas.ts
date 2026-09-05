@@ -51,6 +51,16 @@ export interface FichaAveriguada {
   reparto?: string;
   fondo?: string;
   trailer?: string;
+  /**
+   * La nota de TMDb, sus votos y su popularidad.
+   *
+   * Del panel no salen, y es a propósito: su nota está inflada —reparte dieces
+   * a mansalva— y por eso hoy solo sirve para descartar. Estas vienen en la
+   * misma búsqueda que el género, sin coste.
+   */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
 }
 
 export interface OpcionesFichas {

@@ -22,6 +22,9 @@ interface Peli {
   id?: number;
   overview?: string;
   backdrop_path?: string;
+  vote_average?: number;
+  vote_count?: number;
+  popularity?: number;
   title: string;
   original_title?: string;
   release_date: string;
@@ -79,6 +82,9 @@ test('la ficha entera: género, sinopsis, fondo, reparto y tráiler', async () =
           genre_ids: [18, 878],
           overview: 'Un chico descubre un patrón.',
           backdrop_path: '/fondo.jpg',
+          vote_average: 6.4,
+          vote_count: 1200,
+          popularity: 31.2,
         },
       ],
     }),
@@ -87,6 +93,11 @@ test('la ficha entera: género, sinopsis, fondo, reparto y tráiler', async () =
   assert.deepEqual(await tmdb.fichaDe('El aviso', 2018, 'pelicula'), {
     genero: 'Drama, Ciencia ficción',
     sinopsis: 'Un chico descubre un patrón.',
+    // La nota de TMDb con sus votos: es lo que permite distinguir un 8 de mil
+    // personas de un 10 de dos, que es lo que reparte el proveedor.
+    nota: 6.4,
+    votos: 1200,
+    popularidad: 31.2,
     // La dirección entera, con el ancho ya elegido: el aparato no tiene por
     // qué saber cómo monta TMDb las suyas.
     fondo: 'https://image.tmdb.org/t/p/w1280/fondo.jpg',
@@ -94,6 +105,26 @@ test('la ficha entera: género, sinopsis, fondo, reparto y tráiler', async () =
     // Ni el de Vimeo ni el "detrás de las cámaras": el tráiler de YouTube.
     trailer: 'dQw4w9WgXcQ',
   });
+});
+
+test('una nota sin votos no es una nota', async () => {
+  /*
+    TMDb devuelve `vote_average: 0` cuando no la ha votado nadie, que no es lo
+    mismo que un cero de nota. Guardarla como cero la mandaría al fondo de
+    cualquier orden por valoración, que es justo lo contrario de lo que dice
+    el dato.
+  */
+  const tmdb = crearTmdb('t', {
+    fetch: tmdbFalso({
+      'La que nadie vio|2023': [
+        { id: 7, title: 'La que nadie vio', release_date: '2023-01-01', genre_ids: [18], vote_average: 0, vote_count: 0 },
+      ],
+    }),
+  });
+
+  const ficha = await tmdb.fichaDe('La que nadie vio', 2023, 'pelicula');
+  assert.equal(ficha?.nota, undefined);
+  assert.equal(ficha?.votos, undefined);
 });
 
 test('con el título y el año, el género', async () => {

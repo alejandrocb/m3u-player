@@ -73,9 +73,10 @@ function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = []): Biblioteca {
       ];
     },
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
-      // Filtrar por tema deja una sola, para poder distinguir en el test una
-      // fila de tema de una de categoría.
-      const fichas = pagina.tema ? todas.slice(0, 1) : todas;
+      // El orden no cambia el conjunto, solo el sentido. Basta para lo que se
+      // quiere ver aquí: qué fila se queda con qué, ahora que ninguna repite
+      // lo que ya haya salido más arriba.
+      const fichas = pagina.orden === 'recomendada' ? [...todas].reverse() : todas;
       return fichas.slice(pagina.desde, pagina.desde + pagina.limite);
     },
     async series(): Promise<SerieFicha[]> {
@@ -277,7 +278,9 @@ test('el inicio son filas: la portada primero', async () => {
 });
 
 test('el inicio trae carruseles de películas y de series', async () => {
-  const presentador = new Presentador(bibliotecaFalsa());
+  // Un catálogo que dé para varias filas: con tres películas, la segunda fila
+  // se queda vacía porque no se repite nada de la primera.
+  const presentador = new Presentador(bibliotecaFalsa(60));
   const estado = await presentador.cargar();
 
   assert.deepEqual(
@@ -307,7 +310,7 @@ test('con géneros suficientes, las filas van por tema y no por categoría', asy
     { nombre: 'Cortometraje', canales: 3 },
   ];
 
-  const conTemas = await new Presentador(bibliotecaFalsa(3, temas)).cargar();
+  const conTemas = await new Presentador(bibliotecaFalsa(60, temas)).cargar();
   const titulos = (conTemas.inicio?.filas ?? [])
     .filter((fila) => fila.tipo === 'carrusel')
     .map((fila) => fila.titulo);
@@ -318,7 +321,7 @@ test('con géneros suficientes, las filas van por tema y no por categoría', asy
 
   // Y con tres temas —uno menos de los que hacen falta— se sigue con las
   // categorías, que están todas desde el primer arranque.
-  const conPocos = await new Presentador(bibliotecaFalsa(3, temas.slice(0, 3))).cargar();
+  const conPocos = await new Presentador(bibliotecaFalsa(60, temas.slice(0, 3))).cargar();
   const pocos = (conPocos.inicio?.filas ?? [])
     .filter((fila) => fila.tipo === 'carrusel')
     .map((fila) => fila.titulo);
@@ -328,7 +331,7 @@ test('con géneros suficientes, las filas van por tema y no por categoría', asy
 });
 
 test('la pestaña de películas deja fuera las series, y al revés', async () => {
-  const presentador = new Presentador(bibliotecaFalsa());
+  const presentador = new Presentador(bibliotecaFalsa(60));
   await presentador.cargar();
 
   const titulos = (estado: EstadoPantalla): string[] =>
@@ -341,8 +344,36 @@ test('la pestaña de películas deja fuera las series, y al revés', async () =>
   assert.deepEqual(titulos(soloPeliculas), ['Novedades', 'Recomendadas']);
 
   const soloSeries = await presentador.elegirModo('series');
-  assert.deepEqual(titulos(soloSeries), ['Novedades', 'Recomendadas']);
+  /*
+    Solo "Novedades": el catálogo de prueba tiene una serie, y en
+    "Recomendadas" no cabe porque ya ha salido arriba. Es la regla de que nada
+    se repite entre filas, y con un catálogo de verdad esa fila se llena sola.
+  */
+  assert.deepEqual(titulos(soloSeries), ['Novedades']);
   assert.equal(soloSeries.inicio?.modo, 'series');
+});
+
+test('una película no sale dos veces por tener dos géneros', async () => {
+  /*
+    Una película es "Drama, Romance" y sale de las dos consultas. Sin esta
+    regla el inicio se llenaba de la misma carátula tres o cuatro veces
+    —debajo, además, de la fila de donde acababa de salir— y el catálogo
+    parecía la mitad de grande. Manda la fila de más arriba, que es la que uno
+    ve antes.
+  */
+  const temas = [
+    { nombre: 'Drama', canales: 400 },
+    { nombre: 'Comedia', canales: 300 },
+    { nombre: 'Terror', canales: 200 },
+    { nombre: 'Documental', canales: 100 },
+  ];
+
+  const estado = await new Presentador(bibliotecaFalsa(60, temas)).cargar();
+  const todas = (estado.inicio?.filas ?? [])
+    .filter((fila) => fila.tipo === 'carrusel')
+    .flatMap((fila) => fila.elementos.map((elemento) => elemento.id));
+
+  assert.equal(new Set(todas).size, todas.length, 'ninguna ficha sale en dos filas');
 });
 
 test('cambiar de pestaña devuelve el foco arriba', async () => {
