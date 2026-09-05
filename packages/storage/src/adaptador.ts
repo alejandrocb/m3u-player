@@ -37,8 +37,10 @@ const DUENO: Record<'canal' | 'pelicula' | 'episodio', OwnerKind> = {
 };
 
 /** El criterio de orden que pide la interfaz, en el idioma del almacén. */
-function ordenDe(pagina: Pagina): { sort?: 'rating' | 'added' | 'recomendada' } {
+function ordenDe(pagina: Pagina): { sort?: 'rating' | 'added' | 'recomendada' | 'mejor' | 'popular' } {
   if (pagina.orden === 'recomendada') return { sort: 'recomendada' };
+  if (pagina.orden === 'mejor') return { sort: 'mejor' };
+  if (pagina.orden === 'popular') return { sort: 'popular' };
   if (pagina.orden === 'valoracion') return { sort: 'rating' };
   if (pagina.orden === 'reciente') return { sort: 'added' };
   return {};

@@ -312,6 +312,15 @@ const TEMAS_SUFICIENTES = 4;
 const DE_SOBRA = 4;
 
 /**
+ * Cuántas fichas hacen falta para que una fila merezca enseñarse.
+ *
+ * Vale para las filas que dependen de datos que el servidor todavía está
+ * rellenando: mientras no haya bastantes, no salen. Media fila se lee como una
+ * fila; tres carátulas sueltas parecen un error.
+ */
+const MEDIA_FILA = 10;
+
+/**
  * Cuántas caben en "seguir viendo" **después** de dejar una por serie.
  *
  * Quien llama pide unas cuantas más de la cuenta, porque el recorte por serie
@@ -1160,11 +1169,23 @@ export class Presentador {
       esa fila se quedaba vacía.
     */
     const cuantas = CARRUSEL * DE_SOBRA;
-    const [novedades, valoradas, series, seriesValoradas, continuar] = await Promise.all([
+    /*
+      `mejor` y `popular` van por los datos de TMDb, que el servidor de la casa
+      rellena poco a poco: hasta que haya bastantes, sus filas no se enseñan.
+      Es la misma regla que con los temas —nada a medias en el inicio— y por
+      eso se piden aunque puedan volver vacías.
+    */
+    const [novedades, valoradas, series, seriesValoradas, mejores, populares, continuar] = await Promise.all([
       conPeliculas ? this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'reciente' }) : [],
       conPeliculas ? this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'recomendada' }) : [],
       conSeries ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'reciente' }) : [],
       modo === 'series' ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'recomendada' }) : [],
+      modo === 'series'
+        ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'mejor' })
+        : this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'mejor' }),
+      modo === 'series'
+        ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'popular' })
+        : this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'popular' }),
       this.#filaContinuar(modo),
     ]);
 
@@ -1256,9 +1277,10 @@ export class Presentador {
       titulo: string,
       fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
       clase: 'pelicula' | 'serie',
+      minimo = 1,
     ): Promise<void> => {
       const nuevas = fichas.filter((ficha) => !puestas.has(ficha.id)).slice(0, CARRUSEL);
-      if (nuevas.length === 0) return;
+      if (nuevas.length < minimo) return;
 
       const elementos = await this.#aCarrusel(nuevas, clase);
       if (elementos.length === 0) return;
@@ -1275,6 +1297,20 @@ export class Presentador {
       manda aquí es el año y lo último que ha entrado.
     */
     await anadir('Recomendadas', modo === 'series' ? seriesValoradas : valoradas, modo === 'series' ? 'serie' : 'pelicula');
+
+    /*
+      Estas dos son lo que la nota del proveedor no podía dar. "Mejor
+      valoradas" ordena por la nota de TMDb con un mínimo de votos detrás, que
+      es lo que distingue un 8 de mil personas de un 10 de dos; "Populares
+      ahora" va por lo que se está viendo en el mundo, que es un dato que ni el
+      panel ni nosotros podemos calcular.
+
+      Con `MEDIA_FILA` de mínimo: media fila de estas se lee como una fila; tres
+      carátulas sueltas parecen un error.
+    */
+    const clase = modo === 'series' ? ('serie' as const) : ('pelicula' as const);
+    await anadir('Mejor valoradas', mejores, clase, MEDIA_FILA);
+    await anadir('Populares ahora', populares, clase, MEDIA_FILA);
 
     await this.#anadirCategorias(filas, modo, anadir);
 

@@ -187,13 +187,20 @@ export interface Pagina {
 /**
  * Cómo se ordena una página del catálogo.
  *
+ * Hay tres que además **filtran**, y los tres dejan fuera las copias de pase
+ * de prensa. `mejor` y `popular` van por los datos de TMDb —la nota con su
+ * recuento de votos y la popularidad—, que es lo que el panel no puede dar: su
+ * nota está inflada. Como los rellena el servidor poco a poco, al principio
+ * devuelven poco o nada, y quien los use tiene que aguantar una fila corta o
+ * no enseñarla.
+ *
  * `recomendada` no es solo un orden: **también filtra**. Deja fuera lo que no
  * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte
  * el proveedor a mansalva, o copias de pase de prensa— y ordena lo que queda
  * por año, por lo último que entró y por nota. El criterio vive en
  * `@m3u/core` porque el servidor de la casa usa exactamente el mismo.
  */
-export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada';
+export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada' | 'mejor' | 'popular';
 
 /** Dónde buscar: en todo, o solo dentro de una sección y su categoría. */
 export interface Ambito {

@@ -39,7 +39,7 @@ async function enPestana(presentador: Presentador, modo: 'peliculas' | 'series' 
 }
 
 /** Biblioteca de mentira: la misma forma que la real, con datos a mano. */
-function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = []): Biblioteca {
+function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = [], conTmdb = false): Biblioteca {
   // Recientes, valoradas y con cartel: es lo que exige la portada, y sin eso
   // media pantalla de inicio no existiría en los tests.
   const esteAnio = new Date().getFullYear();
@@ -73,13 +73,21 @@ function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = []): Biblioteca {
       ];
     },
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
+      /*
+        `mejor` y `popular` salen de datos de TMDb que rellena el servidor de
+        la casa: una biblioteca recién importada no los tiene, y sus filas no
+        se enseñan. Es el estado normal del primer día.
+      */
+      if ((pagina.orden === 'mejor' || pagina.orden === 'popular') && !conTmdb) return [];
+
       // El orden no cambia el conjunto, solo el sentido. Basta para lo que se
       // quiere ver aquí: qué fila se queda con qué, ahora que ninguna repite
       // lo que ya haya salido más arriba.
       const fichas = pagina.orden === 'recomendada' ? [...todas].reverse() : todas;
       return fichas.slice(pagina.desde, pagina.desde + pagina.limite);
     },
-    async series(): Promise<SerieFicha[]> {
+    async series(pagina: Pagina): Promise<SerieFicha[]> {
+      if ((pagina.orden === 'mejor' || pagina.orden === 'popular') && !conTmdb) return [];
       return [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }];
     },
     async temporadas(): Promise<TemporadaFicha[]> {
@@ -374,6 +382,33 @@ test('una película no sale dos veces por tener dos géneros', async () => {
     .flatMap((fila) => fila.elementos.map((elemento) => elemento.id));
 
   assert.equal(new Set(todas).size, todas.length, 'ninguna ficha sale en dos filas');
+});
+
+test('las filas de TMDb no salen hasta que hay datos bastantes', async () => {
+  /*
+    "Mejor valoradas" y "Populares ahora" salen de la nota y la popularidad de
+    TMDb, que el servidor de la casa rellena poco a poco. Media fila se lee
+    como una fila; tres carátulas sueltas parecen un error, así que hasta que
+    haya diez no se enseñan.
+  */
+  const titulosDe = (estado: EstadoPantalla): string[] =>
+    (estado.inicio?.filas ?? [])
+      .filter((fila) => fila.tipo === 'carrusel')
+      .map((fila) => fila.titulo);
+
+  const sinDatos = titulosDe(await new Presentador(bibliotecaFalsa(60)).cargar());
+  assert.ok(!sinDatos.includes('Mejor valoradas'));
+  assert.ok(!sinDatos.includes('Populares ahora'));
+
+  // Cien: cada fila se lleva veinte y ninguna repite lo de las de arriba, así
+  // que con sesenta la cuarta se quedaba sin material.
+  const conDatos = titulosDe(await new Presentador(bibliotecaFalsa(100, [], true)).cargar());
+  assert.ok(conDatos.includes('Mejor valoradas'), 'con datos sí sale');
+  assert.ok(conDatos.includes('Populares ahora'));
+
+  // Y con un catálogo corto tampoco: lo que quede libre no llega a media fila.
+  const cortas = titulosDe(await new Presentador(bibliotecaFalsa(25, [], true)).cargar());
+  assert.ok(!cortas.includes('Populares ahora'), 'no queda material para las dos');
 });
 
 test('cambiar de pestaña devuelve el foco arriba', async () => {

@@ -491,6 +491,18 @@ grabaciones de pase de prensa, previas al estreno, y se ven mal. Siguen en el
 catálogo —el sesgo del clasificador es no ocultar nada—, solo que no presiden
 el inicio.
 
+**Y encima de eso van dos filas que la nota del panel no podía dar**, con los
+datos de TMDb que rellena el servidor: "Mejor valoradas" ordena por su nota
+**con un mínimo de cien votos** (`VOTOS_MINIMOS`), que es lo que distingue un 8
+de mil personas de un 10 de dos; "Populares ahora" va por su popularidad, que
+mide el mundo de fuera —ni el panel ni nosotros sabemos qué está de moda esta
+semana—. Son los órdenes `mejor` y `popular`, y como los datos llegan poco a
+poco, **la fila no se enseña hasta que haya diez** (`MEDIA_FILA`): media fila
+se lee como una fila, tres carátulas sueltas parecen un error.
+
+Lo que se guarda de la popularidad es **la foto del día en que se preguntó**,
+no un dato vivo: se refresca cuando se vuelva a pasar por esa ficha.
+
 El criterio vive en `packages/core/src/recomendar.ts` porque lo aplican los
 dos lados: el aparato, cuando saca sus sugerencias por su cuenta, y el
 servidor de la casa, que las prepara una vez al día. Si cada uno usara el

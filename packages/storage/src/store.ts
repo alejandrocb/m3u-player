@@ -12,7 +12,16 @@
 import { DatabaseSync } from 'node:sqlite';
 
 import type { Library, Variant } from '@m3u/core';
-import { contarTemas, filtroRecomendadaSQL, fold, ordenRecomendadaSQL } from '@m3u/core';
+import {
+  contarTemas,
+  filtroMejorSQL,
+  filtroPopularSQL,
+  filtroRecomendadaSQL,
+  fold,
+  ordenMejorSQL,
+  ordenPopularSQL,
+  ordenRecomendadaSQL,
+} from '@m3u/core';
 
 /** El `WHERE` de una consulta sin `JOIN`: el filtro del orden y el del tema. */
 function donde(filtro: string | null, theme?: string): string {
@@ -133,7 +142,7 @@ export interface PageOptions {
    * `rating` pone arriba lo mejor valorado y `added` lo último que entró en
    * el catálogo; por defecto va por título.
    */
-  sort?: 'title' | 'rating' | 'added' | 'recomendada';
+  sort?: 'title' | 'rating' | 'added' | 'recomendada' | 'mejor' | 'popular';
 }
 
 export class LibraryStore {
@@ -623,18 +632,25 @@ function enElOrdenPedido<T extends { id: string }>(ids: string[], filas: T[]): T
 
 function ordenDe(sort: PageOptions['sort']): string {
   if (sort === 'recomendada') return ordenRecomendadaSQL();
+  if (sort === 'mejor') return ordenMejorSQL();
+  if (sort === 'popular') return ordenPopularSQL();
   if (sort === 'rating') return 'rating IS NULL, rating DESC, sort_title';
   if (sort === 'added') return 'added IS NULL, added DESC, sort_title';
   return 'sort_title';
 }
 
 /**
- * `recomendada` es el único orden que además **filtra**: deja fuera lo que no
- * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte el
- * proveedor, o copia de pase de prensa—. Los demás devuelven todo.
+ * Tres órdenes **filtran** además de ordenar: `recomendada` deja fuera lo que
+ * no merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte
+ * el proveedor, o copia de pase de prensa—, y `mejor` y `popular` piden que
+ * estén los datos de TMDb, que los rellena el servidor de la casa. Los demás
+ * devuelven todo.
  */
 function filtroDe(sort: PageOptions['sort']): string | null {
-  return sort === 'recomendada' ? filtroRecomendadaSQL() : null;
+  if (sort === 'recomendada') return filtroRecomendadaSQL();
+  if (sort === 'mejor') return filtroMejorSQL();
+  if (sort === 'popular') return filtroPopularSQL();
+  return null;
 }
 
 function toChannel(row: Record<string, unknown>): ChannelRow {

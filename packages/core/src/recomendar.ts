@@ -58,3 +58,49 @@ export function filtroRecomendadaSQL(prefijo = ''): string {
     ` AND ${prefijo}sort_title NOT LIKE '%screening%'`
   );
 }
+
+/**
+ * Cuántos votos hacen falta para que una nota de TMDb signifique algo.
+ *
+ * Es la diferencia entre un 8 que han puesto mil personas y un 10 que han
+ * puesto dos, que es exactamente el problema de la nota del proveedor. Cien es
+ * suficiente para que una película no se cuele por el voto de sus cuatro
+ * amigos, y bajo para no dejar fuera el cine que no es de estreno.
+ */
+export const VOTOS_MINIMOS = 100;
+
+/**
+ * Lo mejor valorado **de verdad**: por la nota de TMDb, con votos bastantes.
+ *
+ * Es el orden que la nota del panel no podía dar. Aquí sí se ordena por nota,
+ * porque detrás hay un recuento de votos que la sostiene, y a igualdad manda
+ * lo más reciente: entre dos ochos, el de este año.
+ */
+export function ordenMejorSQL(prefijo = ''): string {
+  return `${prefijo}nota_tmdb DESC, ${prefijo}year IS NULL, ${prefijo}year DESC`;
+}
+
+export function filtroMejorSQL(prefijo = ''): string {
+  return (
+    `${prefijo}nota_tmdb IS NOT NULL AND ${prefijo}votos_tmdb >= ${VOTOS_MINIMOS}` +
+    ` AND ${prefijo}sort_title NOT LIKE '%screening%'`
+  );
+}
+
+/**
+ * Lo que más se está viendo, según TMDb.
+ *
+ * Su popularidad es un número que ellos calculan con las visitas y las
+ * búsquedas de su web, y es lo único que tenemos que mide **el mundo de
+ * fuera**: ni el panel ni nosotros sabemos qué está de moda esta semana.
+ *
+ * Lo que se guarda es la foto del día en que se preguntó, no un dato vivo: se
+ * refresca cuando se vuelva a pasar por esa ficha, no solo.
+ */
+export function ordenPopularSQL(prefijo = ''): string {
+  return `${prefijo}popularidad DESC, ${prefijo}year IS NULL, ${prefijo}year DESC`;
+}
+
+export function filtroPopularSQL(prefijo = ''): string {
+  return `${prefijo}popularidad IS NOT NULL AND ${prefijo}sort_title NOT LIKE '%screening%'`;
+}
