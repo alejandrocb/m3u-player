@@ -579,6 +579,16 @@ function BibliotecaVista({
   const [aPantallaCompleta, setAPantallaCompleta] = useState(true);
 
   const [verAjustes, setVerAjustes] = useState(false);
+  /**
+   * El capítulo que va después del que se está viendo.
+   *
+   * Hace falta cuando se reproduce desde "seguir viendo": ahí la fila es de
+   * series distintas, así que no hay cola de la que sacar el siguiente y el
+   * botón de "Siguiente capítulo" no salía. Se pregunta a la biblioteca, que
+   * sabe saltar de temporada.
+   */
+  const [siguienteSuelto, setSiguienteSuelto] = useState<Reproducible | null>(null);
+
   /** El menú que cuelga del círculo del perfil, con lo que es de cada uno. */
   const [verPerfil, setVerPerfil] = useState(false);
   const [focoPerfil, setFocoPerfil] = useState(0);
@@ -697,6 +707,36 @@ function BibliotecaVista({
     const reloj = setInterval(() => setSello((antes) => antes + 1), RELOJ_EPG_MS);
     return () => clearInterval(reloj);
   }, [canalesALaVista]);
+
+  /*
+    Y se pide al abrir cada capítulo: es una consulta a la base, y el panel
+    solo entra si esta serie no se había abierto nunca en este aparato.
+  */
+  useEffect(() => {
+    if (reproduciendo?.clase !== 'episodio') {
+      setSiguienteSuelto(null);
+      return;
+    }
+    let vigente = true;
+    biblioteca
+      .episodioSiguiente(reproduciendo.id)
+      .then((siguiente) => {
+        if (!vigente) return;
+        setSiguienteSuelto(
+          siguiente
+            ? {
+                clase: 'episodio',
+                id: siguiente.clave,
+                titulo: `${siguiente.serieTitulo} T${siguiente.temporada} E${siguiente.numero}`,
+              }
+            : null,
+        );
+      })
+      .catch(() => vigente && setSiguienteSuelto(null));
+    return () => {
+      vigente = false;
+    };
+  }, [biblioteca, reproduciendo?.clase, reproduciendo?.id]);
 
   /** El mando está en la cabecera —buscar, ajustes, perfil— y no en la rejilla. */
   const [enCabecera, setEnCabecera] = useState(false);
@@ -1852,7 +1892,13 @@ function BibliotecaVista({
           perfil={perfil}
           // La lista de la pantalla de la que se salió: de ahí salen el
           // episodio siguiente y el zapeo entre canales del grupo.
-          cola={colaDe(estado.elementos, reproduciendo)}
+          /*
+            La cola sale de la pantalla de la que se salió —los capítulos de
+            una temporada, los canales de un grupo—, y si esa pantalla no era
+            una lista de lo mismo, del capítulo siguiente que diga la
+            biblioteca.
+          */
+          cola={colaDe(estado.elementos, reproduciendo) ?? colaDeUno(reproduciendo, siguienteSuelto)}
           onCambiar={setReproduciendo}
           programacion={programacion}
           arbitro={arbitro}
@@ -2921,6 +2967,17 @@ function Corazon() {
  * temporada y zapear por los canales de un grupo. Lo que no se reproduce —una
  * serie, que abre pantalla— no entra en la cola.
  */
+/**
+ * Una cola de dos: lo que suena y lo que viene después.
+ *
+ * Es lo que hace que el botón de "Siguiente capítulo" y la reproducción
+ * continua funcionen cuando se ha entrado desde "seguir viendo", donde la fila
+ * es de series distintas y no hay cola que valga.
+ */
+function colaDeUno(actual: Reproducible, siguiente: Reproducible | null): Cola | undefined {
+  return siguiente ? { medios: [actual, siguiente], indice: 0 } : undefined;
+}
+
 function colaDe(elementos: Elemento[], actual: Reproducible): Cola | undefined {
   const medios = elementos
     .filter((elemento) => elemento.accion.tipo === 'reproducir')

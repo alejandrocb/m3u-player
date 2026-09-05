@@ -56,6 +56,28 @@ import {
 
 /** Cuánto tarda en esconderse el rótulo si no se toca nada. */
 const OCULTAR_MS = 4000;
+/**
+ * Cuánto salta la barra con cada pulsación, según lo que se lleve pulsado.
+ *
+ * Un minuto de entrada, que es lo que uno busca al rebobinar una escena; y
+ * manteniendo, hasta diez, para cruzar una película sin cien pulsaciones. Los
+ * escalones son a ojo pero el orden importa: el primero tiene que ser cómodo y
+ * el último, rápido.
+ */
+const SALTOS_BARRA_S = [60, 120, 300, 600];
+
+/** Cuánto puede tardar la siguiente pulsación y seguir contando como racha. */
+const RACHA_MS = 500;
+
+/**
+ * A partir de cuántos segundos se anota lo visto.
+ *
+ * Abrir algo para ver qué es y salir no debería llenar el "seguir viendo". Es
+ * el mismo mínimo que usa `vaAnotado` para decidir si merece la pena ofrecer
+ * reanudar.
+ */
+const MINIMO_ANOTABLE_S = 30;
+
 /** Salto de las flechas y de los botones de avance. */
 const SALTO_S = 10;
 /** Cada cuánto se apunta por dónde va. Escribir en cada fotograma sobra. */
@@ -242,7 +264,15 @@ export function Reproductor({
     forma de alcanzar**: con el dedo se tocan, pero un televisor no tiene dedo.
     Y con un panel de pistas abierto, el mando es suyo.
   */
-  const [zona, setZona] = useState<'video' | 'botones' | 'pistas'>('video');
+  const [zona, setZona] = useState<'video' | 'barra' | 'botones' | 'pistas'>('video');
+  /**
+   * Cuántas veces seguidas se ha movido la barra sin soltar.
+   *
+   * Es lo que hace que mantener pulsado corra: cada pulsación salta un minuto,
+   * y al mantener va subiendo hasta diez. Sin esto, cruzar una película de dos
+   * horas serían ciento veinte pulsaciones.
+   */
+  const racha = useRef({ ultimo: 0, veces: 0 });
 
   const [focoBoton, setFocoBoton] = useState(0);
   const [focoPista, setFocoPista] = useState(0);
@@ -585,6 +615,42 @@ export function Reproductor({
       }
     }
 
+    /*
+      La barra: cada pulsación un minuto, y manteniendo cada vez más. En
+      directo no hay barra que mover —el flujo no empieza ni acaba—, así que
+      allí esta zona no existe.
+    */
+    if (zona === 'barra') {
+      switch (evento.eventType) {
+        case 'left':
+        case 'right': {
+          const ahora = Date.now();
+          const seguida = ahora - racha.current.ultimo < RACHA_MS;
+          racha.current = { ultimo: ahora, veces: seguida ? racha.current.veces + 1 : 0 };
+
+          const escalon = Math.min(Math.floor(racha.current.veces / 3), SALTOS_BARRA_S.length - 1);
+          const salto = SALTOS_BARRA_S[escalon]!;
+          saltar(evento.eventType === 'left' ? -salto : salto);
+          return;
+        }
+        case 'up':
+          setZona('video');
+          return;
+        case 'down':
+          if (secundarios.length > 0) {
+            setZona('botones');
+            setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
+          }
+          return;
+        // El OK pausa, que es lo que uno espera con la barra delante.
+        case 'select':
+          setPausado((estaba) => !estaba);
+          return;
+        default:
+          return;
+      }
+    }
+
     if (zona === 'botones') {
       // Mantener pulsado sobre un botón hace lo suyo, si es que hace algo:
       // hoy solo el de saltar la intro, que así se puede desmarcar.
@@ -602,9 +668,9 @@ export function Reproductor({
         case 'select':
           secundarios[focoBoton]?.onPress();
           return;
-        // Subiendo se vuelve al vídeo, donde las flechas saltan otra vez.
+        // Subiendo se vuelve a la barra, y de ahí al vídeo.
         case 'up':
-          setZona('video');
+          setZona(enDirecto ? 'video' : 'barra');
           return;
         default:
           return;
@@ -638,7 +704,11 @@ export function Reproductor({
         lo que faltaba para poder cambiar el audio o los subtítulos sin dedo.
       */
       case 'down':
-        if (visible && secundarios.length > 0) {
+        if (!visible) break;
+        // Primero la barra —lo más usado— y de ahí a los botones. En directo
+        // no hay barra, así que se va directo a los botones.
+        if (!enDirecto) setZona('barra');
+        else if (secundarios.length > 0) {
           setZona('botones');
           setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
         }
@@ -696,12 +766,22 @@ export function Reproductor({
               duracion: total || seekableDuration || 0,
               visto: new Date().toISOString(),
             };
-            // Lo apenas empezado y lo ya terminado no ensucian el historial;
-            // lo terminado, además, se borra para que no reaparezca.
-            if (vaAnotado(anotacion)) {
+            /*
+              Se anota también lo terminado, y **esa es la diferencia**: antes
+              se borraba al pasar del umbral, con la idea de que no reapareciera
+              en "seguir viendo". Pero sin esa fila no hay de dónde sacar que el
+              capítulo se acabó, así que el siguiente no relevaba y la serie
+              desaparecía de la fila en vez de avanzar.
+
+              Ahora la fila se queda diciendo "esto está visto" y es la fila
+              quien decide: una película vista se cae, un capítulo visto da paso
+              al siguiente.
+
+              Lo que sigue sin anotarse son los primeros segundos: abrir algo
+              para ver qué es no debería llenar el historial.
+            */
+            if (anotacion.segundos >= MINIMO_ANOTABLE_S) {
               perfiles.anotarAvance(perfil.id, anotacion).catch(() => {});
-            } else if (anotacion.duracion > 0 && anotacion.segundos > anotacion.duracion * 0.95) {
-              perfiles.olvidarAvance(perfil.id, anotacion.clase, anotacion.itemId).catch(() => {});
             }
           }}
           onLoad={(datos) => {
@@ -903,7 +983,7 @@ export function Reproductor({
 
             <Pressable
               focusable={false}
-              style={estilos.barra}
+              style={[estilos.barra, zona === 'barra' && estilos.barraEnfocada]}
               onLayout={(evento) => setAnchoBarra(evento.nativeEvent.layout.width)}
               onPress={(evento) => {
                 if (!total || !anchoBarra) return;
@@ -920,7 +1000,9 @@ export function Reproductor({
               {/* Lo descargado por delante: se ve cuánto margen hay. */}
               <View style={[estilos.cargado, { width: `${cargado * 100}%` }]} />
               <View style={[estilos.progreso, { width: `${avance * 100}%` }]} />
-              <View style={[estilos.punto, { left: `${avance * 100}%` }]} />
+              <View
+                style={[estilos.punto, zona === 'barra' && estilos.puntoEnfocado, { left: `${avance * 100}%` }]}
+              />
             </Pressable>
 
             <Text style={estilos.tiempo}>{total ? reloj(total) : '--:--'}</Text>
@@ -943,7 +1025,17 @@ export function Reproductor({
               </Icono>
             )}
 
-            <Icono etiqueta={pausado ? 'Reproducir' : 'Pausa'} principal onPress={() => setPausado((estaba) => !estaba)}>
+            {/*
+              Con el mando en el vídeo, el foco se enseña aquí: es donde está
+              de verdad —las flechas saltan y el OK pausa— y sin marcarlo uno
+              no sabe dónde ha quedado al subir desde los botones.
+            */}
+            <Icono
+              etiqueta={pausado ? 'Reproducir' : 'Pausa'}
+              principal
+              enfocado={zona === 'video'}
+              onPress={() => setPausado((estaba) => !estaba)}
+            >
               {pausado ? <IconoPlay /> : <IconoPausa />}
             </Icono>
 
@@ -1366,6 +1458,21 @@ const estilos = StyleSheet.create({
     color: TINTA_TENUE,
     fontSize: 13,
     marginTop: 4,
+  },
+  /*
+    La barra enfocada. El aro verde de los botones no cabe en una línea de
+    cuatro píxeles, así que aquí el foco se enseña engordándola y agrandando
+    el punto: es lo mismo que hace cualquier televisor.
+  */
+  barraEnfocada: {
+    transform: [{ scaleY: 1.8 }],
+  },
+  puntoEnfocado: {
+    borderColor: '#fff',
+    borderWidth: 2,
+    height: 20,
+    marginLeft: -10,
+    width: 20,
   },
   pistas: {
     alignSelf: 'center',
