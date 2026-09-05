@@ -142,6 +142,13 @@ export interface Preparado {
   generos: GeneroRemoto[];
 }
 
+/** Lo que el servidor lleva averiguado desde la última vez que se preguntó. */
+export interface GenerosNuevos {
+  generos: GeneroRemoto[];
+  /** Hasta dónde se ha leído. Se guarda y se manda en la siguiente. */
+  hasta: number;
+}
+
 /**
  * Un programa de la parrilla que prepara el servidor.
  *
@@ -321,6 +328,39 @@ export class ClienteSync {
       };
     } catch {
       // Sin red, el inicio sale igual. Que esto no impida arrancar.
+      return vacio;
+    }
+  }
+
+  /**
+   * Los géneros que el servidor ha ido averiguando, desde una marca de agua.
+   *
+   * El catálogo del panel no trae el género de las películas y preguntarlo es
+   * una petición por título: el servidor va rellenando quinientas al día y
+   * aquí se recogen. Por eso se pide "lo posterior a esto" y no todo: la
+   * primera vez llega lo que haya, y a partir de ahí son unos cientos.
+   *
+   * Como el resto de lo que prepara el servidor, esto acelera y no sostiene:
+   * sin respuesta, las películas salen sin género y ya está.
+   */
+  async generos(desde: number): Promise<GenerosNuevos> {
+    const vacio: GenerosNuevos = { generos: [], hasta: desde };
+    const estado = await this.#almacen.leer();
+    if (!estado) return vacio;
+
+    try {
+      const respuesta = await this.#buscar(`${estado.servidor}/api/generos?desde=${desde}`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${estado.token}` },
+      });
+      if (!respuesta.ok) return vacio;
+
+      const datos = (await respuesta.json()) as Partial<GenerosNuevos>;
+      return {
+        generos: Array.isArray(datos.generos) ? datos.generos : [],
+        hasta: Number(datos.hasta) || desde,
+      };
+    } catch {
       return vacio;
     }
   }

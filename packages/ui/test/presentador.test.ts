@@ -39,7 +39,7 @@ async function enPestana(presentador: Presentador, modo: 'peliculas' | 'series' 
 }
 
 /** Biblioteca de mentira: la misma forma que la real, con datos a mano. */
-function bibliotecaFalsa(peliculas = 3): Biblioteca {
+function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = []): Biblioteca {
   // Recientes, valoradas y con cartel: es lo que exige la portada, y sin eso
   // media pantalla de inicio no existiría en los tests.
   const esteAnio = new Date().getFullYear();
@@ -73,7 +73,10 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
       ];
     },
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
-      return todas.slice(pagina.desde, pagina.desde + pagina.limite);
+      // Filtrar por tema deja una sola, para poder distinguir en el test una
+      // fila de tema de una de categoría.
+      const fichas = pagina.tema ? todas.slice(0, 1) : todas;
+      return fichas.slice(pagina.desde, pagina.desde + pagina.limite);
     },
     async series(): Promise<SerieFicha[]> {
       return [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }];
@@ -168,6 +171,11 @@ function bibliotecaFalsa(peliculas = 3): Biblioteca {
     },
     async canalesPorId(ids: string[]): Promise<CanalFicha[]> {
       return ids.map((id) => ({ id, nombre: '24 Horas', grupo: 'NOTICIAS', logo: null }));
+    },
+    async temas(): Promise<GrupoFicha[]> {
+      // Vacíos salvo que el test los ponga: es el estado del primer día, con
+      // el servidor aún sin averiguar ningún género.
+      return temas;
     },
     async categorias(): Promise<GrupoFicha[]> {
       return [
@@ -281,6 +289,42 @@ test('el inicio trae carruseles de películas y de series', async () => {
     ['Películas recién llegadas', 'Series recién llegadas', 'Recomendadas'],
   );
   assert.equal(estado.inicio?.modo, 'todo');
+});
+
+test('con géneros suficientes, las filas van por tema y no por categoría', async () => {
+  /*
+    El servidor va averiguando el género de las películas, una petición por
+    título. Hasta que hay para unas cuantas filas, el inicio se monta con las
+    categorías del proveedor; a partir de ahí, con los temas, que es de lo que
+    va la película y no dónde la ha colocado el proveedor en su lista.
+  */
+  const temas = [
+    { nombre: 'Drama', canales: 400 },
+    { nombre: 'Comedia', canales: 300 },
+    { nombre: 'Terror', canales: 200 },
+    { nombre: 'Documental', canales: 100 },
+    // Este no llega para llenar una fila: no se enseña.
+    { nombre: 'Cortometraje', canales: 3 },
+  ];
+
+  const conTemas = await new Presentador(bibliotecaFalsa(3, temas)).cargar();
+  const titulos = (conTemas.inicio?.filas ?? [])
+    .filter((fila) => fila.tipo === 'carrusel')
+    .map((fila) => fila.titulo);
+
+  assert.ok(titulos.includes('Drama'), 'las filas de género se llaman por su tema');
+  assert.ok(!titulos.includes('Cortometraje'), 'un tema con tres películas no da para una fila');
+  assert.ok(!titulos.includes('Estrenos'), 'con temas no se usan las categorías del proveedor');
+
+  // Y con tres temas —uno menos de los que hacen falta— se sigue con las
+  // categorías, que están todas desde el primer arranque.
+  const conPocos = await new Presentador(bibliotecaFalsa(3, temas.slice(0, 3))).cargar();
+  const pocos = (conPocos.inicio?.filas ?? [])
+    .filter((fila) => fila.tipo === 'carrusel')
+    .map((fila) => fila.titulo);
+
+  assert.ok(pocos.includes('Estrenos'), 'sin temas suficientes mandan las categorías');
+  assert.ok(!pocos.includes('Drama'));
 });
 
 test('la pestaña de películas deja fuera las series, y al revés', async () => {

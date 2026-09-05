@@ -112,6 +112,27 @@ CREATE TABLE IF NOT EXISTS programa (
 -- Por canal y hora, que es como se pregunta: "lo de este canal a partir de ahora".
 CREATE INDEX IF NOT EXISTS programa_por_canal ON programa (lista_id, canal, desde);
 
+-- El género de cada película, que el catálogo del panel no trae: hay que
+-- preguntarlo una por una y son 18.000, así que se rellena un puñado al día y
+-- se guarda para siempre.
+--
+-- Se apunta también lo que el panel dejó en blanco —con genero = ''— porque si
+-- no, cada pasada volvería a preguntar por las mismas y no avanzaría nunca.
+--
+-- El sello es la hora de la pasada en milisegundos: es por donde el aparato
+-- pide "lo que no tengo", en vez de bajarse los 18.000 en cada arranque. Que
+-- sea una hora y no un contador ahorra una tabla —de ahí sale también cuándo
+-- fue la última pasada— y vale como marca de agua entre listas distintas,
+-- porque el reloj es el mismo para todas.
+CREATE TABLE IF NOT EXISTS genero (
+  lista_id TEXT NOT NULL,
+  item_id  TEXT NOT NULL,
+  genero   TEXT NOT NULL,
+  sello    INTEGER NOT NULL,
+  PRIMARY KEY (lista_id, item_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS genero_por_sello ON genero (lista_id, sello);
+
 -- Cuándo se trajo la parrilla de cada lista, para saber si toca rehacerla.
 CREATE TABLE IF NOT EXISTS parrilla (
   lista_id TEXT PRIMARY KEY,
@@ -165,6 +186,12 @@ export interface Lista {
  * que viaja por JSON y lo que el aparato vuelve a convertir con su propio
  * huso. Convertirlas aquí a hora local sería decidir por él.
  */
+/** Una película y su género, tal como se guarda y se entrega. */
+export interface GeneroGuardado {
+  id: string;
+  genero: string;
+}
+
 export interface ProgramaGuardado {
   canal: string;
   desde: string;
@@ -569,6 +596,84 @@ export class Panel {
       });
     }
     return salida;
+  }
+
+  // --- Géneros ---------------------------------------------------------------
+
+  /** Lo ya preguntado de una lista, con género o sin él. */
+  generosConocidos(listaId: string): Set<string> {
+    return new Set(
+      this.#filas('SELECT item_id FROM genero WHERE lista_id = ?', [listaId]).map(
+        (fila) => fila.item_id as string,
+      ),
+    );
+  }
+
+  /**
+   * Guarda lo averiguado. Todo lo de una pasada comparte sello.
+   *
+   * Al aparato le da igual el orden dentro de una tanda: lo que necesita es
+   * poder decir "dame lo posterior a esto", y para eso basta un número por
+   * pasada.
+   */
+  guardarGeneros(listaId: string, pares: GeneroGuardado[], sello = Date.now()): void {
+    if (pares.length === 0) return;
+
+    this.#db.exec('BEGIN');
+    try {
+      for (const par of pares) {
+        this.#ejecutar(
+          `INSERT INTO genero (lista_id, item_id, genero, sello) VALUES (?, ?, ?, ?)
+           ON CONFLICT(lista_id, item_id) DO UPDATE SET genero = excluded.genero, sello = excluded.sello`,
+          [listaId, par.id, par.genero, sello],
+        );
+      }
+      this.#db.exec('COMMIT');
+    } catch (fallo) {
+      this.#db.exec('ROLLBACK');
+      throw fallo;
+    }
+  }
+
+  /**
+   * Cuántas se han preguntado ya y cuándo fue la última pasada.
+   *
+   * Lo de "cuándo" sale del propio sello, que es la hora en milisegundos: por
+   * eso no hace falta una tabla aparte para llevar la cuenta del trabajo.
+   */
+  cuantosGeneros(listaId: string): { preguntadas: number; conGenero: number; ultima: number } {
+    const fila = this.#filas(
+      `SELECT COUNT(*) AS todas,
+              SUM(CASE WHEN genero <> '' THEN 1 ELSE 0 END) AS llenas,
+              MAX(sello) AS ultima
+         FROM genero WHERE lista_id = ?`,
+      [listaId],
+    )[0];
+    return {
+      preguntadas: Number(fila?.todas ?? 0),
+      conGenero: Number(fila?.llenas ?? 0),
+      ultima: Number(fila?.ultima ?? 0),
+    };
+  }
+
+  /**
+   * Lo averiguado después de un sello, para que el aparato pida solo lo nuevo.
+   *
+   * Solo lo que tiene género: lo que el panel dejó en blanco se guarda aquí
+   * para no volver a preguntarlo, pero no le sirve de nada al aparato.
+   */
+  generosDesde(listaId: string, desde: number, limite: number): { generos: GeneroGuardado[]; hasta: number } {
+    const filas = this.#filas(
+      `SELECT item_id, genero, sello FROM genero
+        WHERE lista_id = ? AND sello > ? AND genero <> ''
+        ORDER BY sello LIMIT ?`,
+      [listaId, desde, limite],
+    );
+
+    return {
+      generos: filas.map((fila) => ({ id: fila.item_id as string, genero: fila.genero as string })),
+      hasta: filas.reduce((alto, fila) => Math.max(alto, Number(fila.sello)), desde),
+    };
   }
 
   /** Todas las listas del servidor, para el trabajo diario. */

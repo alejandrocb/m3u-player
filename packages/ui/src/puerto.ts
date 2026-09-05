@@ -145,6 +145,14 @@ export interface Pagina {
    */
   grupo?: string;
   /**
+   * Tema, si se quiere solo ese: "Drama", "Comedia", "Documental".
+   *
+   * No es lo mismo que el grupo. El grupo es dónde ha colocado el proveedor la
+   * ficha en su lista y el tema es de qué va, que es lo que uno busca. Se
+   * excluyen entre sí: pedir los dos no tendría sentido.
+   */
+  tema?: string;
+  /**
    * Cómo ordenar. Por título es lo de siempre; por valoración pone arriba lo
    * mejor puntuado, dejando lo no valorado al final —que no es lo mismo que
    * tener un cero—; por novedades, lo último que entró en el catálogo.
@@ -281,6 +289,16 @@ export interface Biblioteca {
    * Es lo que se enseña en la barra lateral de películas y series.
    */
   categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]>;
+  /**
+   * Los temas de una sección: drama, comedia, documental, con cuántas fichas
+   * tiene cada uno.
+   *
+   * Es lo que ordena el inicio cuando hay géneros suficientes. De las series
+   * los trae el catálogo del panel; de las películas los va averiguando el
+   * servidor de la casa, poco a poco, así que al principio hay pocos y el
+   * inicio tira de las categorías del proveedor mientras tanto.
+   */
+  temas(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]>;
   /** Busca en todo, o solo dentro de la sección y categoría que se indique. */
   buscar(texto: string, ambito?: Ambito): Promise<Resultado[]>;
   /**

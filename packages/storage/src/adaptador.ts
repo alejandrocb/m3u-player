@@ -82,6 +82,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           limit: pagina.limite,
           offset: pagina.desde,
           ...(pagina.grupo ? { group: pagina.grupo } : {}),
+          ...(pagina.tema ? { theme: pagina.tema } : {}),
           ...ordenDe(pagina),
         })
         .map((pelicula) => ({
@@ -100,6 +101,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           limit: pagina.limite,
           offset: pagina.desde,
           ...(pagina.grupo ? { group: pagina.grupo } : {}),
+          ...(pagina.tema ? { theme: pagina.tema } : {}),
           ...ordenDe(pagina),
         })
         .map((serie) => ({
@@ -210,6 +212,13 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         nombre: canal.name,
         grupo: canal.group,
         logo: canal.logo,
+      }));
+    },
+
+    async temas(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
+      return store.themes(tipo === 'pelicula' ? 'movie' : 'series').map((tema) => ({
+        nombre: tema.name,
+        canales: tema.items,
       }));
     },
 

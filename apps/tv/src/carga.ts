@@ -22,11 +22,12 @@ import type {
   Biblioteca,
   Cuenta,
   FichaLarga,
+  GenerosNuevos,
   Programacion,
   ProgramaRemoto,
 } from '@m3u/ui';
 
-import { abrirBase, estadoGuardado, guardarCatalogo } from './basedatos';
+import { abrirBase, estadoGuardado, guardarCatalogo, meta, ponerMeta } from './basedatos';
 import { bibliotecaEnBase } from './biblioteca-base';
 import { perfilesEnBase } from './perfiles-base';
 import { programacionDelPanel } from './programacion';
@@ -79,6 +80,42 @@ export interface OpcionesCarga {
    * programación se le pide al panel canal a canal, como siempre.
    */
   parrilla?: () => Promise<ProgramaRemoto[]>;
+  /**
+   * Los géneros que el servidor de la casa lleva averiguados.
+   *
+   * También opcional, y por lo mismo: sin servidor, las películas salen con el
+   * género que traiga el catálogo del panel, que no es ninguno.
+   */
+  generos?: (desde: number) => Promise<GenerosNuevos>;
+}
+
+/** Por dónde iba la recogida de géneros. Es la marca de agua del servidor. */
+const MARCA_GENEROS = 'generos:desde';
+
+/**
+ * Recoge del servidor los géneros nuevos y los anota en la base.
+ *
+ * Se pide "lo posterior a la última vez" y no todo: el servidor va rellenando
+ * quinientas películas al día, así que la primera vez llega lo que haya y a
+ * partir de ahí son unos cientos. Si algo falla, se queda como estaba: el
+ * género es un adorno de la ficha, no algo de lo que dependa la pantalla.
+ */
+async function recogerGeneros(
+  db: ReturnType<typeof abrirBase>['db'],
+  biblioteca: Biblioteca,
+  pedir: (desde: number) => Promise<GenerosNuevos>,
+): Promise<void> {
+  try {
+    const desde = Number(meta(db, MARCA_GENEROS)) || 0;
+    const nuevos = await pedir(desde);
+    if (nuevos.generos.length === 0) return;
+
+    await biblioteca.guardarGeneros(nuevos.generos);
+    ponerMeta(db, MARCA_GENEROS, String(nuevos.hasta));
+    console.log(`[generos] ${nuevos.generos.length} del servidor, hasta ${nuevos.hasta}`);
+  } catch (fallo) {
+    console.warn('[generos] no se pudieron recoger', fallo);
+  }
 }
 
 export async function cargarCatalogo(
@@ -118,6 +155,7 @@ export async function cargarCatalogo(
 
   const guardado = estadoGuardado(db, cuenta.id);
   if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) {
+    if (opciones.generos) await recogerGeneros(db, biblioteca, opciones.generos);
     const totales = await biblioteca.totales();
     return {
       biblioteca,
@@ -145,6 +183,16 @@ export async function cargarCatalogo(
 
   avisar({ seccion: 'Guardando', hecho: 1, total: 1 });
   guardarCatalogo(db, library, cuenta.id, conBusquedaRapida);
+
+  /*
+    Después de importar, y desde el principio: el catálogo recién traído no
+    lleva ningún género, así que hay que volver a pedirlos todos. Reimportar no
+    es olvidar lo que el servidor sabe.
+  */
+  if (opciones.generos) {
+    ponerMeta(db, MARCA_GENEROS, '0');
+    await recogerGeneros(db, biblioteca, opciones.generos);
+  }
 
   return {
     biblioteca,

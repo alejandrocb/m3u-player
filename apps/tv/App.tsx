@@ -269,7 +269,9 @@ function Raiz() {
         (avance) => setFase({ tipo: 'conectando', nombre: elegida.nombre, avance }),
         // La parrilla del directo la prepara el servidor de la casa; si no
         // hay, la programación se le pide al panel canal a canal.
-        { forzar, parrilla: () => sync.current.epg() },
+        // Y los géneros de las películas, que el servidor va averiguando poco a
+        // poco: el catálogo del panel no los trae.
+        { forzar, parrilla: () => sync.current.epg(), generos: (desde) => sync.current.generos(desde) },
       );
       biblioteca.current = datos;
       perfiles.current = almacen;

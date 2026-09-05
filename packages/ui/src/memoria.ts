@@ -310,6 +310,16 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         .map((canal) => ({ id: canal.id, nombre: canal.name, grupo: canal.group, logo: canal.logo }));
     },
 
+    async temas(): Promise<GrupoFicha[]> {
+      /*
+        El género no viene con el M3U ni con el catálogo de películas: lo
+        averigua el servidor de la casa preguntando ficha a ficha, y esto es
+        una biblioteca en memoria que no guarda nada. Sin temas, el inicio se
+        monta con las categorías del proveedor, que es como se hacía antes.
+      */
+      return [];
+    },
+
     async categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
       // Las categorías salen de las fichas: el proveedor reparte la misma
       // película entre varias, así que se cuentan una vez por cada una.

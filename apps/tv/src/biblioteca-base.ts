@@ -10,7 +10,15 @@
 import type { DB } from '@op-engineering/op-sqlite';
 
 import type { Season } from '@m3u/core';
-import { claveDeEpisodio, filtroRecomendadaSQL, fold, leerClaveDeEpisodio, ordenRecomendadaSQL } from '@m3u/core';
+import {
+  claveDeEpisodio,
+  contarTemas,
+  filtroRecomendadaSQL,
+  fold,
+  leerClaveDeEpisodio,
+  ordenRecomendadaSQL,
+  temasDe,
+} from '@m3u/core';
 import type {
   Ambito,
   Biblioteca,
@@ -108,6 +116,18 @@ function panelIdsDePelicula(db: DB, id: string): number[] {
  */
 function filtroDe(orden: Pagina['orden'], prefijo = ''): string | null {
   return orden === 'recomendada' ? filtroRecomendadaSQL(prefijo) : null;
+}
+
+/**
+ * La condición de "esta ficha lleva este tema".
+ *
+ * Es una búsqueda dentro del campo y no una igualdad porque el panel manda
+ * varios juntos —"Drama, Romance"— y cada uno separado a su manera. Que
+ * "Terror" case también con "Terror psicológico" no es un fallo: es lo que se
+ * quiere en una fila del inicio.
+ */
+function filtroTema(prefijo = ''): string {
+  return `${prefijo}genre LIKE ?`;
 }
 
 type SitioDeEpisodio = { serieId: string; temporada: number; numero: number };
@@ -286,7 +306,10 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
-      const filtro = filtroDe(pagina.orden, 'm.');
+      const prefijo = pagina.grupo ? 'm.' : '';
+      const filtro = [filtroDe(pagina.orden, prefijo), pagina.tema ? filtroTema(prefijo) : '']
+        .filter(Boolean)
+        .join(' AND ');
       const consulta = pagina.grupo
         ? `SELECT m.id, m.title, m.year, m.rating, m.logo, m.genre
              FROM movie m
@@ -295,12 +318,15 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
             ORDER BY ${ordenDe(pagina.orden, 'm.')}
             LIMIT ? OFFSET ?`
         : `SELECT id, title, year, rating, logo, genre FROM movie
-            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
+            ${filtro ? `WHERE ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
-      const params = pagina.grupo
-        ? [pagina.grupo, pagina.limite, pagina.desde]
-        : [pagina.limite, pagina.desde];
+      const params = [
+        ...(pagina.grupo ? [pagina.grupo] : []),
+        ...(pagina.tema ? [`%${pagina.tema}%`] : []),
+        pagina.limite,
+        pagina.desde,
+      ];
 
       return filas(db, consulta, params).map((fila) => ({
         id: fila.id as string,
@@ -313,7 +339,10 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async series(pagina: Pagina): Promise<SerieFicha[]> {
-      const filtro = filtroDe(pagina.orden, 's.');
+      const prefijo = pagina.grupo ? 's.' : '';
+      const filtro = [filtroDe(pagina.orden, prefijo), pagina.tema ? filtroTema(prefijo) : '']
+        .filter(Boolean)
+        .join(' AND ');
       const consulta = pagina.grupo
         ? `SELECT s.id, s.title, s.year, s.rating, s.logo, s.genre
              FROM series s
@@ -322,12 +351,15 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
             ORDER BY ${ordenDe(pagina.orden, 's.')}
             LIMIT ? OFFSET ?`
         : `SELECT id, title, year, rating, logo, genre FROM series
-            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
+            ${filtro ? `WHERE ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
-      const params = pagina.grupo
-        ? [pagina.grupo, pagina.limite, pagina.desde]
-        : [pagina.limite, pagina.desde];
+      const params = [
+        ...(pagina.grupo ? [pagina.grupo] : []),
+        ...(pagina.tema ? [`%${pagina.tema}%`] : []),
+        pagina.limite,
+        pagina.desde,
+      ];
 
       return filas(db, consulta, params).map((fila) => ({
         id: fila.id as string,
@@ -552,10 +584,21 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       }
 
       const dueno = clase === 'serie' || clase === 'episodio' ? 'series' : 'movie';
-      return filas(db, 'SELECT group_name FROM item_group WHERE kind = ? AND item_id = ?', [
+      const ficha = serie ?? id;
+
+      const categorias = filas(db, 'SELECT group_name FROM item_group WHERE kind = ? AND item_id = ?', [
         dueno,
-        serie ?? id,
+        ficha,
       ]).map((fila) => fila.group_name as string);
+
+      /*
+        Y los temas, que son lo que ordena el inicio cuando hay géneros
+        suficientes. Van en la misma lista que las categorías porque la
+        afinidad es una cuenta por nombre y los dos nombres no se pisan: una
+        categoría es "PELICULAS ACCION" y un tema es "Acción".
+      */
+      const genero = filas(db, `SELECT genre FROM ${dueno} WHERE id = ?`, [ficha])[0]?.genre;
+      return [...categorias, ...temasDe(genero as string | null)];
     },
 
     async categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
@@ -567,6 +610,24 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
           ORDER BY group_name`,
         [tipo === 'pelicula' ? 'movie' : 'series'],
       ).map((fila) => ({ nombre: fila.nombre as string, canales: Number(fila.fichas) }));
+    },
+
+    async temas(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
+      /*
+        Se agrupa por la cadena entera y se parte fuera, en JavaScript: las
+        cadenas distintas son unos cientos y las fichas dieciocho mil, así que
+        partir aquí sale mucho más barato que fila a fila. SQLite no tiene con
+        qué partir un texto, además.
+      */
+      const agrupados = filas(
+        db,
+        `SELECT genre AS genero, COUNT(*) AS fichas
+           FROM ${tipo === 'pelicula' ? 'movie' : 'series'}
+          WHERE genre IS NOT NULL AND genre <> ''
+          GROUP BY genre`,
+      ).map((fila) => ({ genero: fila.genero as string, fichas: Number(fila.fichas) }));
+
+      return contarTemas(agrupados).map((tema) => ({ nombre: tema.nombre, canales: tema.fichas }));
     },
 
     async buscar(texto: string, ambito?: Ambito): Promise<Resultado[]> {

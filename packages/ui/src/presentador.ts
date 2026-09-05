@@ -288,6 +288,21 @@ const CARRUSEL = 20;
 const CATEGORIAS_EN_INICIO = 8;
 
 /**
+ * Cuántos temas tienen que dar para una fila entera antes de preferirlos a
+ * las categorías del proveedor.
+ *
+ * El género de las películas no viene con el catálogo: lo va averiguando el
+ * servidor de la casa, una petición por título y quinientas al día, así que
+ * los primeros días hay cuatro géneros contados y una fila de "Drama" con
+ * seis películas se vería peor que la categoría de siempre. Cuando ya dan
+ * para llenar cuatro filas, mandan ellos.
+ *
+ * Con las series no hay espera: su género sí viene con el catálogo del panel,
+ * así que ahí los temas entran desde el primer arranque.
+ */
+const TEMAS_SUFICIENTES = 4;
+
+/**
  * Cuántas caben en "seguir viendo" **después** de dejar una por serie.
  *
  * Quien llama pide unas cuantas más de la cuenta, porque el recorte por serie
@@ -917,25 +932,43 @@ export class Presentador {
   }
 
   /**
-   * Una fila por categoría del proveedor: acción, comedia, terror…
+   * Una fila por tema: drama, comedia, documental, terror…
    *
-   * El género de verdad —el que da `get_vod_info`— solo lo tenemos de un
-   * puñado de películas, porque cuesta una petición por título. Las
-   * categorías, en cambio, vienen con el catálogo y están todas: son las que
-   * el proveedor usa para ordenar su lista y, salvo por los nombres a gritos,
-   * dicen lo mismo.
+   * El tema es de qué va la ficha, y es lo que uno busca. La categoría del
+   * proveedor es dónde la ha colocado él en su lista —"PELICULAS ACCION",
+   * "TV Series NETFLIX"—, que dice casi lo mismo pero no siempre: hay
+   * categorías que son un canal, un año o una promoción.
    *
-   * No caben todas —hay decenas—, así que se cogen las más gordas. Cuando la
-   * afinidad del perfil tenga datos, mandará ella.
+   * Por eso el inicio prefiere los temas **cuando los hay**. El género de una
+   * película no viene con el catálogo y el servidor lo va averiguando poco a
+   * poco, así que hasta que haya para unas cuantas filas se usan las
+   * categorías, que están todas desde el primer minuto.
+   *
+   * No caben todas —hay decenas—, así que se cogen las más gordas. La afinidad
+   * del perfil manda sobre el tamaño, y cuenta las dos cosas: `gruposDe`
+   * devuelve las categorías de una ficha **y sus temas**, así que lo que se
+   * pone en el salón ordena el inicio de la tablet igual con unas que con
+   * otros.
    */
   async #anadirCategorias(filas: FilaInicio[], modo: ModoInicio): Promise<void> {
     const clase = modo === 'series' ? 'serie' : 'pelicula';
-    let categorias: GrupoFicha[];
+
+    let temas: GrupoFicha[] = [];
     try {
-      categorias = await this.#biblioteca.categorias(clase);
+      temas = (await this.#biblioteca.temas(clase)).filter((tema) => (tema.canales ?? 0) >= CARRUSEL);
     } catch {
-      // Sin categorías el inicio se pinta igual, con lo de arriba.
-      return;
+      // Una biblioteca que no sepa de temas se queda con las categorías.
+    }
+
+    const porTema = temas.length >= TEMAS_SUFICIENTES;
+    let elegibles: GrupoFicha[] = temas;
+    if (!porTema) {
+      try {
+        elegibles = await this.#biblioteca.categorias(clase);
+      } catch {
+        // Sin categorías el inicio se pinta igual, con lo de arriba.
+        return;
+      }
     }
 
     let cuenta: Record<string, number> = {};
@@ -945,16 +978,23 @@ export class Presentador {
       // Sin afinidad se ordena por tamaño, que es como se empieza siempre.
     }
 
-    const elegidas = ordenarCategorias(categorias, cuenta).slice(0, CATEGORIAS_EN_INICIO);
+    const elegidas = ordenarCategorias(elegibles, cuenta).slice(0, CATEGORIAS_EN_INICIO);
 
     for (const categoria of elegidas) {
+      // El tema ya viene presentable; la categoría del proveedor viene a
+      // gritos y con la sección delante.
+      const donde = porTema ? { tema: categoria.nombre } : { grupo: categoria.nombre };
       const fichas =
         clase === 'pelicula'
-          ? await this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'recomendada', grupo: categoria.nombre })
-          : await this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'recomendada', grupo: categoria.nombre });
+          ? await this.#biblioteca.peliculas({ limite: CARRUSEL, desde: 0, orden: 'recomendada', ...donde })
+          : await this.#biblioteca.series({ limite: CARRUSEL, desde: 0, orden: 'recomendada', ...donde });
       if (fichas.length === 0) continue;
 
-      filas.push({ tipo: 'carrusel', titulo: nombreDeCategoria(categoria.nombre), elementos: await this.#aCarrusel(fichas, clase) });
+      filas.push({
+        tipo: 'carrusel',
+        titulo: porTema ? categoria.nombre : nombreDeCategoria(categoria.nombre),
+        elementos: await this.#aCarrusel(fichas, clase),
+      });
     }
   }
 

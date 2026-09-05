@@ -432,6 +432,63 @@ test('la parrilla del directo llega por /api/epg, y solo la de tu casa', async (
   }
 });
 
+test('los géneros llegan por marca de agua, y solo los nuevos', async () => {
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.crearGrupo('Casa Fariones');
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    m.panel.guardarLista('casa-fariones', 'Otra', 'http://otro:8080/get.php?username=u&password=p');
+    const deTriana = m.panel.listasDe('casa-triana')[0]!.id;
+    const deFariones = m.panel.listasDe('casa-fariones')[0]!.id;
+
+    // Dos pasadas, con sellos distintos: es lo que separa "lo de siempre" de
+    // "lo nuevo".
+    m.panel.guardarGeneros(
+      deTriana,
+      [
+        { id: 'la-vieja-2001', genero: 'Drama' },
+        // Lo que el panel no supo contestar se guarda para no repetirlo, pero
+        // al aparato no le sirve de nada: no se le manda.
+        { id: 'la-muda-2020', genero: '' },
+      ],
+      1000,
+    );
+    m.panel.guardarGeneros(deTriana, [{ id: 'la-nueva-2024', genero: 'Comedia' }], 2000);
+    m.panel.guardarGeneros(deFariones, [{ id: 'la-de-la-otra-casa-2024', genero: 'Terror' }], 2000);
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+
+    const todo = await pedir(m.url, '/api/generos?desde=0', { metodo: 'GET', token });
+    assert.equal(todo.estado, 200);
+    assert.deepEqual(todo.datos.generos, [
+      { id: 'la-vieja-2001', genero: 'Drama' },
+      { id: 'la-nueva-2024', genero: 'Comedia' },
+    ]);
+    assert.equal(todo.datos.hasta, 2000);
+
+    // Con la marca puesta, la siguiente vez no baja nada.
+    const otra = await pedir(m.url, `/api/generos?desde=${todo.datos.hasta}`, { metodo: 'GET', token });
+    assert.deepEqual(otra.datos.generos, []);
+    assert.equal(otra.datos.hasta, 2000, 'la marca no retrocede aunque no haya nada');
+
+    // Y desde la primera pasada, solo la segunda.
+    const nuevos = await pedir(m.url, '/api/generos?desde=1000', { metodo: 'GET', token });
+    assert.deepEqual(nuevos.datos.generos, [{ id: 'la-nueva-2024', genero: 'Comedia' }]);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('sin token no se ven los géneros', async () => {
+  const m = await montar();
+  try {
+    assert.equal((await pedir(m.url, '/api/generos', { metodo: 'GET' })).estado, 401);
+  } finally {
+    await m.cerrar();
+  }
+});
+
 test('sin token no se ve la parrilla', async () => {
   const m = await montar();
   try {

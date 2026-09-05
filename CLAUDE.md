@@ -100,11 +100,48 @@ también el inicio de la tablet. Sin datos todavía, mandan las categorías con
 más contenido. Se cuentan reproducciones y no fichas abiertas: mirar no es
 ver.
 
-Las categorías salen de las **del proveedor** y no del género de verdad:
-`get_vod_info` da el género pero cuesta una petición por título, así que solo
-lo tenemos de un puñado; las categorías vienen con el catálogo y están todas.
-Dicen casi lo mismo, solo que a gritos —"PELICULAS ACCION"—, y por eso el
-rótulo se limpia con `nombreDeCategoria`.
+**Las filas van por tema, y las categorías del proveedor son el respaldo.** Un
+tema es de qué va la ficha —drama, comedia, documental— y es lo que uno busca.
+La categoría es dónde la ha colocado el proveedor en su lista: dice casi lo
+mismo, a gritos —"PELICULAS ACCION"—, pero no siempre, que también hay
+categorías que son un canal, un año o una promoción. Por eso el rótulo de esas
+se limpia con `nombreDeCategoria` y el del tema se pinta tal cual.
+
+El problema es de dónde sale el tema. **De las series viene con el catálogo**
+(`get_series` trae el género), así que ahí los temas mandan desde el primer
+arranque. **De las películas no**: `get_vod_streams` da título, cartel, nota y
+año, y el género está en `get_vod_info`, que es **una petición por título** y
+hay 18.042. Así que lo va rellenando el servidor de la casa, **quinientas al
+día y de madrugada**, empezando por lo último que ha entrado, que es lo que
+llena los carruseles: el catálogo entero queda cubierto en poco más de un mes y
+se nota desde la primera semana.
+
+Mientras tanto el inicio no se queda a medias: si no hay al menos cuatro temas
+que den para una fila entera (`TEMAS_SUFICIENTES`), se usan las categorías del
+proveedor, que están todas desde el primer minuto. El cambio de unas a otros no
+tiene fecha ni interruptor: ocurre solo, en cuanto hay géneros bastantes.
+
+Tres detalles que no son opcionales:
+
+- **Lo que el panel deja en blanco también se apunta**, con el género vacío. Si
+  no, cada pasada volvería sobre las mismas cuatrocientas que el panel no sabe
+  contestar y el recorrido no avanzaría nunca.
+- **Las calidades se juntan antes de repartir el presupuesto**, no después. La
+  misma película viene dos o tres veces con el mismo identificador: contando
+  entradas en vez de películas, la pasada de quinientas se quedaba en la mitad.
+- **La marca de agua es la hora de la pasada**, no un contador. Así vale para
+  las dos listas de una casa —el reloj del servidor es el mismo para todas— y
+  de ahí sale también cuándo fue la última pasada, sin una tabla aparte. El
+  aparato la guarda en `meta` y pide `GET /api/generos?desde=…`; al reimportar
+  el catálogo la pone a cero, porque lo recién traído no lleva ningún género.
+
+Un tema cuenta para la afinidad igual que una categoría: `gruposDe` devuelve
+las dos cosas de cada ficha, y como los nombres no se pisan —"PELICULAS ACCION"
+y "Acción"— caben en la misma tabla. El género del panel viene con varios
+dentro de un solo campo y separados como le parece —"Drama, Romance",
+"Acción / Aventura"—, así que `temasDe` lo parte y `contarTemas` junta las
+escrituras que dicen lo mismo, quedándose con la más frecuente: sin eso,
+"Ciencia ficción" y "CIENCIA FICCION" salían como dos filas medio vacías.
 
 ### Cuatro pantallas, y a la cuarta se llega manteniendo pulsado
 

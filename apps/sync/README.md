@@ -100,6 +100,27 @@ preguntando al panel ellos mismos.
 docker compose -f apps/sync/compose.yaml logs -f sync | grep portadas
 ```
 
+## Los géneros de las películas
+
+El catálogo del panel no trae el género de una película: está en
+`get_vod_info`, que es **una petición por título**, y hay 18.042. Así que el
+servidor va rellenando **quinientas al día**, de madrugada y empezando por lo
+último que ha entrado, y las guarda en la tabla `genero`. El catálogo entero
+queda cubierto en poco más de un mes.
+
+Los aparatos las recogen con `GET /api/generos?desde=<sello>`, donde el sello
+es la hora de la última pasada que se llevaron: así la primera vez baja lo que
+haya y a partir de ahí son unos cientos. Con eso el inicio puede ordenar las
+filas por **tema** —drama, comedia, documental— en vez de por las categorías
+del proveedor.
+
+Se apunta también lo que el panel no sabe contestar, con el género vacío: si
+no, cada pasada volvería sobre las mismas y el recorrido no avanzaría.
+
+```bash
+docker compose -f apps/sync/compose.yaml logs -f sync | grep generos
+```
+
 ## Copias de seguridad
 
 Todo está en el volumen `m3u-sync-datos`: `panel.sqlite` con los grupos, los

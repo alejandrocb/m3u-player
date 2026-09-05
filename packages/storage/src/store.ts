@@ -12,7 +12,23 @@
 import { DatabaseSync } from 'node:sqlite';
 
 import type { Library, Variant } from '@m3u/core';
-import { filtroRecomendadaSQL, fold, ordenRecomendadaSQL } from '@m3u/core';
+import { contarTemas, filtroRecomendadaSQL, fold, ordenRecomendadaSQL } from '@m3u/core';
+
+/** El `WHERE` de una consulta sin `JOIN`: el filtro del orden y el del tema. */
+function donde(filtro: string | null, theme?: string): string {
+  const condiciones = [filtro, theme ? 'genre LIKE ?' : null].filter(Boolean);
+  return condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
+}
+
+/**
+ * Los parámetros de la consulta, con el del tema si lo hay.
+ *
+ * Va como búsqueda dentro del campo y no como igualdad porque el panel manda
+ * varios géneros juntos —"Drama, Romance"— y cada uno separado a su manera.
+ */
+function conTema(params: string[], theme?: string): string[] {
+  return theme ? [...params, `%${theme}%`] : params;
+}
 
 import {
   CONTENT_TABLES,
@@ -108,6 +124,11 @@ export interface PageOptions {
   offset?: number;
   /** Filtrar por categoría del proveedor. */
   group?: string;
+  /**
+   * Filtrar por tema —el género de verdad—, que no es lo mismo que la
+   * categoría: una es dónde lo coloca el proveedor y el otro de qué va.
+   */
+  theme?: string;
   /**
    * `rating` pone arriba lo mejor valorado y `added` lo último que entró en
    * el catálogo; por defecto va por título.
@@ -327,7 +348,7 @@ export class LibraryStore {
   }
 
   movies(options: PageOptions = {}): MovieRow[] {
-    const { limit = 100, offset = 0, group, sort } = options;
+    const { limit = 100, offset = 0, group, theme, sort } = options;
     // Lo que no tiene el dato, al final: `NULL` no es un cero ni una fecha
     // antiquísima.
     const orden = ordenDe(sort);
@@ -338,20 +359,20 @@ export class LibraryStore {
             `SELECT m.id, m.title, m.year, m.rating, m.added, m.logo, m.tags
                FROM movie m
                JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
-              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 'm.$1')}` : ''}
+              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 'm.$1')}` : ''}${theme ? ' AND m.genre LIKE ?' : ''}
               ORDER BY ${orden.replace(/\b(rating|sort_title|year|added)\b/g, 'm.$1')} LIMIT ? OFFSET ?`,
           )
-          .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
+          .all(...conTema([group], theme), limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
           .prepare(
-            `SELECT id, title, year, rating, added, logo, tags FROM movie ${filtro ? `WHERE ${filtro}` : ''} ORDER BY ${orden} LIMIT ? OFFSET ?`,
+            `SELECT id, title, year, rating, added, logo, tags FROM movie ${donde(filtro, theme)} ORDER BY ${orden} LIMIT ? OFFSET ?`,
           )
-          .all(limit, offset) as unknown as Array<Record<string, unknown>>);
+          .all(...conTema([], theme), limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toMovie);
   }
 
   series(options: PageOptions = {}): SeriesRow[] {
-    const { limit = 100, offset = 0, group, sort } = options;
+    const { limit = 100, offset = 0, group, theme, sort } = options;
     const orden = ordenDe(sort);
     const filtro = filtroDe(sort);
     const rows = group
@@ -360,13 +381,13 @@ export class LibraryStore {
             `SELECT s.id, s.title, s.year, s.rating, s.added, s.logo
                FROM series s
                JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
-              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 's.$1')}` : ''}
+              WHERE g.group_name = ?${filtro ? ` AND ${filtro.replace(/\b(rating|sort_title)\b/g, 's.$1')}` : ''}${theme ? ' AND s.genre LIKE ?' : ''}
               ORDER BY ${orden.replace(/\b(rating|sort_title|year|added)\b/g, 's.$1')} LIMIT ? OFFSET ?`,
           )
-          .all(group, limit, offset) as unknown as Array<Record<string, unknown>>)
+          .all(...conTema([group], theme), limit, offset) as unknown as Array<Record<string, unknown>>)
       : (this.#db
-          .prepare(`SELECT id, title, year, rating, added, logo FROM series ${filtro ? `WHERE ${filtro}` : ''} ORDER BY ${orden} LIMIT ? OFFSET ?`)
-          .all(limit, offset) as unknown as Array<Record<string, unknown>>);
+          .prepare(`SELECT id, title, year, rating, added, logo FROM series ${donde(filtro, theme)} ORDER BY ${orden} LIMIT ? OFFSET ?`)
+          .all(...conTema([], theme), limit, offset) as unknown as Array<Record<string, unknown>>);
     return rows.map(toSeries);
   }
 
@@ -511,6 +532,25 @@ export class LibraryStore {
    * reparte el catálogo así, y sin enseñarlo hay que recorrer 18.000 fichas de
    * una tacada.
    */
+  /**
+   * Los temas de una sección, con cuántas fichas lleva cada uno.
+   *
+   * Se agrupa por la cadena entera y se parte fuera: el panel manda varios
+   * juntos en un solo campo y SQLite no tiene con qué partir un texto.
+   */
+  themes(kind: 'movie' | 'series'): Array<{ name: string; items: number }> {
+    const rows = this.#db
+      .prepare(
+        `SELECT genre AS genero, COUNT(*) AS fichas FROM ${kind}
+          WHERE genre IS NOT NULL AND genre <> '' GROUP BY genre`,
+      )
+      .all() as unknown as Array<Record<string, unknown>>;
+
+    return contarTemas(
+      rows.map((row) => ({ genero: row['genero'] as string, fichas: Number(row['fichas']) })),
+    ).map((tema) => ({ name: tema.nombre, items: tema.fichas }));
+  }
+
   categories(kind: 'movie' | 'series'): Array<{ name: string; items: number }> {
     const rows = this.#db
       .prepare(

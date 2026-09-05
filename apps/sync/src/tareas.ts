@@ -20,6 +20,7 @@
  * y que falle una no puede llevarse la otra por delante.
  */
 
+import { rellenarGeneros } from './generos.ts';
 import type { Panel } from './panel.ts';
 import { traerParrilla } from './parrilla.ts';
 import { VERSION, prepararPortadas } from './portadas.ts';
@@ -35,6 +36,20 @@ const CADA_HORAS = 24;
  * cambios de última hora del panel.
  */
 const PARRILLA_CADA_HORAS = 12;
+
+/** Cada cuánto se rellenan géneros, y cuántos por pasada. */
+const GENEROS_CADA_HORAS = 24;
+const GENEROS_POR_PASADA = 500;
+
+/**
+ * A qué horas se rellenan géneros.
+ *
+ * Son quinientas peticiones seguidas al panel, así que se hacen cuando no hay
+ * nadie viendo nada: la ranura de conexión es la misma que usa la tele. La
+ * primera pasada de una lista no espera —es la que hace que se note algo el
+ * día que se despliega—, las demás sí.
+ */
+const MADRUGADA = { desde: 2, hasta: 7 };
 
 /** Cada cuánto se mira si toca. Más fino que el día, para no dormirse. */
 const REVISAR_MS = 60 * 60 * 1000;
@@ -121,6 +136,57 @@ export async function traerParrillasQueToquen(panel: Panel, ahora = new Date()):
 }
 
 /**
+ * Rellena el género de unas cuantas películas de cada lista.
+ *
+ * `get_vod_streams` no trae el género y `get_vod_info` es una petición por
+ * título: con 18.042 películas, la única forma de tenerlos todos es ir poco a
+ * poco. A este ritmo el catálogo entero queda cubierto en poco más de un mes,
+ * y lo primero que se cubre es lo último que ha entrado, que es lo que se está
+ * mirando.
+ */
+export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date()): Promise<number> {
+  let hechas = 0;
+
+  for (const [url, mismas] of porUrl(panel)) {
+    const primera = mismas[0];
+    if (!primera) continue;
+
+    const cuenta = panel.cuantosGeneros(primera.id);
+    const estrenando = cuenta.preguntadas === 0;
+    const pasadas = (ahora.getTime() - cuenta.ultima) / 3_600_000;
+    if (!estrenando && pasadas < GENEROS_CADA_HORAS) continue;
+    if (!estrenando && (ahora.getHours() < MADRUGADA.desde || ahora.getHours() >= MADRUGADA.hasta)) continue;
+
+    const nombre = mismas.map((lista) => lista.nombre).join(', ');
+    try {
+      /*
+        Lo ya preguntado se mira en una sola lista: las que comparten URL
+        comparten catálogo, y todo lo que se averigua se guarda en las dos.
+      */
+      const averiguados = await rellenarGeneros(url, {
+        conocidas: panel.generosConocidos(primera.id),
+        cuantas: GENEROS_POR_PASADA,
+      });
+      // El mismo sello para todas: es lo que hace que la marca de agua del
+      // aparato valga aunque la casa tenga dos listas.
+      const sello = Date.now();
+      for (const lista of mismas) panel.guardarGeneros(lista.id, averiguados, sello);
+      hechas += 1;
+
+      const total = panel.cuantosGeneros(primera.id);
+      const conGenero = averiguados.filter((uno) => uno.genero !== '').length;
+      console.log(
+        `[generos] ${nombre}: ${conGenero} de ${averiguados.length} preguntadas, ${total.conGenero} en total`,
+      );
+    } catch (fallo) {
+      console.error(`[generos] ${nombre} (${sinCredenciales(url)}) falló:`, fallo);
+    }
+  }
+
+  return hechas;
+}
+
+/**
  * Arranca la vigilancia. Devuelve la función de parar, para los tests y para
  * el cierre ordenado.
  */
@@ -128,6 +194,7 @@ export function vigilarPortadas(panel: Panel): () => void {
   const revisar = (): void => {
     void prepararLoQueToque(panel).catch((fallo) => console.error('[portadas] fallo revisando:', fallo));
     void traerParrillasQueToquen(panel).catch((fallo) => console.error('[parrilla] fallo revisando:', fallo));
+    void rellenarGenerosQueToquen(panel).catch((fallo) => console.error('[generos] fallo revisando:', fallo));
   };
 
   // Una revisión al arrancar: si el contenedor se reinicia por la noche, no
