@@ -814,6 +814,12 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   instalar: `adb shell wc -c < /data/local/tmp/app-release.apk`.
 - **Instalar no reinicia la app.** Si estaba abierta, sigue corriendo el
   JavaScript viejo. `adb shell am force-stop com.m3utv` después de instalar.
+- **Para instalar por wifi, hay que dejarlo puesto desde el USB.** Con el
+  aparato enchufado: `adb tcpip 5555`, y desde entonces `adb connect
+  <ip>:5555` hasta que se reinicie —al reiniciar vuelve a modo USB y hay que
+  repetirlo—. La dirección se saca del propio aparato con
+  `adb shell ip -f inet addr show wlan0`. Sin esto, el puerto 5555 está
+  cerrado y no hay forma de instalar sin cable.
 - **En Git Bash, las rutas del aparato se convierten a rutas de Windows.**
   `adb push algo /data/local/tmp/` acaba enviando a `C:/Program Files/Git/data/...`.
   Hace falta `MSYS_NO_PATHCONV=1` delante, o usar PowerShell.
