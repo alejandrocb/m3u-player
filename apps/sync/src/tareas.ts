@@ -25,6 +25,7 @@ import type { Panel } from './panel.ts';
 import { traerParrilla } from './parrilla.ts';
 import { VERSION, prepararPortadas } from './portadas.ts';
 import { crearTmdb } from './tmdb.ts';
+import type { Tmdb } from './tmdb.ts';
 
 /** Cada cuánto se rehacen las portadas. */
 const CADA_HORAS = 24;
@@ -60,6 +61,28 @@ const MADRUGADA = { desde: 2, hasta: 7 };
 
 /** Cada cuánto se mira si toca. Más fino que el día, para no dormirse. */
 const REVISAR_MS = 60 * 60 * 1000;
+
+/**
+ * TMDb, si hay token. Nunca se registra su valor, solo si está.
+ *
+ * El token vive en un fichero del VPS y llega por `TMDB_TOKEN`. Sin él todo
+ * funciona igual, solo que preguntándole al panel y mucho más despacio, así
+ * que lo que no puede pasar es que se caiga a lo lento **sin decirlo**: el
+ * síntoma es que el servidor se queda callado hasta la madrugada y no hay
+ * forma de saber si es que está esperando o es que algo va mal.
+ */
+export function tmdbSiHay(): Tmdb | undefined {
+  const token = process.env.TMDB_TOKEN?.trim();
+  return token ? crearTmdb(token) : undefined;
+}
+
+/** Con qué cuenta el servidor para los géneros. Se dice al arrancar. */
+export function comoSeAveriguanLosGeneros(): string {
+  return tmdbSiHay()
+    ? `TMDb (${GENEROS_POR_PASADA.tmdb} por pasada, cada ${GENEROS_CADA_HORAS.tmdb} h)`
+    : `solo el panel (${GENEROS_POR_PASADA.panel} al día, de ${MADRUGADA.desde} a ${MADRUGADA.hasta} h).` +
+      ' Sin TMDB_TOKEN: el catálogo tarda un mes en vez de una tarde';
+}
 
 /** Redacta la URL del panel: lleva usuario y contraseña. */
 function sinCredenciales(url: string): string {
@@ -154,13 +177,7 @@ export async function traerParrillasQueToquen(panel: Panel, ahora = new Date()):
 export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date()): Promise<number> {
   let hechas = 0;
 
-  /*
-    El token no está en el repositorio, que es público: lo pone el VPS en un
-    fichero suyo. Sin él esto sigue funcionando, solo que más despacio y
-    preguntándole al panel.
-  */
-  const token = process.env.TMDB_TOKEN?.trim();
-  const tmdb = token ? crearTmdb(token) : undefined;
+  const tmdb = tmdbSiHay();
   const via = tmdb ? 'tmdb' : 'panel';
 
   for (const [url, mismas] of porUrl(panel)) {
