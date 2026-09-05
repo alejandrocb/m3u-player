@@ -1040,6 +1040,38 @@ function BibliotecaVista({
     setEnCabecera(false);
   }, [estado?.titulo]);
 
+  const meterEnCola = useCallback(
+    async (medio: { clase: string; id: string; titulo: string }) => {
+      if (!cola) {
+        setAviso('Las descargas no están listas todavía');
+        return;
+      }
+      if (medio.clase !== 'pelicula' && medio.clase !== 'episodio') return;
+      const clase = medio.clase;
+
+      const variantes = await biblioteca.variantes(clase, medio.id).catch(() => []);
+      const mejor = variantes[0];
+      if (!mejor) {
+        setAviso('Esta ficha no tiene ninguna URL asociada');
+        return;
+      }
+
+      const clave = claveDeDescarga(clase, medio.id);
+      const extension = mejor.url.split('.').pop()?.slice(0, 4) || 'mkv';
+      await cola.anadir({
+        id: clave,
+        clase,
+        itemId: medio.id,
+        titulo: medio.titulo,
+        serieId: clase === 'episodio' ? (leerClaveDeEpisodio(medio.id)?.serieId ?? null) : null,
+        url: mejor.url,
+        fichero: ficheroDe(clave, extension),
+      });
+      setAviso(`${medio.titulo} · a la cola de descargas`);
+    },
+    [biblioteca, cola],
+  );
+
   const atras = useCallback((): boolean => {
     const instancia = presentador.current;
     if (!instancia) return false;
@@ -1137,7 +1169,10 @@ function BibliotecaVista({
       setReproduciendo(reproducir);
       setAPantallaCompleta(reproducir.clase !== 'canal');
     });
-  }, [reproduciendo, aPantallaCompleta]);
+    // `meterEnCola` va en la lista: cambia cuando aparece la cola de
+    // descargas, y sin ella aquí se quedaría la versión de antes de que
+    // existiera —la que contesta "las descargas no están listas todavía"—.
+  }, [reproduciendo, aPantallaCompleta, meterEnCola]);
 
   /** Pulsar un botón de la ficha con el dedo: se enfoca y se acepta. */
   const aceptarEn = useCallback(
@@ -1472,37 +1507,6 @@ function BibliotecaVista({
    * extensión que traiga la URL —el contenedor de verdad se mira al abrirlo, y
    * a `react-native-video` le da igual—.
    */
-  const meterEnCola = useCallback(
-    async (medio: { clase: string; id: string; titulo: string }) => {
-      if (!cola) {
-        setAviso('Las descargas no están listas todavía');
-        return;
-      }
-      if (medio.clase !== 'pelicula' && medio.clase !== 'episodio') return;
-      const clase = medio.clase;
-
-      const variantes = await biblioteca.variantes(clase, medio.id).catch(() => []);
-      const mejor = variantes[0];
-      if (!mejor) {
-        setAviso('Esta ficha no tiene ninguna URL asociada');
-        return;
-      }
-
-      const clave = claveDeDescarga(clase, medio.id);
-      const extension = mejor.url.split('.').pop()?.slice(0, 4) || 'mkv';
-      await cola.anadir({
-        id: clave,
-        clase,
-        itemId: medio.id,
-        titulo: medio.titulo,
-        serieId: clase === 'episodio' ? (leerClaveDeEpisodio(medio.id)?.serieId ?? null) : null,
-        url: mejor.url,
-        fichero: ficheroDe(clave, extension),
-      });
-      setAviso(`${medio.titulo} · a la cola de descargas`);
-    },
-    [biblioteca, cola],
-  );
 
   const opcionesFicha: Array<{ texto: string; onPress: () => void }> = menuFicha
     ? [
@@ -2068,6 +2072,12 @@ function BibliotecaVista({
           onCambiar={setReproduciendo}
           programacion={programacion}
           arbitro={arbitro}
+          /*
+            Si esto ya está en el disco, se ve de ahí: ni petición al panel ni
+            ranura ocupada. Es media razón de ser de las descargas —la otra es
+            poder verlo sin red—.
+          */
+          ficheroLocal={ficheroBajadoDe(descargas, reproduciendo)}
           continua={ajustes.continua}
           onAbrir={() => setAPantallaCompleta(true)}
         />

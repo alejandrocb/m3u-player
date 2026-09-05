@@ -1034,8 +1034,12 @@ lo que hace falta para reanudar es el byte. Al arrancar, lo que quedó como
   tampoco. El síntoma es un borde que se queda puesto donde ya no está el
   mando, y engaña sobre dónde va a caer la próxima pulsación.
 - **Hooks detrás de un `return` temprano cierran la aplicación.** Es el fallo
-  que más veces ha caído aquí: cuatro, en `PantallaPerfiles`, `PantallaListas`
-  y dos en `BibliotecaVista`. React exige el mismo número de hooks en cada
+  que más veces ha caído aquí: **cinco**, en `PantallaPerfiles`,
+  `PantallaListas` y tres en `BibliotecaVista`. **Lo caza el linter** —
+  `react-hooks/rules-of-hooks` está puesto—, así que antes de compilar:
+  `cd apps/tv && npx.cmd eslint App.tsx`. La quinta vez además no se vio en una
+  tablet y sí en la otra: si en el primer pintado ya hay estado, el número de
+  hooks no cambia y la aplicación abre tan tranquila. React exige el mismo número de hooks en cada
   pintado, y `if (!estado) return <Espera/>` se los salta en el primero. El
   síntoma es `Rendered more hooks than during the previous render` y la app
   cerrándose al entrar. **Todo `useState`, `useEffect`, `useCallback` y
