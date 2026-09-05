@@ -41,7 +41,7 @@ import type { Programa } from '@m3u/core';
 
 import { hora } from './reloj';
 import type { Caja } from './reloj';
-import { FONDO, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
+import { FONDO, TINTA_SUAVE, VERDE } from './tema';
 
 import {
   IconoAnterior,
@@ -264,7 +264,7 @@ export function Reproductor({
     forma de alcanzar**: con el dedo se tocan, pero un televisor no tiene dedo.
     Y con un panel de pistas abierto, el mando es suyo.
   */
-  const [zona, setZona] = useState<'video' | 'barra' | 'botones' | 'pistas'>('video');
+  const [zona, setZona] = useState<'creditos' | 'video' | 'barra' | 'botones' | 'pistas'>('video');
   /**
    * Cuántas veces seguidas se ha movido la barra sin soltar.
    *
@@ -479,14 +479,6 @@ export function Reproductor({
     onPress: () => void;
     onLongPress?: () => void;
   }> = [
-    /*
-      El "Siguiente capítulo" va **el primero de la fila** mientras duran los
-      créditos: es lo único que uno quiere hacer en ese momento, y así el
-      mando lo encuentra bajando, sin recorrer nada.
-    */
-    ...(enCreditos && siguiente
-      ? [{ clave: 'proximo', etiqueta: 'Siguiente capítulo', onPress: () => onCambiar?.(siguiente) }]
-      : []),
     ...(enDirecto
       ? []
       : [
@@ -549,14 +541,18 @@ export function Reproductor({
           })),
         ];
 
-  // Al cerrarse los controles, el mando vuelve al vídeo: si no, al despertarlos
-  // el foco seguiría en un botón que ya no se recuerda dónde estaba.
+  /*
+    Al cerrarse los controles el mando vuelve al vídeo —si no, al despertarlos
+    el foco seguiría en un botón que ya no se recuerda dónde estaba—, salvo
+    durante los créditos: ahí lo que hay en pantalla es el aviso del siguiente
+    capítulo, así que **el foco es suyo** y basta con pulsar OK.
+  */
   useEffect(() => {
     if (!visible) {
-      setZona('video');
+      setZona(enCreditos ? 'creditos' : 'video');
       setPanel('ninguno');
     }
-  }, [visible]);
+  }, [visible, enCreditos]);
 
   // Un panel de pistas que se abre se lleva el foco: es lo que se acaba de
   // pedir, y sin esto habría que bajar otra vez a ciegas.
@@ -591,6 +587,23 @@ export function Reproductor({
   useTVEventHandler((evento) => {
     // En pequeño manda la lista de canales, no el reproductor.
     if (compacto) return;
+    /*
+      Los créditos, con los controles escondidos: en pantalla solo está el
+      aviso del siguiente capítulo, así que el OK lo activa directamente. Bajar
+      saca los controles de siempre, que es lo que uno hace si lo que quería
+      era otra cosa.
+    */
+    if (zona === 'creditos' && !visible) {
+      if (evento.eventType === 'select') {
+        if (siguiente) onCambiar?.(siguiente);
+        return;
+      }
+      // Cualquier otra tecla saca los controles, y el foco pasa al vídeo.
+      setZona('video');
+      despertar();
+      return;
+    }
+
     despertar();
 
     // Con las pistas abiertas, el mando es suyo hasta que se elija una.
@@ -871,11 +884,20 @@ export function Reproductor({
         es el momento en que uno mira la pantalla esperando que pase algo, y
         esconderlo obligaría a despertar los controles a ciegas.
       */}
-      {enCreditos && !visible ? (
-        <View style={estilos.creditos} pointerEvents="none">
+      {/*
+        El aviso de los créditos vive **fuera de los controles**: aparece solo,
+        abajo a la derecha y ya enfocado, así que basta con pulsar OK. Meterlo
+        en la fila de botones obligaba a sacar los controles y bajar dos veces
+        para hacer lo único que uno quiere hacer en ese momento.
+      */}
+      {enCreditos && siguiente ? (
+        <Pressable
+          focusable={false}
+          style={[estilos.creditos, zona === 'creditos' && !visible && estilos.creditosEnfocado]}
+          onPress={() => onCambiar?.(siguiente)}
+        >
           <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
-          <Text style={estilos.creditosPie}>Baja con el mando para ponerlo</Text>
-        </View>
+        </Pressable>
       ) : null}
 
       {compacto ? null : (
@@ -983,7 +1005,7 @@ export function Reproductor({
 
             <Pressable
               focusable={false}
-              style={[estilos.barra, zona === 'barra' && estilos.barraEnfocada]}
+              style={estilos.barra}
               onLayout={(evento) => setAnchoBarra(evento.nativeEvent.layout.width)}
               onPress={(evento) => {
                 if (!total || !anchoBarra) return;
@@ -1058,21 +1080,6 @@ export function Reproductor({
             {secundarios.map((boton, indice) => {
               const enfocado = zona === 'botones' && focoBoton === indice;
               const marcado = Boolean(boton.activo);
-
-              // El de los créditos lleva texto: es una oferta, no un ajuste,
-              // y un icono suelto no se entiende a tiempo.
-              if (boton.clave === 'proximo') {
-                return (
-                  <Pastilla
-                    key={boton.clave}
-                    texto={`${boton.etiqueta}  ›`}
-                    activo={marcado}
-                    enfocada={enfocado}
-                    onPress={boton.onPress}
-                    onLongPress={boton.onLongPress}
-                  />
-                );
-              }
 
               return (
                 <Icono
@@ -1440,7 +1447,7 @@ const estilos = StyleSheet.create({
   creditos: {
     alignItems: 'center',
     backgroundColor: 'rgba(11,11,12,0.82)',
-    borderColor: VERDE,
+    borderColor: 'transparent',
     borderRadius: 10,
     borderWidth: 2,
     bottom: 60,
@@ -1449,30 +1456,24 @@ const estilos = StyleSheet.create({
     position: 'absolute',
     right: 60,
   },
+  // El mismo aro verde que en el resto: aquí es donde está el mando.
+  creditosEnfocado: {
+    borderColor: VERDE,
+    transform: [{ scale: 1.04 }],
+  },
   creditosTexto: {
     color: '#fff',
     fontSize: 20,
     fontWeight: '700',
   },
-  creditosPie: {
-    color: TINTA_TENUE,
-    fontSize: 13,
-    marginTop: 4,
-  },
   /*
-    La barra enfocada. El aro verde de los botones no cabe en una línea de
-    cuatro píxeles, así que aquí el foco se enseña engordándola y agrandando
-    el punto: es lo mismo que hace cualquier televisor.
+    La barra enfocada: **solo el punto se marca**, con un borde blanco.
+    Engordar la barra entera con `scaleY` deformaba el punto en una elipse,
+    que es lo que se veía raro: la escala se aplica a los hijos.
   */
-  barraEnfocada: {
-    transform: [{ scaleY: 1.8 }],
-  },
   puntoEnfocado: {
     borderColor: '#fff',
-    borderWidth: 2,
-    height: 20,
-    marginLeft: -10,
-    width: 20,
+    borderWidth: 3,
   },
   pistas: {
     alignSelf: 'center',
