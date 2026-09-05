@@ -503,6 +503,19 @@ se lee como una fila, tres carátulas sueltas parecen un error.
 Lo que se guarda de la popularidad es **la foto del día en que se preguntó**,
 no un dato vivo: se refresca cuando se vuelva a pasar por esa ficha.
 
+**Y la nota que se enseña es la de TMDb cuando la hay** (`notaSQL`, en el
+adaptador de Android): la del proveedor se queda de respaldo para lo que el
+servidor no haya cubierto. Sin esto quedaba una incoherencia en pantalla —una
+película dentro de "Mejor valoradas" luciendo el 5 del panel— y además el
+número era sencillamente peor: *A la carrera* es un 6,3 en TMDb y un 5 en la
+lista.
+
+La excepción es el orden `recomendada`, que **sigue mirando `rating`**: su
+filtro lo comparten el aparato y el servidor, y el servidor no tiene la nota de
+TMDb cuando prepara las portadas. Si decidieran distinto, la portada cambiaría
+según quién la hubiera calculado, que es justo lo que evita tener el criterio
+en `@m3u/core`.
+
 El criterio vive en `packages/core/src/recomendar.ts` porque lo aplican los
 dos lados: el aparato, cuando saca sus sugerencias por su cuenta, y el
 servidor de la casa, que las prepara una vez al día. Si cada uno usara el

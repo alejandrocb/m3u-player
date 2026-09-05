@@ -71,12 +71,28 @@ export interface OpcionesBase {
  * Lo que no tiene el dato va al final salvo ordenando por título: no tener
  * nota no es tenerla mala, ni no saber cuándo entró es ser lo más viejo.
  */
+/**
+ * La nota que se enseña y con la que se ordena: **la de TMDb si la hay**.
+ *
+ * La del proveedor es la que venía en el catálogo y no vale para mucho: hay
+ * cientos de dieces que solo quieren decir que no la ha valorado nadie, y
+ * películas conocidas con un cinco. Se queda de respaldo para lo que el
+ * servidor no haya cubierto todavía.
+ *
+ * Ojo: el orden `recomendada` sigue mirando `rating`, porque su filtro es el
+ * que comparten el aparato y el servidor y tiene que decidir igual en los dos
+ * sitios; el servidor no tiene la nota de TMDb cuando prepara las portadas.
+ */
+function notaSQL(prefijo = ''): string {
+  return `COALESCE(${prefijo}nota_tmdb, ${prefijo}rating)`;
+}
+
 function ordenDe(orden: Pagina['orden'], prefijo = ''): string {
   if (orden === 'recomendada') return ordenRecomendadaSQL(prefijo);
   if (orden === 'mejor') return ordenMejorSQL(prefijo);
   if (orden === 'popular') return ordenPopularSQL(prefijo);
   if (orden === 'valoracion') {
-    return `${prefijo}rating IS NULL, ${prefijo}rating DESC, ${prefijo}sort_title`;
+    return `${notaSQL(prefijo)} IS NULL, ${notaSQL(prefijo)} DESC, ${prefijo}sort_title`;
   }
   if (orden === 'reciente') {
     return `${prefijo}added IS NULL, ${prefijo}added DESC, ${prefijo}sort_title`;
@@ -321,13 +337,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         .filter(Boolean)
         .join(' AND ');
       const consulta = pagina.grupo
-        ? `SELECT m.id, m.title, m.year, m.rating, m.logo, m.genre
+        ? `SELECT m.id, m.title, m.year, COALESCE(m.nota_tmdb, m.rating) AS rating, m.logo, m.genre
              FROM movie m
              JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
             WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 'm.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo, genre FROM movie
+        : `SELECT id, title, year, ${notaSQL()} AS rating, logo, genre FROM movie
             ${filtro ? `WHERE ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
@@ -354,13 +370,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         .filter(Boolean)
         .join(' AND ');
       const consulta = pagina.grupo
-        ? `SELECT s.id, s.title, s.year, s.rating, s.logo, s.genre
+        ? `SELECT s.id, s.title, s.year, COALESCE(s.nota_tmdb, s.rating) AS rating, s.logo, s.genre
              FROM series s
              JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
             WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 's.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo, genre FROM series
+        : `SELECT id, title, year, ${notaSQL()} AS rating, logo, genre FROM series
             ${filtro ? `WHERE ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
@@ -413,7 +429,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async peliculasPorId(ids: string[]): Promise<PeliculaFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'movie', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
+        porId(db, 'movie', `id, title, year, ${notaSQL()} AS rating, logo, genre`, ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
@@ -427,7 +443,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'series', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
+        porId(db, 'series', `id, title, year, ${notaSQL()} AS rating, logo, genre`, ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
