@@ -1145,6 +1145,27 @@ function BibliotecaVista({
   );
 
   /** Lo mismo sobre una ficha del inicio, que no está en la rejilla. */
+  /*
+    Estas dos van con `useCallback` **porque bajan hasta cada ficha**. Escritas
+    en línea se recreaban en cada pintado, así que todas las filas veían una
+    prop nueva y `memo` no evitaba nada: es lo que costaba casi un segundo por
+    pulsación del mando en la tele.
+  */
+  const turnarDestacado = useCallback((siguiente: number) => {
+    const instancia = presentador.current;
+    if (instancia) setEstado(instancia.rotarDestacado(siguiente));
+  }, []);
+
+  const tocarEnInicio = useCallback((fila: number, columna: number) => {
+    const instancia = presentador.current;
+    if (!instancia) return;
+    instancia.enfocarEnInicio(fila, columna);
+    void instancia.aceptar().then(({ estado: nuevo, reproducir }) => {
+      setEstado(nuevo);
+      if (reproducir) setReproduciendo(reproducir);
+    });
+  }, []);
+
   const mantenerEnInicio = useCallback(
     (fila: number, columna: number) => {
       const instancia = presentador.current;
@@ -1883,16 +1904,8 @@ function BibliotecaVista({
           programas={programas}
           sello={sello}
           onMantener={mantenerEnInicio}
-          onTurno={(siguiente) => setEstado(presentador.current!.rotarDestacado(siguiente))}
-          onTocar={(fila, columna) => {
-            const instancia = presentador.current;
-            if (!instancia) return;
-            instancia.enfocarEnInicio(fila, columna);
-            void instancia.aceptar().then(({ estado: nuevo, reproducir }) => {
-              setEstado(nuevo);
-              if (reproducir) setReproduciendo(reproducir);
-            });
-          }}
+          onTurno={turnarDestacado}
+          onTocar={tocarEnInicio}
         />
       ) : null}
 
@@ -2178,8 +2191,9 @@ function PantallaInicio({
               indice={inicio.destacado}
               alto={altoDestacado}
               enfocado={activa}
+              fila={index}
               onTurno={onTurno}
-              onTocar={() => onTocar(index, 0)}
+              onTocar={onTocar}
             />
           );
         }
@@ -2189,8 +2203,9 @@ function PantallaInicio({
             <Filtros
               elementos={item.elementos}
               activa={activa}
-              columna={inicio.columna}
-              onTocar={(columna) => onTocar(index, columna)}
+              columna={activa ? inicio.columna : 0}
+              fila={index}
+              onTocar={onTocar}
             />
           );
         }
@@ -2202,7 +2217,13 @@ function PantallaInicio({
             elementos={item.elementos}
             formato={item.formato}
             activa={activa}
-            columna={inicio.columna}
+            /*
+              **La columna solo se le da a la fila activa.** Dándosela a todas,
+              cada movimiento del mando cambiaba una prop en las ocho filas de
+              la pantalla y `memo` no servía de nada: se repintaban enteras. Es
+              lo que costaba el segundo de retraso en la tele.
+            */
+            columna={activa ? inicio.columna : 0}
             programas={programas}
             sello={sello}
             onTocar={onTocar}
@@ -2231,16 +2252,18 @@ function PantallaInicio({
  * mando igual que las carátulas y no hay que inventar otro sitio donde pueda
  * estar el foco.
  */
-function Filtros({
+const Filtros = memo(function Filtros({
   elementos,
   activa,
   columna,
+  fila,
   onTocar,
 }: {
   elementos: Elemento[];
   activa: boolean;
   columna: number;
-  onTocar: (columna: number) => void;
+  fila: number;
+  onTocar: (fila: number, columna: number) => void;
 }) {
   return (
     <View style={estilos.filtros}>
@@ -2251,7 +2274,7 @@ function Filtros({
           <Pressable
             key={elemento.id}
             focusable={false}
-            onPress={() => onTocar(indice)}
+            onPress={() => onTocar(fila, indice)}
             style={[estilos.filtro, elemento.favorito && estilos.filtroPuesto, enfocado && estilos.filtroEnfocado]}
           >
             <Text style={[estilos.filtroTexto, elemento.favorito && estilos.filtroTextoPuesto]}>
@@ -2262,7 +2285,7 @@ function Filtros({
       })}
     </View>
   );
-}
+});
 
 /**
  * La película que preside el inicio.
@@ -2332,11 +2355,12 @@ const FUNDIDO_MS = 600;
  * animación: el presentador solo apunta cuál se está enseñando, para que
  * aceptar reproduzca la correcta.
  */
-function Destacado({
+const Destacado = memo(function Destacado({
   elementos,
   indice,
   alto,
   enfocado,
+  fila,
   onTurno,
   onTocar,
 }: {
@@ -2344,8 +2368,9 @@ function Destacado({
   indice: number;
   alto: number;
   enfocado: boolean;
+  fila: number;
   onTurno: (siguiente: number) => void;
-  onTocar: () => void;
+  onTocar: (fila: number, columna: number) => void;
 }) {
   /**
    * Cuál de las dos capas se está viendo: 0 la de abajo, 1 la de arriba.
@@ -2521,7 +2546,7 @@ function Destacado({
           */}
           <Pressable
             focusable={false}
-            onPress={onTocar}
+            onPress={() => onTocar(fila, 0)}
             style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}
           >
             <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
@@ -2549,7 +2574,7 @@ function Destacado({
       ) : null}
     </View>
   );
-}
+});
 
 /**
  * Una fila horizontal de fichas: los carruseles y el menú de secciones.

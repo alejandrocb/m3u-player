@@ -826,12 +826,25 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   quedan puestas para siempre. Se deja `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`
   a propósito: sin él no habría forma de salir de la aplicación en una tablet
   sin botones físicos.
-- **Sin `memo`, cada pulsación del mando repinta la fila entera.** El
-  `extraData` de una `FlatList` cambia con el foco, así que se repintaban las
-  veinte fichas de la fila; en un televisor modesto eso es casi un segundo por
-  pulsación. `FichaDeFila` y `Carrusel` van envueltos en `memo` **y reciben su
-  índice en vez de dos funciones nuevas por pintado**: sin lo segundo, lo
-  primero no sirve de nada, porque las props cambian de identidad igual.
+- **`memo` no sirve de nada si las props cambian de identidad.** En la tele,
+  cada pulsación del mando tardaba **casi un segundo** en pintarse. Medido con
+  un `console.log` alrededor del manejador: `mover` tardaba **1 ms** y el
+  pintado, **1.100 ms**; el presentador no tenía nada que ver. La cadena de
+  culpables, y hasta que no se quitó la última no bajó de 800 ms:
+  1. `FichaDeFila` y `Carrusel` sin `memo`: el `extraData` de una `FlatList`
+     cambia con el foco y se repintaban las veinte fichas de la fila.
+  2. Cada ficha recibía **dos funciones nuevas por pintado** —`() =>
+     onTocar(index)`—, así que `memo` comparaba props distintas siempre. Se
+     arregla pasando el índice y una función estable.
+  3. La columna se le pasaba **a todas las filas**, no solo a la activa, así
+     que las ocho de la pantalla veían una prop nueva en cada movimiento.
+  4. Y las funciones que bajan desde la pantalla —`onTocar`, `onTurno`— se
+     escribían en línea en el JSX. Esa fue la última, y la que de verdad lo
+     bajó todo: **de 800 ms a 90 ms**.
+
+  La moraleja para la próxima pantalla: envolver en `memo` es la mitad
+  barata; la otra mitad es que **todo lo que baje sea estable**, y eso se
+  comprueba midiendo, no leyendo.
 - **Un foco, y solo uno.** Con el mando en la cabecera, ninguna fila del inicio
   puede quedarse marcada, y mientras se escribe en el buscador los resultados
   tampoco. El síntoma es un borde que se queda puesto donde ya no está el
