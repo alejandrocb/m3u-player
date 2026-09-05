@@ -264,6 +264,15 @@ export function Reproductor({
   const [espera, setEspera] = useState<number | null>(null);
   /** Sube en cada reintento: es lo que rehace la petición y remonta el vídeo. */
   const [intento, setIntento] = useState(0);
+  /**
+   * Cuándo se puso lo que está sonando.
+   *
+   * En directo **no hay posición**: ExoPlayer devuelve `TIME_UNSET` —el
+   * `Long.MIN_VALUE`, que llega aquí como −9,2·10¹⁸— porque un flujo en
+   * directo no empieza ni acaba. Así que "cuánto llevas" se mide con el reloj,
+   * desde que se abrió el canal.
+   */
+  const arrancado = useRef(Date.now());
 
   const [pausado, setPausado] = useState(false);
   const [tiempo, setTiempo] = useState(0);
@@ -465,6 +474,7 @@ export function Reproductor({
       Un capítulo al que se llega desde el anterior empieza por el principio.
     */
     setReanudar(null);
+    arrancado.current = Date.now();
 
     perfiles
       .avanceDe(perfil.id, medio.clase as ClaseMedio, medio.id)
@@ -524,6 +534,41 @@ export function Reproductor({
     const reloj = setTimeout(() => setEspera((quedan) => (quedan === null ? null : quedan - 1)), 1000);
     return () => clearTimeout(reloj);
   }, [espera]);
+
+  /*
+    En directo, el historial lo lleva un reloj propio.
+
+    `onProgress` **solo avisa una vez** cuando el flujo no tiene posición: llega
+    el primer aviso a los tres segundos y nunca más, porque no hay nada que
+    contar. Con eso, un canal no llegaba jamás al mínimo para anotarse y "seguir
+    viendo" no lo veía por mucho rato que se estuviera con él puesto.
+
+    Lo que se anota es cuánto llevas puesto —medido con el reloj— y sobre todo
+    **cuándo**: es la hora la que decide si el programa que estabas viendo sigue
+    echándose.
+  */
+  useEffect(() => {
+    if (!enDirecto || !url || pausado) return;
+
+    const anotar = (): void => {
+      const segundos = (Date.now() - arrancado.current) / 1000;
+      if (segundos < MINIMO_ANOTABLE_S) return;
+      perfiles
+        .anotarAvance(perfil.id, {
+          clase: 'canal',
+          itemId: medio.id,
+          titulo: medio.titulo,
+          segundos,
+          // Un directo no tiene duración: ni barra, ni "visto del todo".
+          duracion: 0,
+          visto: new Date().toISOString(),
+        })
+        .catch(() => {});
+    };
+
+    const reloj = setInterval(anotar, ANOTAR_CADA_MS);
+    return () => clearInterval(reloj);
+  }, [enDirecto, url, pausado, medio.id, medio.titulo, perfiles, perfil.id]);
 
   /*
     Al cerrar, la ranura se suelta **siempre**. Es la mitad que falla en los
@@ -920,9 +965,16 @@ export function Reproductor({
           onBuffer={({ isBuffering }) => setCargando(isBuffering)}
           onReadyForDisplay={() => setCargando(false)}
           onProgress={({ currentTime, playableDuration, seekableDuration }) => {
-            setTiempo(currentTime);
-            setCargadoHasta(currentTime + (playableDuration ?? 0));
-            if (seekableDuration && !total) setTotal(seekableDuration);
+            /*
+              En directo, `currentTime` es `TIME_UNSET`: un número enorme y
+              negativo. Pintarlo daba una hora imposible, y —lo que de verdad
+              se notaba— hacía que un canal **no se anotara nunca** en el
+              historial, porque no llegaba al mínimo de treinta segundos.
+            */
+            const posicion = Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0;
+            setTiempo(posicion);
+            setCargadoHasta(posicion + (playableDuration ?? 0));
+            if (seekableDuration && !total && !enDirecto) setTotal(seekableDuration);
 
             const ahora = Date.now();
             if (ahora - ultimaAnotacion.current < ANOTAR_CADA_MS) return;
@@ -932,8 +984,11 @@ export function Reproductor({
               clase: medio.clase as ClaseMedio,
               itemId: medio.id,
               titulo: medio.titulo,
-              segundos: currentTime,
-              duracion: total || seekableDuration || 0,
+              // De un directo se anota **cuánto llevas puesto**, medido con el
+              // reloj; de lo demás, por dónde vas.
+              segundos: enDirecto ? (Date.now() - arrancado.current) / 1000 : posicion,
+              // Y un directo no tiene duración: ni barra, ni "visto del todo".
+              duracion: enDirecto ? 0 : total || seekableDuration || 0,
               visto: new Date().toISOString(),
             };
             /*

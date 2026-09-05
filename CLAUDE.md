@@ -826,6 +826,14 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   quedan puestas para siempre. Se deja `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`
   a propósito: sin él no habría forma de salir de la aplicación en una tablet
   sin botones físicos.
+- **En directo, `onProgress` avisa una vez y no vuelve**, y `currentTime` llega
+  como `TIME_UNSET`: el `Long.MIN_VALUE` de ExoPlayer, que en JavaScript se ve
+  como −9,2·10¹⁸. Un flujo en directo no tiene posición, así que no hay nada
+  que contar. Por eso un canal **no se anotaba nunca** en el historial —no
+  llegaba al mínimo de treinta segundos— y "seguir viendo" no lo veía por
+  mucho rato que estuviera puesto. Lo que se anota de un directo es cuánto
+  llevas, medido con un reloj propio del reproductor, y sobre todo **cuándo**:
+  es la hora la que decide si el programa que veías sigue echándose.
 - **`memo` no sirve de nada si las props cambian de identidad.** En la tele,
   cada pulsación del mando tardaba **casi un segundo** en pintarse. Medido con
   un `console.log` alrededor del manejador: `mover` tardaba **1 ms** y el
