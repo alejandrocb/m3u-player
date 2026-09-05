@@ -13,11 +13,13 @@ import type { Season } from '@m3u/core';
 import {
   claveDeEpisodio,
   contarTemas,
+  filtroDestacadaSQL,
   filtroMejorSQL,
   filtroPopularSQL,
   filtroRecomendadaSQL,
   fold,
   leerClaveDeEpisodio,
+  ordenDestacadaSQL,
   ordenMejorSQL,
   ordenPopularSQL,
   ordenRecomendadaSQL,
@@ -89,6 +91,7 @@ function notaSQL(prefijo = ''): string {
 
 function ordenDe(orden: Pagina['orden'], prefijo = ''): string {
   if (orden === 'recomendada') return ordenRecomendadaSQL(prefijo);
+  if (orden === 'destacada') return ordenDestacadaSQL(prefijo);
   if (orden === 'mejor') return ordenMejorSQL(prefijo);
   if (orden === 'popular') return ordenPopularSQL(prefijo);
   if (orden === 'valoracion') {
@@ -139,6 +142,7 @@ function panelIdsDePelicula(db: DB, id: string): number[] {
  */
 function filtroDe(orden: Pagina['orden'], prefijo = ''): string | null {
   if (orden === 'recomendada') return filtroRecomendadaSQL(prefijo);
+  if (orden === 'destacada') return filtroDestacadaSQL(prefijo);
   if (orden === 'mejor') return filtroMejorSQL(prefijo);
   if (orden === 'popular') return filtroPopularSQL(prefijo);
   return null;

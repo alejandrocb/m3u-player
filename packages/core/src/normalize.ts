@@ -40,6 +40,20 @@ const QUALITY_LADDER = ['8K', '4K', 'UHD', 'FHD', 'FULLHD', 'HD', 'SD', 'LQ'] as
 const TAG_PATTERN =
   /\b(?:x264|x265|h264|h265|hevc|av1|10bits?|web-?dl|web-?rip|bluray|brrip|hdrip|dvdrip|remux|hdr10?\+?|dolby(?:\s?vision)?|atmos|dts(?:-hd)?|e?ac-?3|aac|multi|dual|cast(?:ellano)?|lat(?:ino)?|vose?|vos|sub(?:s|titulado)?|3d|imax|extended|unrated|director'?s?\s?cut)\b/gi;
 
+/**
+ * Las abreviaturas que el proveedor escribe con puntos.
+ *
+ * "V.O.S.E." es lo mismo que "VOSE", pero los puntos rompen los límites de
+ * palabra del patrón de etiquetas, y el título se quedaba con ellos dentro. El
+ * efecto no se ve donde se escribe: como la identidad de una película es su
+ * título más el año, *La captura* y *La captura V.O.S.E.* acababan siendo dos
+ * películas distintas en la biblioteca.
+ *
+ * De paso unifica las siglas —*S.W.A.T.* y *SWAT*—, que el proveedor escribe
+ * de las dos formas en la misma lista.
+ */
+const PUNTEADAS = /\b([A-Za-z](?:\.[A-Za-z]){1,4})\.?(?=\s|$|[)\]])/g;
+
 /** Resoluciones escritas como 1080p / 720p / 2160p. */
 const RESOLUTION_PATTERN = /\b(\d{3,4})[pi]\b/i;
 
@@ -78,7 +92,9 @@ export interface ParsedName {
  *                                    quality: "720p", tags: ["x264"] }
  */
 export function parseName(raw: string): ParsedName {
-  let working = raw.replace(/_/g, ' ');
+  // Primero las abreviaturas con puntos, para que el patrón de etiquetas las
+  // reconozca: "V.O.S.E." pasa a "VOSE" y de ahí a etiqueta, como debe.
+  let working = raw.replace(/_/g, ' ').replace(PUNTEADAS, (abreviatura) => abreviatura.replace(/\./g, ''));
 
   const tags: string[] = [];
   working = working.replace(TAG_PATTERN, (match) => {

@@ -16,6 +16,7 @@
 
 import { idDeCanalPorNombre, idDeCanalPorTvg } from '../canales.ts';
 import { classify, parseEpisodeTag, parseSeriesHead } from '../classify.ts';
+import { duplicadasSinAnio } from '../duplicados.ts';
 import type {
   Channel,
   ChannelGroup,
@@ -126,6 +127,21 @@ export function buildLibrary(entries: RawEntry[]): Library {
     [...groups.entries()].map(([name, ids]) => ({ name, channelIds: [...ids] })),
     (grupo) => grupo.name,
   );
+
+  /*
+    La misma película escrita con el año y sin él salía dos veces, con la misma
+    carátula y una al lado de la otra. Se juntan antes de la lista, y solo
+    cuando no hay duda de cuál es cuál.
+  */
+  for (const { suelta, destino } of duplicadasSinAnio(movies.values())) {
+    if (!destino.logo && suelta.logo) destino.logo = suelta.logo;
+    for (const grupo of suelta.groups) destino.groups.add(grupo);
+    for (const etiqueta of suelta.tags) destino.tags.add(etiqueta);
+    for (const variante of suelta.variants) {
+      if (!destino.variants.some((otra) => otra.url === variante.url)) destino.variants.push(variante);
+    }
+    movies.delete(suelta.id);
+  }
 
   const movieList: Movie[] = ordenarPor(
     [...movies.values()].map((draft) => ({

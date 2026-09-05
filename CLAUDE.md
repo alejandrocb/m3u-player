@@ -179,6 +179,19 @@ Tres detalles que no son opcionales:
   aparato la guarda en `meta` y pide `GET /api/generos?desde=…`; al reimportar
   el catálogo la pone a cero, porque lo recién traído no lleva ningún género.
 
+**Y lo ya visto tampoco vuelve a salir.** Una película terminada seguía
+apareciendo entre las recomendadas, que es lo contrario de una recomendación.
+Se cae de todas las filas —no solo de "seguir viendo"— sembrando la misma
+lista que evita las repeticiones. Solo las películas: en una serie, terminar un
+capítulo no es terminar la serie, y para eso está el relevo al siguiente.
+
+**Las filas por tema van con el orden `destacada`, no con `recomendada`.**
+Aquel exige una nota del proveedor entre 7 y 10, y con eso "Ciencia ficción"
+enseñaba **cuatro** películas de las cuatrocientas que dice su rótulo: contar
+cuatrocientas y enseñar cuatro es lo peor de los dos mundos. `destacada` no
+descarta nada salvo las copias de pase de prensa, y ordena por la nota de TMDb
+dejando detrás, por año, lo que aún no la tiene.
+
 **Y nada se repite entre filas.** Una película es "Drama, Romance" y sale de
 las dos consultas; el orden recomendado, además, empieza por lo más reciente,
 así que "Recomendadas" se solapaba casi entera con "Novedades". El inicio
@@ -664,6 +677,19 @@ ordenadas de mejor a peor. Las identidades son:
 | Película | título limpio + año |
 | Serie | título limpio + año, **sin** el grupo |
 | Episodio | temporada + número, dentro de su serie |
+
+**Y la misma película escrita con el año y sin él se junta después**
+(`duplicadasSinAnio`): el proveedor manda las dos formas —*He-Man y los Masters
+del Universo* y *He-Man y los Masters del Universo (2021)*— y salían dos fichas
+idénticas, una al lado de la otra. La regla es prudente: solo se junta **si hay
+una sola candidata con año**. Con dos —*Robin Hood (2018)* y *Robin Hood
+(2010)*— no hay forma de saber de cuál es la suelta, y una carátula que lleva a
+otra película es peor que un duplicado, que al menos se ve y se entiende.
+
+Otra fuente de duplicados eran las abreviaturas con puntos: *La captura* y *La
+captura V.O.S.E.* eran dos películas distintas porque los puntos rompen los
+límites de palabra del patrón de etiquetas. Lo arregla `PUNTEADAS`, en
+`normalize.ts`.
 
 La serie no incluye el grupo en su identidad a propósito: el proveedor reparte
 la misma serie entre `TV Series NETFLIX` y `TV Series OTROS`, y debe salir una

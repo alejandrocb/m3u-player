@@ -200,7 +200,7 @@ export interface Pagina {
  * por año, por lo último que entró y por nota. El criterio vive en
  * `@m3u/core` porque el servidor de la casa usa exactamente el mismo.
  */
-export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada' | 'mejor' | 'popular';
+export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada' | 'destacada' | 'mejor' | 'popular';
 
 /** Dónde buscar: en todo, o solo dentro de una sección y su categoría. */
 export interface Ambito {

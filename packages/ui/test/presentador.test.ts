@@ -411,6 +411,46 @@ test('las filas de TMDb no salen hasta que hay datos bastantes', async () => {
   assert.ok(!cortas.includes('Populares ahora'), 'no queda material para las dos');
 });
 
+test('una película ya vista no vuelve a salir en el inicio', async () => {
+  /*
+    Terminada una película, seguía apareciendo entre las recomendadas, que es
+    lo contrario de una recomendación. Se cae de todas las filas, no solo de
+    "seguir viendo".
+
+    Solo las películas: en una serie, terminar un capítulo no es terminar la
+    serie, y para eso ya está el relevo al siguiente.
+  */
+  const presentador = new Presentador(bibliotecaFalsa(60), {
+    seguirViendo: async () => [
+      {
+        clase: 'pelicula',
+        itemId: 'p0',
+        titulo: 'Película 0',
+        segundos: 6000,
+        duracion: 6100,
+        visto: new Date().toISOString(),
+      },
+    ],
+  });
+
+  const enFilas = (estado: EstadoPantalla): string[] =>
+    (estado.inicio?.filas ?? [])
+      .filter((fila) => fila.tipo === 'carrusel')
+      .flatMap((fila) => fila.elementos.map((elemento) => elemento.id));
+
+  // Sin historial sí sale: es la comprobación de que el test mira donde debe.
+  const sinVer = enFilas(await new Presentador(bibliotecaFalsa(60)).cargar());
+  const laVista = sinVer.filter((id) => id.includes('p0'));
+  assert.equal(laVista.length, 1, 'sin verla, sale una vez');
+
+  const yaVista = enFilas(await presentador.cargar());
+  assert.deepEqual(
+    yaVista.filter((id) => id === laVista[0]),
+    [],
+    'vista, no sale en ninguna fila',
+  );
+});
+
 test('cambiar de pestaña devuelve el foco arriba', async () => {
   // Lo que hay debajo es otro contenido: dejar el foco en la cuarta fila de
   // unos carruseles que ya no existen es peor que empezar de nuevo.

@@ -702,18 +702,25 @@ export class Presentador {
     return this.#conFavoritos(await this.#conAvances(elementos));
   }
 
-  /** La fila de "seguir viendo", a partir del historial del perfil. */
-  async #filaContinuar(modo: ModoInicio): Promise<FilaInicio | null> {
-    if (!this.#seguirViendo) return null;
-
-    // Si la base está ocupada o el historial falla, el inicio se pinta igual
-    // —sin esta fila— en vez de quedarse en blanco.
-    let historial: Avance[];
+  /**
+   * El historial del perfil, o vacío si no se puede leer.
+   *
+   * Se pide una sola vez por pintado y lo usan dos cosas: la fila de "seguir
+   * viendo" y la lista de películas ya vistas, que se caen del resto del
+   * inicio. Si la base está ocupada o falla, el inicio se pinta igual.
+   */
+  async #historialDelPerfil(): Promise<Avance[]> {
+    if (!this.#seguirViendo) return [];
     try {
-      historial = await this.#seguirViendo();
+      return await this.#seguirViendo();
     } catch {
-      return null;
+      return [];
     }
+  }
+
+  /** La fila de "seguir viendo", a partir del historial del perfil. */
+  async #filaContinuar(modo: ModoInicio, historial: Avance[]): Promise<FilaInicio | null> {
+    if (historial.length === 0) return null;
 
     /*
       Se filtra por la pestaña: en Películas no pinta nada un capítulo a
@@ -1013,11 +1020,15 @@ export class Presentador {
         estén puestas más arriba: una película con tres géneros sale de tres
         consultas y solo se queda en la primera. Pidiendo veinte, una fila de
         "Romance" detrás de "Drama" se quedaba en cuatro.
+
+        Y el orden es `destacada`, no `recomendada`: aquel exige una nota del
+        proveedor entre 7 y 10, y con eso la fila de "Ciencia ficción" enseñaba
+        cuatro películas de las cuatrocientas que dice su rótulo.
       */
       const fichas =
         clase === 'pelicula'
-          ? await this.#biblioteca.peliculas({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'recomendada', ...donde })
-          : await this.#biblioteca.series({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'recomendada', ...donde });
+          ? await this.#biblioteca.peliculas({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'destacada', ...donde })
+          : await this.#biblioteca.series({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'destacada', ...donde });
 
       // El tema ya viene presentable; la categoría del proveedor viene a
       // gritos y con la sección delante.
@@ -1168,6 +1179,10 @@ export class Presentador {
       orden recomendado empieza por lo más reciente—. Pidiendo veinte justas,
       esa fila se quedaba vacía.
     */
+    // El historial, una sola vez: lo usan la fila de "seguir viendo" y la
+    // lista de lo ya visto, que se cae del resto del inicio.
+    const historial = await this.#historialDelPerfil();
+
     const cuantas = CARRUSEL * DE_SOBRA;
     /*
       `mejor` y `popular` van por los datos de TMDb, que el servidor de la casa
@@ -1186,7 +1201,7 @@ export class Presentador {
       modo === 'series'
         ? this.#biblioteca.series({ limite: cuantas, desde: 0, orden: 'popular' })
         : this.#biblioteca.peliculas({ limite: cuantas, desde: 0, orden: 'popular' }),
-      this.#filaContinuar(modo),
+      this.#filaContinuar(modo, historial),
     ]);
 
     const filas: FilaInicio[] = [];
@@ -1272,6 +1287,19 @@ export class Presentador {
       enseñado no vuelve a aparecer más abajo.
     */
     const puestas = new Set<string>();
+
+    /*
+      **Y lo ya visto tampoco vuelve a salir.** Una película que se terminó
+      seguía apareciendo entre las recomendadas, que es lo contrario de una
+      recomendación. Se siembra la misma lista que evita las repeticiones, así
+      que basta con esto para que se caiga de todas las filas.
+
+      Solo las películas: en una serie, terminar un capítulo no es terminar la
+      serie, y para eso ya está el relevo de "seguir viendo".
+    */
+    for (const avance of historial) {
+      if (avance.clase === 'pelicula' && estaTerminado(avance)) puestas.add(avance.itemId);
+    }
 
     const anadir = async (
       titulo: string,

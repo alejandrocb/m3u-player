@@ -88,6 +88,30 @@ export function filtroMejorSQL(prefijo = ''): string {
 }
 
 /**
+ * Lo bueno de un tema, sin dejar fuera medio catálogo.
+ *
+ * Es el orden de las filas por género del inicio, y existe porque usar
+ * `recomendada` ahí era un error: su filtro exige una nota del proveedor entre
+ * 7 y 10, y con eso la fila de "Ciencia ficción" se quedaba en cuatro
+ * películas de las cuatrocientas que hay. Contar cuatrocientas en el rótulo y
+ * enseñar cuatro es lo peor de los dos mundos.
+ *
+ * Así que aquí no se descarta nada salvo las copias de pase de prensa, y se
+ * ordena por lo mejor valorado en TMDb; lo que aún no tiene nota va detrás,
+ * por año. Según el servidor va rellenando, la fila se ordena mejor sola.
+ */
+export function ordenDestacadaSQL(prefijo = ''): string {
+  return (
+    `${prefijo}nota_tmdb IS NULL, ${prefijo}nota_tmdb DESC,` +
+    ` ${prefijo}year IS NULL, ${prefijo}year DESC, ${prefijo}added IS NULL, ${prefijo}added DESC`
+  );
+}
+
+export function filtroDestacadaSQL(prefijo = ''): string {
+  return `${prefijo}sort_title NOT LIKE '%screening%'`;
+}
+
+/**
  * Lo que más se está viendo, según TMDb.
  *
  * Su popularidad es un número que ellos calculan con las visitas y las

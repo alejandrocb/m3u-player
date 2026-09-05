@@ -14,10 +14,12 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Library, Variant } from '@m3u/core';
 import {
   contarTemas,
+  filtroDestacadaSQL,
   filtroMejorSQL,
   filtroPopularSQL,
   filtroRecomendadaSQL,
   fold,
+  ordenDestacadaSQL,
   ordenMejorSQL,
   ordenPopularSQL,
   ordenRecomendadaSQL,
@@ -142,7 +144,7 @@ export interface PageOptions {
    * `rating` pone arriba lo mejor valorado y `added` lo último que entró en
    * el catálogo; por defecto va por título.
    */
-  sort?: 'title' | 'rating' | 'added' | 'recomendada' | 'mejor' | 'popular';
+  sort?: 'title' | 'rating' | 'added' | 'recomendada' | 'destacada' | 'mejor' | 'popular';
 }
 
 export class LibraryStore {
@@ -632,6 +634,7 @@ function enElOrdenPedido<T extends { id: string }>(ids: string[], filas: T[]): T
 
 function ordenDe(sort: PageOptions['sort']): string {
   if (sort === 'recomendada') return ordenRecomendadaSQL();
+  if (sort === 'destacada') return ordenDestacadaSQL();
   if (sort === 'mejor') return ordenMejorSQL();
   if (sort === 'popular') return ordenPopularSQL();
   if (sort === 'rating') return 'rating IS NULL, rating DESC, sort_title';
@@ -648,6 +651,7 @@ function ordenDe(sort: PageOptions['sort']): string {
  */
 function filtroDe(sort: PageOptions['sort']): string | null {
   if (sort === 'recomendada') return filtroRecomendadaSQL();
+  if (sort === 'destacada') return filtroDestacadaSQL();
   if (sort === 'mejor') return filtroMejorSQL();
   if (sort === 'popular') return filtroPopularSQL();
   return null;

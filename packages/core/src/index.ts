@@ -4,6 +4,7 @@ export * from './ordenar.ts';
 export * from './recomendar.ts';
 export * from './temas.ts';
 export * from './canales.ts';
+export * from './duplicados.ts';
 export * from './classify.ts';
 export * from './epg.ts';
 export * from './xmltv.ts';
