@@ -354,6 +354,15 @@ export function Reproductor({
     setError(null);
     setTiempo(0);
     setTotal(0);
+    /*
+      **Y el punto de reanudar, que es del capítulo que se deja.**
+
+      Sin esto, el siguiente arrancaba por donde iba el anterior: como se
+      encadena al final, el que venía empezaba en los créditos, se daba por
+      terminado en el acto y cargaba el siguiente, y así hasta el infinito.
+      Un capítulo al que se llega desde el anterior empieza por el principio.
+    */
+    setReanudar(null);
 
     perfiles
       .avanceDe(perfil.id, medio.clase as ClaseMedio, medio.id)
@@ -917,28 +926,7 @@ export function Reproductor({
           >
             Las conexiones de la lista están ocupadas. Reintentando en {espera} s…
           </Text>
-          {/*
-        Con los controles escondidos, el aviso de los créditos se queda igual:
-        es el momento en que uno mira la pantalla esperando que pase algo, y
-        esconderlo obligaría a despertar los controles a ciegas.
-      */}
-      {/*
-        El aviso de los créditos vive **fuera de los controles**: aparece solo,
-        abajo a la derecha y ya enfocado, así que basta con pulsar OK. Meterlo
-        en la fila de botones obligaba a sacar los controles y bajar dos veces
-        para hacer lo único que uno quiere hacer en ese momento.
-      */}
-      {enCreditos && siguiente ? (
-        <Pressable
-          focusable={false}
-          style={[estilos.creditos, zona === 'creditos' && !visible && estilos.creditosEnfocado]}
-          onPress={() => onCambiar?.(siguiente)}
-        >
-          <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
-        </Pressable>
-      ) : null}
-
-      {compacto ? null : (
+          {compacto ? null : (
             <Text style={estilos.falloPie}>Se abrirá sola en cuanto quede una libre</Text>
           )}
         </View>
@@ -1002,6 +990,22 @@ export function Reproductor({
           else despertar();
         }}
       />
+
+      {/*
+        El aviso de los créditos vive **fuera de los controles**: aparece solo,
+        abajo a la derecha y ya enfocado, así que basta con pulsar OK. Meterlo
+        en la fila de botones obligaba a sacar los controles y bajar dos veces
+        para hacer lo único que uno quiere hacer en ese momento.
+      */}
+      {enCreditos && siguiente ? (
+        <Pressable
+          focusable={false}
+          style={[estilos.creditos, zona === 'creditos' && !visible && estilos.creditosEnfocado]}
+          onPress={() => onCambiar?.(siguiente)}
+        >
+          <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
+        </Pressable>
+      ) : null}
 
       {compacto ? null : (
       <Animated.View style={[estilos.controles, { opacity: opacidad }]} pointerEvents={visible ? 'auto' : 'none'}>

@@ -681,6 +681,12 @@ Dos cosas que costaron encontrar, y que valen para cualquier pantalla nueva:
   cuando no hay nada abierto para que siga el de la aplicación: Android los va
   llamando del último registrado al primero hasta que uno diga que sí.
 
+- **El punto por el que ibas es del capítulo que dejas.** Al encadenar con el
+  siguiente hay que olvidarlo: si no, el que viene arranca donde acabó el
+  anterior —o sea, en los créditos—, se da por terminado en el acto y carga el
+  siguiente, y así hasta el infinito. Un capítulo al que se llega desde el
+  anterior empieza por el principio.
+
 La primera pulsación con los controles escondidos solo los enseña —igual que el
 OK—, así que para entrar en los botones desde el vídeo parado hacen falta dos.
 
