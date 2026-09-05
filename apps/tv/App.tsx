@@ -752,6 +752,13 @@ function BibliotecaVista({
       // De más a propósito: el presentador deja una sola fila por serie, así
       // que pedir doce justas dejaría la fila a medias.
       seguirViendo: () => perfiles.seguirViendo(perfil.id, 40),
+      /*
+        Y de aquí sale si un canal sigue teniendo sitio en "seguir viendo":
+        mientras no termine el programa que se estaba viendo. Solo de lo
+        preparado —`deCanales` no pregunta al panel—, que si no sería una
+        petición por canal cada vez que se pinta el inicio.
+      */
+      parrilla: (canalIds) => programacion.deCanales(canalIds),
       // Y de aquí el orden de las filas por categoría: primero lo que más ve.
       afinidad: () => perfiles.afinidad(perfil.id),
       // Y de aquí los corazones de Mi Lista, que son de cada uno.
@@ -1942,13 +1949,11 @@ function PantallaFicha({
             {ficha.genero ? <Text style={estilos.infoDato}>{ficha.genero}</Text> : null}
           </View>
 
-          {ficha.sinopsis ? <Text style={estilos.infoSinopsis}>{ficha.sinopsis}</Text> : null}
-          {ficha.reparto ? (
-            <Text style={estilos.infoReparto} numberOfLines={2}>
-              {separado(ficha.reparto)}
-            </Text>
-          ) : null}
-
+          {/*
+            Los botones van **antes de la sinopsis**, como en cualquier
+            servicio de estos. Detrás, una sinopsis larga los empujaba fuera de
+            la pantalla y no había forma de llegar a ellos con el mando.
+          */}
           <View style={estilos.infoBotones}>
             {botones.map((boton, indice) => (
               <Pressable
@@ -1972,6 +1977,18 @@ function PantallaFicha({
               </Pressable>
             ))}
           </View>
+
+          {/* Y la sinopsis, con tope: en una tele no se leen veinte líneas. */}
+          {ficha.sinopsis ? (
+            <Text style={estilos.infoSinopsis} numberOfLines={6}>
+              {ficha.sinopsis}
+            </Text>
+          ) : null}
+          {ficha.reparto ? (
+            <Text style={estilos.infoReparto} numberOfLines={2}>
+              {separado(ficha.reparto)}
+            </Text>
+          ) : null}
         </View>
       </View>
     </ScrollView>

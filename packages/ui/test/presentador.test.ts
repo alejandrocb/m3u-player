@@ -1010,8 +1010,9 @@ test('el botón de Mi Lista dice lo que va a hacer, y cambia al pulsarlo', async
   await presentador.cargar();
   await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
 
-  // El foco empieza en Reproducir; se baja al de la lista.
-  await presentador.mover('abajo');
+  // El foco empieza en Reproducir; los botones son una fila, así que se pasa
+  // al de la lista con la derecha.
+  await presentador.mover('derecha');
   const despues = await presentador.aceptar();
 
   assert.equal(despues.estado.elementos[1]!.titulo, 'Quitar de Mi Lista');
@@ -1024,7 +1025,7 @@ test('el tráiler se abre fuera: la vista recibe la dirección', async () => {
   const estado = await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
 
   const indice = estado.elementos.findIndex((boton) => boton.id === 'trailer');
-  for (let paso = 0; paso < indice; paso++) await presentador.mover('abajo');
+  for (let paso = 0; paso < indice; paso++) await presentador.mover('derecha');
   const hecho = await presentador.aceptar();
 
   assert.equal(hecho.abrir, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
@@ -1037,7 +1038,7 @@ test('descargar no reproduce: se lo pasa a quien lleve la cola', async () => {
   const estado = await presentador.abrirFicha('pelicula', 'p1', 'Película 1');
 
   const indice = estado.elementos.findIndex((boton) => boton.id === 'descargar');
-  for (let paso = 0; paso < indice; paso++) await presentador.mover('abajo');
+  for (let paso = 0; paso < indice; paso++) await presentador.mover('derecha');
   const hecho = await presentador.aceptar();
 
   assert.equal(hecho.descargar?.id, 'p1');
@@ -1108,6 +1109,73 @@ test('y cuando se acaba la serie, sale de la fila', async () => {
 
   assert.equal(
     estado.inicio?.filas.some((fila) => fila.tipo === 'carrusel' && fila.titulo === 'Seguir viendo'),
+    false,
+  );
+});
+
+/** Un canal a medias, con la parrilla que se le quiera dar. */
+function conDirecto(programas: Record<string, Array<{ desde: Date; hasta: Date; titulo: string }>>, visto: string) {
+  return new Presentador(bibliotecaFalsa(), {
+    seguirViendo: async () => [
+      { clase: 'canal' as ClaseMedio, itemId: 'c1', titulo: '24 Horas', segundos: 600, duracion: 0, visto },
+    ],
+    parrilla: async () =>
+      Object.fromEntries(
+        Object.entries(programas).map(([canal, suyos]) => [
+          canal,
+          suyos.map((uno) => ({ ...uno, descripcion: null })),
+        ]),
+      ),
+  });
+}
+
+const haceUnRato = new Date(Date.now() - 30 * 60_000);
+
+test('un canal sigue en "seguir viendo" mientras dure el programa', async () => {
+  const presentador = conDirecto(
+    {
+      // Empezó antes de que lo dejáramos y no ha terminado: es el mismo.
+      c1: [{ desde: new Date(Date.now() - 60 * 60_000), hasta: new Date(Date.now() + 30 * 60_000), titulo: 'Telediario' }],
+    },
+    haceUnRato.toISOString(),
+  );
+  const estado = await presentador.cargar();
+
+  const fila = estado.inicio?.filas.find((una) => una.tipo === 'carrusel' && una.titulo === 'Seguir viendo');
+  assert.equal(fila?.elementos[0]?.titulo, '24 Horas');
+  // Y dice qué echan, que es lo que uno reconoce.
+  assert.equal(fila?.elementos[0]?.detalle, 'Telediario');
+  // En directo no hay barrita: el flujo no empieza ni acaba.
+  assert.equal(fila?.elementos[0]?.avance, null);
+});
+
+test('y se cae cuando el programa que veías ha terminado', async () => {
+  const presentador = conDirecto(
+    {
+      // El que hay ahora empezó después de que lo dejáramos: el nuestro acabó.
+      c1: [{ desde: new Date(Date.now() - 10 * 60_000), hasta: new Date(Date.now() + 50 * 60_000), titulo: 'Otro' }],
+    },
+    haceUnRato.toISOString(),
+  );
+  const estado = await presentador.cargar();
+
+  assert.equal(
+    estado.inicio?.filas.some((fila) => fila.tipo === 'carrusel' && fila.titulo === 'Seguir viendo'),
+    false,
+  );
+});
+
+test('sin programación aguanta dos horas, que es lo que dura un partido', async () => {
+  // 272 de los 463 canales de la lista real no tienen EPG: son los de eventos.
+  const reciente = await conDirecto({}, new Date(Date.now() - 60 * 60_000).toISOString()).cargar();
+  assert.equal(
+    reciente.inicio?.filas.some((fila) => fila.tipo === 'carrusel' && fila.titulo === 'Seguir viendo'),
+    true,
+  );
+
+  const viejo = await conDirecto({}, new Date(Date.now() - 3 * 60 * 60_000).toISOString()).cargar();
+  assert.equal(
+    viejo.inicio?.filas.some((fila) => fila.tipo === 'carrusel' && fila.titulo === 'Seguir viendo'),
     false,
   );
 });

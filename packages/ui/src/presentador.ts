@@ -18,7 +18,8 @@ import type { PortadaRemota } from './cliente-sync.ts';
 import type { Biblioteca, CanalFicha, FichaLarga, GrupoFicha, Orden, Resultado } from './puerto.ts';
 import { claveDeMedio, estaTerminado, proporcionVista } from './perfiles.ts';
 import type { Avance, ClaseMedio } from './perfiles.ts';
-import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
+import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio, programaActual } from '@m3u/core';
+import type { Programa } from '@m3u/core';
 
 /** Qué reproducir cuando el usuario acepta sobre una ficha. */
 export interface Reproducible {
@@ -266,6 +267,15 @@ export const DESTACADAS = 4;
  */
 const CANDIDATAS = 8;
 
+/**
+ * Cuánto vale un canal en "seguir viendo" cuando no hay programación.
+ *
+ * Dos horas: lo que dura una película o un partido largo. Con EPG no hace
+ * falta —se sabe cuándo termina lo que estabas viendo—, pero 272 de los 463
+ * canales de la lista real no tienen, y son justo los de eventos.
+ */
+const CADUCA_DIRECTO_MS = 2 * 60 * 60 * 1000;
+
 /** Cuántas fichas lleva cada carrusel del inicio. */
 const CARRUSEL = 20;
 
@@ -445,6 +455,15 @@ export interface OpcionesPresentador {
   /** Cómo ordenar películas y series. Por título si no se dice otra cosa. */
   orden?: Orden;
   /**
+   * Qué echan en unos cuantos canales, **de lo ya preparado**.
+   *
+   * Solo se usa para decidir si un canal sigue teniendo sitio en "seguir
+   * viendo": mientras no termine el programa que se estaba viendo. Es el
+   * `deCanales` del puerto de programación, que nunca pregunta al panel: aquí
+   * no puede costar una petición por canal.
+   */
+  parrilla?: (canalIds: string[]) => Promise<Record<string, Programa[]>>;
+  /**
    * Cuánto ha visto este perfil de cada categoría.
    *
    * Va como opción, igual que el historial: sin perfil detrás no hay
@@ -507,6 +526,7 @@ export class Presentador {
   #filtroLista: FiltroLista = 'todo';
   #avances: OpcionesPresentador['avances'];
   #seguirViendo: OpcionesPresentador['seguirViendo'];
+  #parrilla: OpcionesPresentador['parrilla'];
   #favoritos: PuertoFavoritos | undefined;
   #afinidad: OpcionesPresentador['afinidad'];
   #orden: Orden;
@@ -526,6 +546,7 @@ export class Presentador {
     this.#tamanoPagina = opciones.tamanoPagina ?? 60;
     this.#avances = opciones.avances;
     this.#seguirViendo = opciones.seguirViendo;
+    this.#parrilla = opciones.parrilla;
     this.#favoritos = opciones.favoritos;
     this.#afinidad = opciones.afinidad;
     this.#orden = opciones.orden ?? 'titulo';
@@ -572,6 +593,13 @@ export class Presentador {
       // columna de la programación, que es lo que se mira antes de entrar.
       case 'canales':
         return 1;
+      /*
+        Los botones de la ficha son **una fila**, así que el mando los recorre
+        con izquierda y derecha. Con una sola columna se recorrían con arriba y
+        abajo, que en una fila de botones no se le ocurre a nadie.
+      */
+      case 'ficha':
+        return Math.max(1, this.#elementos.length);
       // Un episodio ocupa la fila entera: fotograma a la izquierda y ficha a
       // la derecha, que es donde va la sinopsis.
       default:
@@ -659,9 +687,11 @@ export class Presentador {
       medias, y en Series tampoco una película. En "Todo" salen los dos.
     */
     const filtrados = historial.filter((avance) => {
-      if (avance.clase === 'canal') return false;
+      // Un canal solo pinta donde hay directo: en Películas y Series, no.
+      if (avance.clase === 'canal') return modo === 'todo' || modo === 'directo';
       if (modo === 'peliculas') return avance.clase === 'pelicula';
       if (modo === 'series') return avance.clase === 'episodio' || avance.clase === 'serie';
+      if (modo === 'directo') return false;
       return true;
     });
 
@@ -698,7 +728,9 @@ export class Presentador {
     */
     const alDia: Array<{ avance: Avance; relevo: string | null }> = [];
     for (const avance of avances) {
-      if (!estaTerminado(avance)) {
+      // Un directo no se termina: caduca, y eso se mira más abajo con su
+      // programación.
+      if (avance.clase === 'canal' || !estaTerminado(avance)) {
         alDia.push({ avance, relevo: null });
         continue;
       }
@@ -714,13 +746,24 @@ export class Presentador {
         .filter(({ avance }) => avance.clase === clase)
         .map(({ avance, relevo }) => relevo ?? avance.itemId);
 
-    const [peliculas, episodios] = await Promise.all([
+    const [peliculas, episodios, canales] = await Promise.all([
       this.#biblioteca.peliculasPorId(idsDe('pelicula')),
       this.#biblioteca.episodiosPorClave(idsDe('episodio')),
+      this.#biblioteca.canalesPorId(idsDe('canal')),
     ]);
     const porPelicula = new Map(peliculas.map((ficha) => [ficha.id, ficha]));
     const porEpisodio = new Map(episodios.map((ficha) => [ficha.clave, ficha]));
+    const porCanal = new Map(canales.map((ficha) => [ficha.id, ficha]));
 
+    /*
+      Lo que echan ahora en esos canales, para saber cuáles siguen valiendo.
+      Solo de lo preparado: preguntar al panel canal a canal por una fila del
+      inicio sería una petición por canal cada vez que se pinta.
+    */
+    const programas =
+      canales.length > 0 && this.#parrilla ? await this.#parrilla(canales.map((ficha) => ficha.id)) : {};
+
+    const ahora = new Date();
     const elementos: Elemento[] = [];
     for (const { avance, relevo } of alDia) {
       // Con relevo, el capítulo es otro y empieza de cero: la barrita del que
@@ -743,6 +786,48 @@ export class Presentador {
           avance: visto,
           favorito: false,
           accion: { tipo: 'reproducir', medio: { clase: 'pelicula', id: ficha.id, titulo: ficha.titulo } },
+        });
+        continue;
+      }
+
+      if (avance.clase === 'canal') {
+        const ficha = porCanal.get(avance.itemId);
+        if (!ficha) continue;
+
+        /*
+          Un canal caduca con el programa que se estaba viendo.
+
+          No hay "por dónde ibas" en un directo: lo que tiene sentido es
+          volver a lo que estabas viendo **mientras siga echándose**. Si el
+          programa que hay ahora empezó después de que lo dejaras, el tuyo
+          terminó y el canal se cae de la fila.
+
+          Sin programación no se puede saber —272 de los 463 canales no tienen
+          EPG—, así que ahí vale una ventana fija: pasadas dos horas, lo que
+          estabas viendo ha terminado casi seguro.
+        */
+        const suyos = programas[ficha.id] ?? [];
+        const echando = programaActual(suyos, ahora);
+        const dejado = Date.parse(avance.visto);
+        const sigue = echando
+          ? echando.desde.getTime() <= dejado
+          : Number.isFinite(dejado) && ahora.getTime() - dejado < CADUCA_DIRECTO_MS;
+        if (!sigue) continue;
+
+        elementos.push({
+          id: `continuar:canal:${ficha.id}`,
+          titulo: ficha.nombre,
+          // Lo que echan, que es lo que uno reconoce: el nombre del canal ya
+          // está arriba.
+          detalle: echando?.titulo ?? ficha.grupo,
+          valoracion: null,
+          anio: null,
+          resumen: null,
+          logo: ficha.logo,
+          // En directo no hay barrita que valga: el flujo no empieza ni acaba.
+          avance: null,
+          favorito: false,
+          accion: { tipo: 'reproducir', medio: { clase: 'canal', id: ficha.id, titulo: ficha.nombre } },
         });
         continue;
       }
