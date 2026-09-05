@@ -826,6 +826,16 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   quedan puestas para siempre. Se deja `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`
   a propósito: sin él no habría forma de salir de la aplicación en una tablet
   sin botones físicos.
+- **Sin `memo`, cada pulsación del mando repinta la fila entera.** El
+  `extraData` de una `FlatList` cambia con el foco, así que se repintaban las
+  veinte fichas de la fila; en un televisor modesto eso es casi un segundo por
+  pulsación. `FichaDeFila` y `Carrusel` van envueltos en `memo` **y reciben su
+  índice en vez de dos funciones nuevas por pintado**: sin lo segundo, lo
+  primero no sirve de nada, porque las props cambian de identidad igual.
+- **Un foco, y solo uno.** Con el mando en la cabecera, ninguna fila del inicio
+  puede quedarse marcada, y mientras se escribe en el buscador los resultados
+  tampoco. El síntoma es un borde que se queda puesto donde ya no está el
+  mando, y engaña sobre dónde va a caer la próxima pulsación.
 - **Hooks detrás de un `return` temprano cierran la aplicación.** Es el fallo
   que más veces ha caído aquí: cuatro, en `PantallaPerfiles`, `PantallaListas`
   y dos en `BibliotecaVista`. React exige el mismo número de hooks en cada

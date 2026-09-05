@@ -10,7 +10,7 @@
  * traducen las dos formas de manejarlo: las teclas del mando y el toque.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -594,6 +594,14 @@ function BibliotecaVista({
   const [focoPerfil, setFocoPerfil] = useState(0);
   /** Los demás perfiles de la casa, para poder pasarse a uno desde el menú. */
   const [otrosPerfiles, setOtrosPerfiles] = useState<Perfil[]>([]);
+  /**
+   * En el buscador, el mando está en el campo de texto y no en los resultados.
+   *
+   * Empieza ahí —se abre para escribir— y se sale con las flechas. Sin esto,
+   * el primer resultado se quedaba marcado mientras uno seguía escribiendo, y
+   * había dos focos a la vez.
+   */
+  const [enTexto, setEnTexto] = useState(true);
   /** Lo que echan en cada canal, para las filas de TV en directo. */
   const [programas, setProgramas] = useState<Record<string, Programa[]>>({});
   /**
@@ -763,6 +771,8 @@ function BibliotecaVista({
    * "matrix" lanza seis consultas y la lista parpadea en cada letra.
    */
   const teclear = useCallback((nuevo: string) => {
+    // Escribir devuelve el foco al campo: es lo que se está tocando.
+    setEnTexto(true);
     setTexto(nuevo);
     if (temporizadorBusqueda.current) clearTimeout(temporizadorBusqueda.current);
     temporizadorBusqueda.current = setTimeout(() => {
@@ -771,6 +781,7 @@ function BibliotecaVista({
   }, []);
 
   const abrirBuscador = useCallback(() => {
+    setEnTexto(true);
     setTexto('');
     presentador.current?.abrirBuscador().then(setEstado);
   }, []);
@@ -1232,6 +1243,9 @@ function BibliotecaVista({
           left: 'izquierda',
           right: 'derecha',
         }[evento.eventType] as 'arriba' | 'abajo' | 'izquierda' | 'derecha';
+        // Mover con las flechas saca el mando del campo del buscador: a partir
+        // de aquí lo que se recorre son los resultados.
+        setEnTexto(false);
         instancia.mover(direccion).then((nuevo) => {
           setEstado(nuevo);
 
@@ -1356,6 +1370,12 @@ function BibliotecaVista({
   ];
 
   if (!estado) return <Espera texto="Cargando la biblioteca…" />;
+
+  /*
+    El campo del buscador tiene el mando: mientras se escribe, los resultados
+    no llevan marca. Fuera del buscador esto no aplica.
+  */
+  const enElTexto = estado.busqueda !== null && enTexto;
 
 
   const enInicio = presentador.current?.pantalla.tipo === 'inicio';
@@ -1668,7 +1688,11 @@ function BibliotecaVista({
           // ajustes—, la ficha deja de estar marcada. Con dos resaltes a la
           // vez no se sabe dónde se va a quedar la próxima pulsación.
           enfocado={
-            index === estado.foco && !estado.lateral?.dentro && !enCabecera && !verAjustes
+            index === estado.foco &&
+            !estado.lateral?.dentro &&
+            !enCabecera &&
+            !verAjustes &&
+            !enElTexto
           }
           formato={estado.formato}
           columnas={estado.columnas}
@@ -2139,7 +2163,13 @@ function PantallaInicio({
       initialNumToRender={8}
       onScrollToIndexFailed={() => {}}
       renderItem={({ item, index }) => {
-        const activa = index === inicio.fila;
+        /*
+          Con el mando en la cabecera **ninguna fila está marcada**: si no, el
+          botón de reproducir de la portada —o el último canal de una fila— se
+          quedaba con su borde puesto mientras el foco estaba arriba, y había
+          dos sitios marcados a la vez.
+        */
+        const activa = index === inicio.fila && !enCabecera;
 
         if (item.tipo === 'destacado') {
           return (
@@ -2168,14 +2198,15 @@ function PantallaInicio({
         return (
           <Carrusel
             titulo={item.titulo}
+            fila={index}
             elementos={item.elementos}
             formato={item.formato}
             activa={activa}
             columna={inicio.columna}
             programas={programas}
             sello={sello}
-            onTocar={(columna) => onTocar(index, columna)}
-            onMantener={(columna) => onMantener(index, columna)}
+            onTocar={onTocar}
+            onMantener={onMantener}
           />
         );
       }}
@@ -2520,9 +2551,15 @@ function Destacado({
   );
 }
 
-/** Una fila horizontal de fichas: los carruseles y el menú de secciones. */
-function Carrusel({
+/**
+ * Una fila horizontal de fichas: los carruseles y el menú de secciones.
+ *
+ * También con `memo`: al mover el foco entre filas, las demás no tienen nada
+ * que repintar, y son ocho o diez por pantalla.
+ */
+const Carrusel = memo(function Carrusel({
   titulo,
+  fila,
   elementos,
   formato,
   activa,
@@ -2533,6 +2570,8 @@ function Carrusel({
   onMantener,
 }: {
   titulo: string;
+  /** Qué puesto ocupa en la pantalla: lo que se devuelve al tocar una ficha. */
+  fila: number;
   elementos: Elemento[];
   /** `canal` pinta el logotipo apaisado en vez del cartel vertical. */
   formato?: FormatoFila;
@@ -2541,10 +2580,15 @@ function Carrusel({
   /** La parrilla, por canal. Vacía en las filas que no son de directo. */
   programas: Record<string, Programa[]>;
   sello: number;
-  onTocar: (columna: number) => void;
-  onMantener: (columna: number) => void;
+  onTocar: (fila: number, columna: number) => void;
+  onMantener: (fila: number, columna: number) => void;
 }) {
   const lista = useRef<FlatList<Elemento>>(null);
+
+  // Estables entre pintados: es lo que permite que `memo` sirva de algo en las
+  // fichas, que si no reciben dos funciones nuevas cada vez.
+  const tocar = useCallback((columna: number) => onTocar(fila, columna), [onTocar, fila]);
+  const mantener = useCallback((columna: number) => onMantener(fila, columna), [onMantener, fila]);
 
   useEffect(() => {
     if (!activa || elementos.length === 0) return;
@@ -2574,17 +2618,18 @@ function Carrusel({
         renderItem={({ item, index }) => (
           <FichaDeFila
             item={item}
+            indice={index}
             formato={formato}
             enfocado={activa && index === columna}
             programas={programas[canalDeElemento(item) ?? '']}
-            onTocar={() => onTocar(index)}
-            onMantener={() => onMantener(index)}
+            onTocar={tocar}
+            onMantener={mantener}
           />
         )}
       />
     </View>
   );
-}
+});
 
 /**
  * La línea que acompaña al título dentro de la carátula.
@@ -2597,21 +2642,29 @@ function pieDeFicha(elemento: Elemento): string {
   return [elemento.genero, elemento.anio, elemento.detalle].filter(Boolean).join(' · ');
 }
 
+/*
+  El marco de tres píxeles se ve mal desde el sofá y el tamaño se ve siempre:
+  por eso lo enfocado se agranda, como en cualquier televisor. Va animado sobre
+  el hilo nativo (`useNativeDriver`) porque el JavaScript está ocupado pintando
+  la fila cuando el foco se mueve, y sin eso el crecimiento llega a tirones.
+
+  `zIndex` y `elevation` son para que la ficha crecida tape a la de al lado y
+  no al revés: entre hermanos manda el orden de pintado, y la siguiente se
+  dibuja después.
+*/
 /**
  * Una ficha de carrusel, que **crece al enfocarse**.
  *
- * El marco de tres píxeles se ve mal desde el sofá y el tamaño se ve siempre:
- * por eso lo enfocado se agranda, como en cualquier televisor. Va animado
- * sobre el hilo nativo (`useNativeDriver`) porque el JavaScript está ocupado
- * pintando la fila cuando el foco se mueve, y sin eso el crecimiento llega a
- * tirones.
- *
- * `zIndex` y `elevation` son para que la ficha crecida tape a la de al lado y
- * no al revés: entre hermanos manda el orden de pintado, y la siguiente se
- * dibuja después.
+ * Va envuelta en `memo` y recibe su índice en vez de dos funciones nuevas por
+ * pintado: sin eso, cada pulsación del mando repintaba las veinte fichas de la
+ * fila —el `extraData` de la lista cambia con el foco— y en un televisor
+ * modesto eso es casi un segundo por pulsación. Con la comparación de props,
+ * solo se repintan las dos que cambian: la que suelta el foco y la que lo
+ * coge.
  */
-function FichaDeFila({
+const FichaDeFila = memo(function FichaDeFila({
   item,
+  indice,
   formato,
   enfocado,
   programas,
@@ -2619,12 +2672,14 @@ function FichaDeFila({
   onMantener,
 }: {
   item: Elemento;
+  /** Qué puesto ocupa: lo que se le devuelve a la fila al tocarla. */
+  indice: number;
   formato?: FormatoFila;
   enfocado: boolean;
   /** Lo que echan en este canal, si es un canal y hay parrilla. */
   programas?: Programa[];
-  onTocar: () => void;
-  onMantener: () => void;
+  onTocar: (indice: number) => void;
+  onMantener: (indice: number) => void;
 }) {
   const esCanal = formato === 'canal';
   const escala = useRef(new Animated.Value(1)).current;
@@ -2676,10 +2731,10 @@ function FichaDeFila({
     >
       <Pressable
         focusable={false}
-        onPress={onTocar}
+        onPress={() => onTocar(indice)}
         // El mismo gesto que en la rejilla: mantener pulsado lo añade a Mi
         // Lista, y el toque normal reproduce o entra.
-        onLongPress={onMantener}
+        onLongPress={() => onMantener(indice)}
         style={[estilos.fichaFila, enfocado && estilos.fichaFilaEnfocada]}
       >
         <View style={estilos.fichaCaratula}>
@@ -2761,7 +2816,7 @@ function FichaDeFila({
       </Pressable>
     </Animated.View>
   );
-}
+});
 
 function Ficha({
   elemento,
