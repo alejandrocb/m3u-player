@@ -642,10 +642,19 @@ queda bloqueada hasta que el panel la caduca por su cuenta.
 ### El mando dentro del reproductor
 
 Las flechas saltan diez segundos y el OK pausa, que es lo que uno espera con un
-mando delante de la tele. **Con los controles a la vista saltan un minuto**, y
-manteniendo pulsado hasta diez: la barra está justo encima del círculo de
-reproducir, así que se mueve desde donde ya está el foco. Hacerla una parada
-más del recorrido obligaba a bajar dos veces para llegar a los subtítulos. **Bajando se entra en la fila de botones** —desde el
+mando delante de la tele.
+
+**El recorrido va de arriba abajo, en el orden en que se ven las cosas**: la
+barra de tiempo, la fila de reproducir y la fila de ajustes. El foco entra en
+el círculo de reproducir, que es lo que uno toca casi siempre; subiendo se va a
+la barra y bajando, a audio, subtítulos y el capítulo siguiente. Cada cosa
+donde se ve, sin recorridos que aprender.
+
+Y hay **dos saltos, uno por sitio**: diez segundos en el círculo de reproducir
+—volver a oír una frase— y de medio minuto en adelante en la barra, subiendo
+hasta cinco si se mantiene pulsado, que cruza un capítulo en cuatro
+pulsaciones. Marcarlos los dos a la vez fue un error intermedio: no se sabía
+cuál movían las flechas. **Bajando se entra en la fila de botones** —desde el
 principio, audio, subtítulos, siguiente— y ahí las flechas los recorren; con un
 panel de pistas abierto, el mando es suyo hasta elegir una. Subiendo se vuelve
 al vídeo.

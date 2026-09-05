@@ -57,14 +57,14 @@ import {
 /** Cuánto tarda en esconderse el rótulo si no se toca nada. */
 const OCULTAR_MS = 4000;
 /**
- * Cuánto salta cada pulsación cuando la barra está a la vista.
+ * Cuánto salta cada pulsación con el foco en la barra de tiempo.
  *
- * Un minuto de entrada, que es lo que uno busca al rebobinar una escena; y
- * manteniendo, hasta diez, para cruzar una película sin cien pulsaciones. Los
- * escalones son a ojo pero el orden importa: el primero tiene que ser cómodo y
- * el último, rápido.
+ * Medio minuto de entrada —el salto fino, de diez segundos, se queda en el
+ * círculo de reproducir— y, manteniendo pulsado, hasta cinco minutos, que
+ * cruza un capítulo en cuatro pulsaciones. Los escalones son a ojo pero el
+ * orden importa: el primero tiene que ser cómodo y el último, rápido.
  */
-const SALTOS_LARGOS_S = [60, 120, 300, 600];
+const SALTOS_LARGOS_S = [30, 60, 120, 300];
 
 /** Cuánto puede tardar la siguiente pulsación y seguir contando como racha. */
 const RACHA_MS = 500;
@@ -265,15 +265,15 @@ export function Reproductor({
     Y con un panel de pistas abierto, el mando es suyo.
   */
   /*
-    Dónde está el mando dentro del reproductor.
+    Dónde está el mando dentro del reproductor, **de arriba abajo y en el orden
+    en que se ven las cosas**: la barra de tiempo, la fila de reproducir y la
+    fila de ajustes.
 
-    Son **dos paradas y no tres**: arriba el vídeo —con el círculo de
-    reproducir marcado y la barra de tiempo, que se mueve con las flechas
-    porque está justo encima— y abajo la fila de iconos. La barra no es una
-    parada aparte: se maneja desde donde ya está el foco, y hacerla parada
-    obligaba a bajar dos veces para llegar a los subtítulos.
+    El foco entra en `video` —el círculo de reproducir—, que es lo que uno
+    quiere tocar el 90 % de las veces. Desde ahí, arriba lleva a la barra y
+    abajo a los ajustes: cada cosa donde se ve, sin recorridos que aprender.
   */
-  const [zona, setZona] = useState<'creditos' | 'video' | 'botones' | 'pistas'>('video');
+  const [zona, setZona] = useState<'creditos' | 'barra' | 'video' | 'botones' | 'pistas'>('video');
   /**
    * Cuántas veces seguidas se ha movido la barra sin soltar.
    *
@@ -295,7 +295,9 @@ export function Reproductor({
     const seguida = ahora - racha.current.ultimo < RACHA_MS;
     racha.current = { ultimo: ahora, veces: seguida ? racha.current.veces + 1 : 0 };
 
-    const escalon = Math.min(Math.floor(racha.current.veces / 3), SALTOS_LARGOS_S.length - 1);
+    // Cada cuatro pulsaciones seguidas se sube un escalón: con tres se
+    // disparaba en cuanto uno dejaba el dedo puesto un instante de más.
+    const escalon = Math.min(Math.floor(racha.current.veces / 4), SALTOS_LARGOS_S.length - 1);
     return SALTOS_LARGOS_S[escalon]!;
   }, []);
 
@@ -668,6 +670,32 @@ export function Reproductor({
       }
     }
 
+    /*
+      La barra de tiempo, que está **encima** de los botones: se sube a ella y
+      se baja de vuelta. Aquí las flechas mueven de medio minuto en adelante y
+      van corriendo si se mantiene pulsado; los diez segundos finos se quedan
+      abajo, en el círculo de reproducir.
+    */
+    if (zona === 'barra') {
+      switch (evento.eventType) {
+        case 'left':
+        case 'right': {
+          const salto = saltoDeLaRacha();
+          saltar(evento.eventType === 'left' ? -salto : salto);
+          return;
+        }
+        case 'down':
+          setZona('video');
+          return;
+        // El OK pausa, que es lo que uno espera con la barra delante.
+        case 'select':
+          setPausado((estaba) => !estaba);
+          return;
+        default:
+          return;
+      }
+    }
+
     if (zona === 'botones') {
       // Mantener pulsado sobre un botón hace lo suyo, si es que hace algo:
       // hoy solo el de saltar la intro, que así se puede desmarcar.
@@ -695,14 +723,10 @@ export function Reproductor({
     }
 
     switch (evento.eventType) {
-      // En directo no hay a dónde saltar: las flechas cambian de canal, que es
-      // lo que uno hace con un mando delante de la tele.
       /*
-        Las flechas mueven el tiempo, y **cuánto depende de si se ve la
-        barra**: con los controles escondidos son diez segundos, que es
-        rebobinar una frase; con la barra delante, un minuto, y manteniendo
-        pulsado va subiendo hasta diez, que es lo que permite cruzar un
-        capítulo sin cien pulsaciones.
+        Con el foco en reproducir, las flechas saltan **diez segundos**: es el
+        salto fino, el de volver a oír una frase. Los saltos largos están en la
+        barra, que se alcanza subiendo.
 
         En directo no hay a dónde saltar —el flujo no empieza ni acaba—, así
         que ahí las flechas cambian de canal.
@@ -714,8 +738,7 @@ export function Reproductor({
           if (destino) onCambiar?.(destino);
           break;
         }
-        const salto = visible ? saltoDeLaRacha() : SALTO_S;
-        saltar(evento.eventType === 'left' ? -salto : salto);
+        saltar(evento.eventType === 'left' ? -SALTO_S : SALTO_S);
         break;
       }
       case 'select':
@@ -733,6 +756,13 @@ export function Reproductor({
           setZona('botones');
           setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
         }
+        break;
+      /*
+        Y arriba, la barra de tiempo, que es lo que hay justo encima. En
+        directo no existe: no hay línea de tiempo que mover.
+      */
+      case 'up':
+        if (visible && !enDirecto) setZona('barra');
         break;
     }
   });
@@ -1033,9 +1063,9 @@ export function Reproductor({
               <View
                 style={[
                   estilos.punto,
-                  // Con el foco arriba, las flechas mueven aquí: se marca para
-                  // que se vea que la barra es lo que va a moverse.
-                  zona === 'video' && visible && estilos.puntoEnfocado,
+                  // Solo cuando el foco está en la barra: si se marcaran las
+                  // dos cosas a la vez, no se sabría cuál mueven las flechas.
+                  zona === 'barra' && estilos.puntoEnfocado,
                   { left: `${avance * 100}%` },
                 ]}
               />
