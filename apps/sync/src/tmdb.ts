@@ -30,6 +30,16 @@ const IDIOMA = 'es-ES';
 /** Cuánto se espera si TMDb pide calma, antes del único reintento. */
 const ESPERA_MS = 1_000;
 
+/**
+ * Cuánto se espera a una respuesta antes de darla por perdida.
+ *
+ * `fetch` no trae plazo por su cuenta: sin esto, una petición que se quede
+ * colgada deja la pasada entera parada para siempre, y por fuera solo se ve
+ * un servidor callado. Perder una película no cuesta nada, se pregunta
+ * mañana.
+ */
+const PLAZO_MS = 15_000;
+
 interface Resultado {
   title?: string;
   original_title?: string;
@@ -66,12 +76,13 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
     números —28, 35, 18— y la lista que los traduce cambia una vez cada varios
     años.
   */
-  let nombres: Map<number, string> | null = null;
+  let nombres: Promise<Map<number, string>> | null = null;
 
   async function pedir(ruta: string): Promise<Record<string, unknown> | null> {
     for (let intento = 0; intento < 2; intento += 1) {
       const respuesta = await buscar(`${RAIZ}${ruta}`, {
         headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+        signal: AbortSignal.timeout(PLAZO_MS),
       });
 
       // 429 es "vas muy rápido", no un fallo: se espera y se repite una vez.
@@ -85,12 +96,17 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
     return null;
   }
 
-  async function tabla(): Promise<Map<number, string>> {
-    if (nombres) return nombres;
-
-    const datos = await pedir(`/genre/movie/list?language=${IDIOMA}`);
-    const lista = (datos?.genres as Array<{ id: number; name: string }> | undefined) ?? [];
-    nombres = new Map(lista.map((genero) => [genero.id, genero.name]));
+  function tabla(): Promise<Map<number, string>> {
+    /*
+      Se guarda la promesa y no el resultado: las películas se preguntan de
+      cinco en cinco, así que las cinco primeras llegan aquí a la vez y con el
+      resultado a secas las cinco pedirían la lista.
+    */
+    nombres ??= (async () => {
+      const datos = await pedir(`/genre/movie/list?language=${IDIOMA}`);
+      const lista = (datos?.genres as Array<{ id: number; name: string }> | undefined) ?? [];
+      return new Map(lista.map((genero) => [genero.id, genero.name]));
+    })();
     return nombres;
   }
 

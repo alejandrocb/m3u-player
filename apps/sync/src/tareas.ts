@@ -174,7 +174,11 @@ export async function traerParrillasQueToquen(panel: Panel, ahora = new Date()):
  * y lo primero que se cubre es lo último que ha entrado, que es lo que se está
  * mirando.
  */
-export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date()): Promise<number> {
+export async function rellenarGenerosQueToquen(
+  panel: Panel,
+  ahora = new Date(),
+  opciones: { forzar?: boolean } = {},
+): Promise<number> {
   let hechas = 0;
 
   const tmdb = tmdbSiHay();
@@ -185,10 +189,17 @@ export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date())
     if (!primera) continue;
 
     const cuenta = panel.cuantosGeneros(primera.id);
-    const estrenando = cuenta.preguntadas === 0;
+    /*
+      La primera revisión de cada arranque no espera a que se cumpla el plazo.
+      Con el plazo a rajatabla, redesplegar dos veces seguidas dejaba al
+      servidor callado durante horas: en cada arranque decidía que aún no
+      tocaba, y la siguiente oportunidad llegaba una hora después de ese
+      arranque. Lo que se quiere al desplegar es ver que funciona.
+    */
+    const sinEsperar = opciones.forzar || cuenta.preguntadas === 0;
     const pasadas = (ahora.getTime() - cuenta.ultima) / 3_600_000;
-    if (!estrenando && pasadas < GENEROS_CADA_HORAS[via]) continue;
-    if (!estrenando && !tmdb && (ahora.getHours() < MADRUGADA.desde || ahora.getHours() >= MADRUGADA.hasta)) continue;
+    if (!sinEsperar && pasadas < GENEROS_CADA_HORAS[via]) continue;
+    if (!sinEsperar && !tmdb && (ahora.getHours() < MADRUGADA.desde || ahora.getHours() >= MADRUGADA.hasta)) continue;
 
     const nombre = mismas.map((lista) => lista.nombre).join(', ');
     try {
@@ -200,7 +211,14 @@ export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date())
         conocidas: panel.generosConocidos(primera.id),
         cuantas: GENEROS_POR_PASADA[via],
         tmdb,
+        avisar: (faltan, deEstaVez) =>
+          console.log(`[generos] ${nombre} (${via}): empezando, ${deEstaVez} de las ${faltan} que faltan`),
       });
+      // Nada que guardar: el catálogo está cubierto y no ha entrado nada
+      // nuevo. No se anota ni se registra, que si no sería una línea por hora
+      // diciendo que no hay nada que hacer.
+      if (averiguados.length === 0) continue;
+
       // El mismo sello para todas: es lo que hace que la marca de agua del
       // aparato valga aunque la casa tenga dos listas.
       const sello = Date.now();
@@ -225,10 +243,17 @@ export async function rellenarGenerosQueToquen(panel: Panel, ahora = new Date())
  * el cierre ordenado.
  */
 export function vigilarPortadas(panel: Panel): () => void {
+  // La primera revisión no espera plazos: es la que hace que al desplegar se
+  // vea enseguida si esto funciona.
+  let primera = true;
+
   const revisar = (): void => {
     void prepararLoQueToque(panel).catch((fallo) => console.error('[portadas] fallo revisando:', fallo));
     void traerParrillasQueToquen(panel).catch((fallo) => console.error('[parrilla] fallo revisando:', fallo));
-    void rellenarGenerosQueToquen(panel).catch((fallo) => console.error('[generos] fallo revisando:', fallo));
+    void rellenarGenerosQueToquen(panel, new Date(), { forzar: primera }).catch((fallo) =>
+      console.error('[generos] fallo revisando:', fallo),
+    );
+    primera = false;
   };
 
   // Una revisión al arrancar: si el contenedor se reinicia por la noche, no

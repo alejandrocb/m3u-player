@@ -49,6 +49,14 @@ export interface OpcionesGeneros {
   cuantas: number;
   /** TMDb, si hay token. Sin él se pregunta solo al panel. */
   tmdb?: Tmdb;
+  /**
+   * Se avisa nada más saber cuántas quedan, antes de empezar a preguntar.
+   *
+   * Una pasada tarda varios minutos y quien mira el registro necesita saber
+   * que ha empezado: sin esto, lo único que se ve es un servidor callado, y
+   * eso no se distingue de que algo vaya mal.
+   */
+  avisar?: (pendientes: number, deEstaVez: number) => void;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -123,11 +131,12 @@ export async function rellenarGeneros(
     que contando entradas en vez de películas la pasada de quinientas se
     quedaba en la mitad y el recorrido duraría el doble.
   */
-  const pendientes = new Map<string, (typeof ordenadas)[number]>();
-  for (const ficha of ordenadas) {
-    if (!pendientes.has(ficha.id)) pendientes.set(ficha.id, ficha);
-    if (pendientes.size >= opciones.cuantas) break;
-  }
+  const sinGenero = new Map<string, Ficha>();
+  for (const ficha of ordenadas) if (!sinGenero.has(ficha.id)) sinGenero.set(ficha.id, ficha);
+
+  const pendientes = new Map([...sinGenero].slice(0, opciones.cuantas));
+
+  opciones.avisar?.(sinGenero.size, pendientes.size);
 
   const averiguadas = await enTandas([...pendientes.values()], A_LA_VEZ, async (ficha) => {
     try {
