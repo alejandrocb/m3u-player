@@ -32,11 +32,23 @@ import type {
   ClaseMedio,
   Perfil,
   Programacion,
+  PistasElegidas,
   Reproducible,
   Uso,
 } from '@m3u/ui';
-import { FIN_EPISODIO, esLimiteDeConexiones, reloj, vaAnotado } from '@m3u/ui';
-import { avanceDePrograma, programaActual } from '@m3u/core';
+import {
+  FIN_EPISODIO,
+  SIN_SUBTITULOS,
+  clavePistas,
+  comoRecordar,
+  escribirPistas,
+  esLimiteDeConexiones,
+  leerPistas,
+  pistaQueToca,
+  reloj,
+  vaAnotado,
+} from '@m3u/ui';
+import { avanceDePrograma, leerClaveDeEpisodio, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
 import { hora } from './reloj';
@@ -198,12 +210,25 @@ export function mensajeDeError(fallo: unknown): string {
 interface Pista {
   indice: number;
   nombre: string;
+  /**
+   * El idioma que declare el fichero, si lo declara.
+   *
+   * Es lo que se recuerda de una serie a otra: el **número** de pista depende
+   * de cómo empaquetara el fichero quien lo codificó y cambia de un capítulo a
+   * otro, así que guardarlo acabaría poniendo el comentario del director.
+   */
+  idioma?: string | null;
 }
 
 /** Nombre presentable de una pista: idioma, título, o su número. */
 function nombreDePista(pista: { language?: string; title?: string }, indice: number): string {
   const partes = [pista.title, pista.language].filter(Boolean);
   return partes.length > 0 ? partes.join(' · ') : `Pista ${indice + 1}`;
+}
+
+/** Una pista tal como la da el reproductor, con lo que aquí hace falta. */
+function comoPista(pista: { language?: string; title?: string }, indice: number): Pista {
+  return { indice, nombre: nombreDePista(pista, indice), idioma: pista.language ?? null };
 }
 
 export function Reproductor({
@@ -304,6 +329,17 @@ export function Reproductor({
   const [focoBoton, setFocoBoton] = useState(0);
   const [focoPista, setFocoPista] = useState(0);
 
+  /**
+   * Lo que este perfil eligió la última vez en esta serie.
+   *
+   * Va en una referencia y no en el estado porque no se pinta: solo sirve para
+   * poner la pista en cuanto el fichero dice cuáles trae, que puede ser al
+   * cargar o un rato después.
+   */
+  const recordadas = useRef<PistasElegidas>({ audio: null, subtitulo: null });
+  /** Si ya se aplicó lo recordado a este capítulo: solo se hace una vez. */
+  const aplicadas = useRef({ audio: false, subtitulo: false });
+
   /** Segundo por el que se quedó la última vez, si es que ya lo había visto. */
   const [reanudar, setReanudar] = useState<number | null>(null);
   const ultimaAnotacion = useRef(0);
@@ -314,6 +350,72 @@ export function Reproductor({
   const [visible, setVisible] = useState(true);
   const opacidad = useRef(new Animated.Value(1)).current;
   const temporizador = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * La serie a la que pertenece lo que suena, si es un capítulo.
+   *
+   * Las preferencias de pista son **de la serie**: uno ve Friends en inglés y
+   * las noticias en español, y no tendría sentido guardarlo por capítulo.
+   */
+  const serie = medio.clase === 'episodio' ? (leerClaveDeEpisodio(medio.id)?.serieId ?? null) : null;
+
+  useEffect(() => {
+    aplicadas.current = { audio: false, subtitulo: false };
+    recordadas.current = { audio: null, subtitulo: null };
+    if (!serie) return;
+
+    let vigente = true;
+    perfiles
+      .preferencia(perfil.id, clavePistas(serie))
+      .then((guardado) => {
+        if (vigente) recordadas.current = leerPistas(guardado);
+      })
+      .catch(() => {});
+    return () => {
+      vigente = false;
+    };
+  }, [perfiles, perfil.id, serie]);
+
+  /*
+    Y se aplica en cuanto el fichero dice qué pistas trae, que puede ser al
+    cargar o un rato después —en un MKV por HTTP las de subtítulos llegan
+    tarde—. Solo una vez por capítulo: si no, cambiar de pista a mano se
+    desharía sola en el siguiente aviso.
+  */
+  useEffect(() => {
+    if (audios.length === 0 || aplicadas.current.audio) return;
+    const toca = pistaQueToca(audios, recordadas.current.audio);
+    aplicadas.current.audio = true;
+    if (toca) setAudio(toca.indice);
+  }, [audios]);
+
+  useEffect(() => {
+    if (aplicadas.current.subtitulo) return;
+    const querido = recordadas.current.subtitulo;
+    if (!querido) return;
+
+    if (querido === SIN_SUBTITULOS) {
+      aplicadas.current.subtitulo = true;
+      setSubtitulo(-1);
+      return;
+    }
+    if (subtitulos.length === 0) return;
+    const toca = pistaQueToca(subtitulos, querido);
+    aplicadas.current.subtitulo = true;
+    if (toca) setSubtitulo(toca.indice);
+  }, [subtitulos]);
+
+  /** Anota lo que se acaba de elegir, para el resto de la serie. */
+  const recordarPistas = useCallback(
+    (cambio: Partial<PistasElegidas>) => {
+      if (!serie) return;
+      recordadas.current = { ...recordadas.current, ...cambio };
+      void perfiles
+        .guardarPreferencia(perfil.id, clavePistas(serie), escribirPistas(recordadas.current))
+        .catch(() => {});
+    },
+    [perfiles, perfil.id, serie],
+  );
 
   /*
     Qué ranura se pide. La vista previa es otra cosa que el reproductor
@@ -560,6 +662,9 @@ export function Reproductor({
                   etiqueta: 'Sin subtítulos',
                   onPress: () => {
                     setSubtitulo(-1);
+                    // Apagarlos es una elección como otra: se recuerda, o
+                    // volverían a salir en el capítulo siguiente.
+                    recordarPistas({ subtitulo: SIN_SUBTITULOS });
                     setPanel('ninguno');
                     setZona('botones');
                   },
@@ -569,8 +674,13 @@ export function Reproductor({
           ...(panel === 'audio' ? audios : subtitulos).map((pista) => ({
             etiqueta: pista.nombre,
             onPress: () => {
-              if (panel === 'audio') setAudio(pista.indice);
-              else setSubtitulo(pista.indice);
+              if (panel === 'audio') {
+                setAudio(pista.indice);
+                recordarPistas({ audio: comoRecordar(pista) });
+              } else {
+                setSubtitulo(pista.indice);
+                recordarPistas({ subtitulo: comoRecordar(pista) });
+              }
               setPanel('ninguno');
               setZona('botones');
             },
@@ -851,18 +961,8 @@ export function Reproductor({
                 ? `${datos.naturalSize?.width}x${datos.naturalSize?.height}`
                 : null,
             );
-            setAudios(
-              (datos.audioTracks ?? []).map((pista, indice) => ({
-                indice,
-                nombre: nombreDePista(pista, indice),
-              })),
-            );
-            setSubtitulos(
-              (datos.textTracks ?? []).map((pista, indice) => ({
-                indice,
-                nombre: nombreDePista(pista, indice),
-              })),
-            );
+            setAudios((datos.audioTracks ?? []).map(comoPista));
+            setSubtitulos((datos.textTracks ?? []).map(comoPista));
             // Se retoma donde se dejó, que es de lo que sirve el historial.
             if (reanudar !== null && reanudar > 0) {
               video.current?.seek(reanudar);
@@ -872,16 +972,8 @@ export function Reproductor({
           }}
           // Con un MKV por HTTP, las pistas a veces se conocen después de
           // empezar: estos avisos las traen cuando aparecen.
-          onAudioTracks={({ audioTracks }) =>
-            setAudios(
-              (audioTracks ?? []).map((pista, indice) => ({ indice, nombre: nombreDePista(pista, indice) })),
-            )
-          }
-          onTextTracks={({ textTracks }) =>
-            setSubtitulos(
-              (textTracks ?? []).map((pista, indice) => ({ indice, nombre: nombreDePista(pista, indice) })),
-            )
-          }
+          onAudioTracks={({ audioTracks }) => setAudios((audioTracks ?? []).map(comoPista))}
+          onTextTracks={({ textTracks }) => setSubtitulos((textTracks ?? []).map(comoPista))}
           /*
             Al terminar, el siguiente si así lo quiere el perfil.
 

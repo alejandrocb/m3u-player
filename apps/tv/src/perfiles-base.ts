@@ -417,6 +417,19 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       guardarSetting(perfilId, clave, valor);
     },
 
+    async preferencia(perfilId: string, clave: string): Promise<string | null> {
+      const fila = filas(
+        db,
+        'SELECT value FROM profile_setting WHERE profile_id = ? AND key = ? AND deleted = 0',
+        [perfilId, clave],
+      )[0];
+      return fila ? ((fila.value as string) ?? null) : null;
+    },
+
+    async guardarPreferencia(perfilId: string, clave: string, valor: string): Promise<void> {
+      guardarSetting(perfilId, clave, valor);
+    },
+
     async favoritos(perfilId: string): Promise<Favorito[]> {
       return filas(
         db,

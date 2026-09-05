@@ -180,6 +180,16 @@ export interface AlmacenPerfiles {
   /** Preferencias del perfil: columnas de la rejilla, orden... */
   ajustes(perfilId: string): Promise<Ajustes>;
   guardarAjuste(perfilId: string, clave: keyof Ajustes, valor: string): Promise<void>;
+  /**
+   * Un ajuste suelto del perfil, de los que no caben en `Ajustes`.
+   *
+   * Es el mismo cajón —`profile_setting`, clave y valor— y viaja igual con la
+   * sincronización. Lo usa el reproductor para recordar el audio y los
+   * subtítulos de cada serie, que son tantas claves como series y no una lista
+   * fija.
+   */
+  preferencia(perfilId: string, clave: string): Promise<string | null>;
+  guardarPreferencia(perfilId: string, clave: string, valor: string): Promise<void>;
 
   favoritos(perfilId: string): Promise<Favorito[]>;
   marcarFavorito(perfilId: string, favorito: Favorito): Promise<void>;

@@ -681,6 +681,15 @@ Dos cosas que costaron encontrar, y que valen para cualquier pantalla nueva:
   cuando no hay nada abierto para que siga el de la aplicación: Android los va
   llamando del último registrado al primero hasta que uno diga que sí.
 
+- **El audio y los subtítulos se recuerdan por serie y por perfil.** Uno ve
+  Friends en inglés con subtítulos en inglés y otro doblada, así que va en
+  `profile_setting` con la clave `pistas:<serie>` y viaja con la
+  sincronización. **Se recuerda el idioma, no el número de pista**: el número
+  depende de cómo empaquetara el fichero quien lo codificó y cambia de un
+  capítulo a otro, así que guardarlo acabaría poniendo el comentario del
+  director. Si el capítulo no trae ese idioma manda lo que venga por defecto,
+  que es mejor oírlo en español que no oírlo. Y apagar los subtítulos también
+  se recuerda: si se guardara como "nada elegido", volverían a salir.
 - **El punto por el que ibas es del capítulo que dejas.** Al encadenar con el
   siguiente hay que olvidarlo: si no, el que viene arranca donde acabó el
   anterior —o sea, en los créditos—, se da por terminado en el acto y carga el
