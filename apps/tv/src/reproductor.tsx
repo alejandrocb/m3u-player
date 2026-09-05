@@ -57,14 +57,14 @@ import {
 /** Cuánto tarda en esconderse el rótulo si no se toca nada. */
 const OCULTAR_MS = 4000;
 /**
- * Cuánto salta la barra con cada pulsación, según lo que se lleve pulsado.
+ * Cuánto salta cada pulsación cuando la barra está a la vista.
  *
  * Un minuto de entrada, que es lo que uno busca al rebobinar una escena; y
  * manteniendo, hasta diez, para cruzar una película sin cien pulsaciones. Los
  * escalones son a ojo pero el orden importa: el primero tiene que ser cómodo y
  * el último, rápido.
  */
-const SALTOS_BARRA_S = [60, 120, 300, 600];
+const SALTOS_LARGOS_S = [60, 120, 300, 600];
 
 /** Cuánto puede tardar la siguiente pulsación y seguir contando como racha. */
 const RACHA_MS = 500;
@@ -264,7 +264,16 @@ export function Reproductor({
     forma de alcanzar**: con el dedo se tocan, pero un televisor no tiene dedo.
     Y con un panel de pistas abierto, el mando es suyo.
   */
-  const [zona, setZona] = useState<'creditos' | 'video' | 'barra' | 'botones' | 'pistas'>('video');
+  /*
+    Dónde está el mando dentro del reproductor.
+
+    Son **dos paradas y no tres**: arriba el vídeo —con el círculo de
+    reproducir marcado y la barra de tiempo, que se mueve con las flechas
+    porque está justo encima— y abajo la fila de iconos. La barra no es una
+    parada aparte: se maneja desde donde ya está el foco, y hacerla parada
+    obligaba a bajar dos veces para llegar a los subtítulos.
+  */
+  const [zona, setZona] = useState<'creditos' | 'video' | 'botones' | 'pistas'>('video');
   /**
    * Cuántas veces seguidas se ha movido la barra sin soltar.
    *
@@ -273,6 +282,22 @@ export function Reproductor({
    * horas serían ciento veinte pulsaciones.
    */
   const racha = useRef({ ultimo: 0, veces: 0 });
+
+  /**
+   * Cuánto salta la siguiente pulsación, según lo que se lleve pulsado.
+   *
+   * Un minuto de entrada y, manteniendo, hasta diez. Cada llamada cuenta como
+   * una pulsación: si pasa más de medio segundo entre dos, la racha se rompe y
+   * se vuelve a empezar por el escalón corto.
+   */
+  const saltoDeLaRacha = useCallback((): number => {
+    const ahora = Date.now();
+    const seguida = ahora - racha.current.ultimo < RACHA_MS;
+    racha.current = { ultimo: ahora, veces: seguida ? racha.current.veces + 1 : 0 };
+
+    const escalon = Math.min(Math.floor(racha.current.veces / 3), SALTOS_LARGOS_S.length - 1);
+    return SALTOS_LARGOS_S[escalon]!;
+  }, []);
 
   const [focoBoton, setFocoBoton] = useState(0);
   const [focoPista, setFocoPista] = useState(0);
@@ -575,14 +600,29 @@ export function Reproductor({
   */
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (compacto || zona === 'video') return false;
-      setPanel('ninguno');
-      setZona('video');
-      despertar();
-      return true;
+      if (compacto) return false;
+
+      // Primero las pistas, que es lo último que se abrió.
+      if (panel !== 'ninguno') {
+        setPanel('ninguno');
+        setZona('botones');
+        return true;
+      }
+      /*
+        Y con los controles puestos, atrás **los esconde**: da igual en qué
+        botón esté el foco. Solo cuando ya no hay nada delante, el segundo
+        atrás sale del vídeo, que es lo que uno espera de un mando.
+      */
+      if (visible) {
+        if (temporizador.current) clearTimeout(temporizador.current);
+        setVisible(false);
+        setZona(enCreditos ? 'creditos' : 'video');
+        return true;
+      }
+      return false;
     });
     return () => suscripcion.remove();
-  }, [compacto, zona, despertar]);
+  }, [compacto, panel, visible, enCreditos]);
 
   useTVEventHandler((evento) => {
     // En pequeño manda la lista de canales, no el reproductor.
@@ -628,42 +668,6 @@ export function Reproductor({
       }
     }
 
-    /*
-      La barra: cada pulsación un minuto, y manteniendo cada vez más. En
-      directo no hay barra que mover —el flujo no empieza ni acaba—, así que
-      allí esta zona no existe.
-    */
-    if (zona === 'barra') {
-      switch (evento.eventType) {
-        case 'left':
-        case 'right': {
-          const ahora = Date.now();
-          const seguida = ahora - racha.current.ultimo < RACHA_MS;
-          racha.current = { ultimo: ahora, veces: seguida ? racha.current.veces + 1 : 0 };
-
-          const escalon = Math.min(Math.floor(racha.current.veces / 3), SALTOS_BARRA_S.length - 1);
-          const salto = SALTOS_BARRA_S[escalon]!;
-          saltar(evento.eventType === 'left' ? -salto : salto);
-          return;
-        }
-        case 'up':
-          setZona('video');
-          return;
-        case 'down':
-          if (secundarios.length > 0) {
-            setZona('botones');
-            setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
-          }
-          return;
-        // El OK pausa, que es lo que uno espera con la barra delante.
-        case 'select':
-          setPausado((estaba) => !estaba);
-          return;
-        default:
-          return;
-      }
-    }
-
     if (zona === 'botones') {
       // Mantener pulsado sobre un botón hace lo suyo, si es que hace algo:
       // hoy solo el de saltar la intro, que así se puede desmarcar.
@@ -681,9 +685,9 @@ export function Reproductor({
         case 'select':
           secundarios[focoBoton]?.onPress();
           return;
-        // Subiendo se vuelve a la barra, y de ahí al vídeo.
+        // Subiendo se vuelve al vídeo, que es la otra parada.
         case 'up':
-          setZona(enDirecto ? 'video' : 'barra');
+          setZona('video');
           return;
         default:
           return;
@@ -693,20 +697,27 @@ export function Reproductor({
     switch (evento.eventType) {
       // En directo no hay a dónde saltar: las flechas cambian de canal, que es
       // lo que uno hace con un mando delante de la tele.
+      /*
+        Las flechas mueven el tiempo, y **cuánto depende de si se ve la
+        barra**: con los controles escondidos son diez segundos, que es
+        rebobinar una frase; con la barra delante, un minuto, y manteniendo
+        pulsado va subiendo hasta diez, que es lo que permite cruzar un
+        capítulo sin cien pulsaciones.
+
+        En directo no hay a dónde saltar —el flujo no empieza ni acaba—, así
+        que ahí las flechas cambian de canal.
+      */
       case 'left':
+      case 'right': {
         if (enDirecto) {
-          if (anterior) onCambiar?.(anterior);
-        } else {
-          saltar(-SALTO_S);
+          const destino = evento.eventType === 'left' ? anterior : siguiente;
+          if (destino) onCambiar?.(destino);
+          break;
         }
+        const salto = visible ? saltoDeLaRacha() : SALTO_S;
+        saltar(evento.eventType === 'left' ? -salto : salto);
         break;
-      case 'right':
-        if (enDirecto) {
-          if (siguiente) onCambiar?.(siguiente);
-        } else {
-          saltar(SALTO_S);
-        }
-        break;
+      }
       case 'select':
         // Si los controles estaban escondidos, el primer OK solo los enseña.
         if (visible) setPausado((estaba) => !estaba);
@@ -718,10 +729,7 @@ export function Reproductor({
       */
       case 'down':
         if (!visible) break;
-        // Primero la barra —lo más usado— y de ahí a los botones. En directo
-        // no hay barra, así que se va directo a los botones.
-        if (!enDirecto) setZona('barra');
-        else if (secundarios.length > 0) {
+        if (secundarios.length > 0) {
           setZona('botones');
           setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
         }
@@ -1023,7 +1031,13 @@ export function Reproductor({
               <View style={[estilos.cargado, { width: `${cargado * 100}%` }]} />
               <View style={[estilos.progreso, { width: `${avance * 100}%` }]} />
               <View
-                style={[estilos.punto, zona === 'barra' && estilos.puntoEnfocado, { left: `${avance * 100}%` }]}
+                style={[
+                  estilos.punto,
+                  // Con el foco arriba, las flechas mueven aquí: se marca para
+                  // que se vea que la barra es lo que va a moverse.
+                  zona === 'video' && visible && estilos.puntoEnfocado,
+                  { left: `${avance * 100}%` },
+                ]}
               />
             </Pressable>
 

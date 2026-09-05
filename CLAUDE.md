@@ -642,7 +642,10 @@ queda bloqueada hasta que el panel la caduca por su cuenta.
 ### El mando dentro del reproductor
 
 Las flechas saltan diez segundos y el OK pausa, que es lo que uno espera con un
-mando delante de la tele. **Bajando se entra en la fila de botones** —desde el
+mando delante de la tele. **Con los controles a la vista saltan un minuto**, y
+manteniendo pulsado hasta diez: la barra está justo encima del círculo de
+reproducir, así que se mueve desde donde ya está el foco. Hacerla una parada
+más del recorrido obligaba a bajar dos veces para llegar a los subtítulos. **Bajando se entra en la fila de botones** —desde el
 principio, audio, subtítulos, siguiente— y ahí las flechas los recorren; con un
 panel de pistas abierto, el mando es suyo hasta elegir una. Subiendo se vuelve
 al vídeo.
