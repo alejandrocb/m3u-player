@@ -109,6 +109,31 @@ CREATE TABLE IF NOT EXISTS variant (
   PRIMARY KEY (owner_kind, owner_id, url)
 ) WITHOUT ROWID;
 
+-- Lo que se ha pedido bajar al disco, con por dónde va.
+--
+-- Es del aparato y no del perfil: el fichero está en este disco y no en el de
+-- la tablet, así que **no se sincroniza**. Que dos aparatos de la misma casa
+-- tengan cosas distintas bajadas es lo correcto.
+--
+-- Los bytes se guardan en bruto porque son lo que hace falta para reanudar: al
+-- panel se le pide "Range: bytes=<esto>-" y se sigue por donde iba. El
+-- porcentaje se calcula al pintar.
+CREATE TABLE IF NOT EXISTS download (
+  -- clase:itemId, la misma clave que usa el historial.
+  id       TEXT PRIMARY KEY,
+  kind     TEXT NOT NULL,
+  item_id  TEXT NOT NULL,
+  title    TEXT NOT NULL,
+  series_id TEXT,
+  url      TEXT NOT NULL,
+  file     TEXT NOT NULL,
+  state    TEXT NOT NULL,
+  bytes    INTEGER NOT NULL DEFAULT 0,
+  total    INTEGER,
+  created  TEXT NOT NULL,
+  error    TEXT
+) WITHOUT ROWID;
+
 `;
 
 /**

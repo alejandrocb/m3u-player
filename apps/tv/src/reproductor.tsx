@@ -154,6 +154,14 @@ interface Props {
    */
   arbitro?: Arbitro;
   /**
+   * El fichero ya bajado a este aparato, si lo hay.
+   *
+   * Cuando está, se reproduce de aquí y **no se toca el panel**: ni una
+   * petición, ni una ranura. Es lo que hace que ver algo bajado no le quite la
+   * conexión a quien esté viendo otra cosa en la casa.
+   */
+  ficheroLocal?: string | null;
+  /**
    * Encadenar con el siguiente al terminar.
    *
    * Es un ajuste del perfil, no del aparato: lo decide quien está viendo. Solo
@@ -240,6 +248,7 @@ export function Reproductor({
   onCambiar,
   programacion,
   arbitro,
+  ficheroLocal,
   continua = false,
   caja,
   resaltado,
@@ -484,6 +493,19 @@ export function Reproductor({
       })
       .catch(() => {});
 
+    /*
+      Lo bajado se reproduce del disco y se acabó: sin variantes, sin árbitro y
+      sin panel. Ni siquiera hace falta preguntar por la URL.
+    */
+    if (ficheroLocal) {
+      setCalidad(null);
+      setEspera(null);
+      setUrl(ficheroLocal.startsWith('file://') ? ficheroLocal : `file://${ficheroLocal}`);
+      return () => {
+        vigente = false;
+      };
+    }
+
     biblioteca
       .variantes(medio.clase, medio.id)
       .then((variantes) => {
@@ -516,7 +538,7 @@ export function Reproductor({
       if (temporizador.current) clearTimeout(temporizador.current);
     };
     // `intento` está a propósito: subirlo es lo que rehace la petición.
-  }, [biblioteca, medio, intento, arbitro, idRanura, usoRanura]);
+  }, [biblioteca, medio, intento, arbitro, idRanura, usoRanura, ficheroLocal]);
 
   /*
     La cuenta atrás del reintento.

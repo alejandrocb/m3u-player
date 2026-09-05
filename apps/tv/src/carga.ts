@@ -18,6 +18,7 @@ import { buildLibrary, parseM3U } from '@m3u/core';
 import { XtreamClient, construirCatalogo, credentialsFromUrl, fichaDeSerie, temporadasDeSerie } from '@m3u/core/xtream';
 import type { Library } from '@m3u/core';
 import type {
+  AlmacenDescargas,
   AlmacenPerfiles,
   Biblioteca,
   Cuenta,
@@ -29,6 +30,7 @@ import type {
 
 import { abrirBase, estadoGuardado, guardarCatalogo, meta, ponerMeta } from './basedatos';
 import { bibliotecaEnBase } from './biblioteca-base';
+import { descargasEnBase } from './descargas-base';
 import { perfilesEnBase } from './perfiles-base';
 import { programacionDelPanel } from './programacion';
 
@@ -59,6 +61,13 @@ export interface Cargada {
   biblioteca: Biblioteca;
   /** Perfiles, historial y favoritos: viven en la misma base. */
   perfiles: AlmacenPerfiles;
+  /**
+   * La cola de descargas, que también vive en la misma base.
+   *
+   * Es del aparato y no del perfil ni de la casa: el fichero está en **este**
+   * disco, así que no se sincroniza con nadie.
+   */
+  descargas: AlmacenDescargas;
   /** La parrilla del directo, que se pide al panel y no se guarda. */
   programacion: Programacion;
   medicion: Medicion;
@@ -89,8 +98,16 @@ export interface OpcionesCarga {
   fichas?: (desde: number) => Promise<FichasNuevas>;
 }
 
-/** Por dónde iba la recogida de fichas. Es la marca de agua del servidor. */
-const MARCA_FICHAS = 'fichas:desde';
+/**
+ * Por dónde iba la recogida de fichas. Es la marca de agua del servidor.
+ *
+ * Lleva un 2 detrás porque la primera versión se dejó fichas por el camino:
+ * el servidor sellaba toda una pasada con el mismo número y pedir "lo
+ * posterior" se saltaba la mitad. Cambiarle el nombre a la clave hace que cada
+ * aparato lo recoja todo una vez más, que es lo que hace falta para ponerse al
+ * día.
+ */
+const MARCA_FICHAS = 'fichas:desde2';
 
 /**
  * Cuántas vueltas se dan como mucho en una recogida.
@@ -180,6 +197,7 @@ export async function cargarCatalogo(
     return {
       biblioteca,
       perfiles,
+      descargas: descargasEnBase(db),
       programacion: programacionDelPanel({ cliente, biblioteca, parrilla: opciones.parrilla }),
       medicion: {
         total: Date.now() - arranque,
@@ -217,6 +235,7 @@ export async function cargarCatalogo(
   return {
     biblioteca,
     perfiles,
+    descargas: descargasEnBase(db),
     programacion: programacionDelPanel({ cliente, biblioteca, parrilla: opciones.parrilla }),
     medicion: {
       total: Date.now() - arranque,

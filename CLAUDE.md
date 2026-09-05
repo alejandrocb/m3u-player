@@ -870,6 +870,43 @@ por `d3d11va` se ve correctamente **debajo** de la interfaz. El plano de
 superposición de hardware, que era el riesgo, no aparece. `.\app.cmd --sw`
 sigue disponible para forzar salida por software si algún equipo da problemas.
 
+### La descarga a disco
+
+Es lo que no hacen los reproductores comerciales y la razón de que esto exista.
+Tres decisiones sostienen lo demás:
+
+- **Una cada vez.** No es un límite técnico: el ancho de banda es el mismo, así
+  que dos a la vez tardan lo mismo que dos seguidas y **ninguna** termina hasta
+  el final. Con una, a los diez minutos hay una película entera en el disco.
+- **La reparte el árbitro y siempre pierde.** Descargar es la prioridad más
+  baja porque es lo único que no pierde nada: se apunta **por qué byte iba** y
+  al reanudar se le pide al panel `Range: bytes=…`. Poner una película echa a
+  la descarga al instante y esta vuelve sola.
+- **Lo bajado se reproduce del disco**, sin tocar el panel: ni petición ni
+  ranura. Ver algo que ya tienes no le quita la conexión a nadie de la casa.
+
+El fichero va en la **carpeta privada de la aplicación**: sin permisos de
+almacenamiento que pedir, sin mezclarse con las fotos, y se va al desinstalar.
+No se puede sacar por USB, que no es lo que se busca.
+
+La cola (`packages/ui/src/descargas.ts`) no toca ficheros: decide **qué** y
+**cuándo**, y la plataforma mueve los bytes detrás de `Transferencia`. Es lo
+que permite probarla entera sin un Android delante.
+
+Dos cosas que no son opcionales:
+
+- **Al reanudar hay que comprobar que el panel respeta el rango.** Si contesta
+  `200` en vez de `206` está mandando el fichero entero otra vez, y añadirlo a
+  lo que había da un fichero corrupto **que además parece completo**. Se borra
+  y se empieza de cero.
+- **Cancelar no es fallar.** Abortar la petición llega al transporte como un
+  error de red; contarlo como fallo dejaría marcado como roto justo lo que la
+  cola quiere reanudar.
+
+Y lo que se guarda son **bytes, no porcentaje**: el porcentaje es para pintar,
+lo que hace falta para reanudar es el byte. Al arrancar, lo que quedó como
+"bajando" vuelve a la cola: al cerrar la aplicación no estaba bajando nada.
+
 ## Trampas conocidas
 
 - **El EPG del panel viene en UTC y en base64.** Los títulos y las sinopsis van
@@ -1060,6 +1097,13 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   deja en `never` y `npm run typecheck` falla aunque los tests pasen. Se
   esquiva comparando el resultado de una llamada a función, que no deja
   referencia que estrechar.
+- **Un sello por fila, no uno por pasada.** El aparato recoge las fichas del
+  servidor pidiendo "lo posterior a este sello" y se lleva mil de una vez. Con
+  el sello compartido por toda una pasada, la petición siguiente se saltaba
+  **todas** las de esa pasada, incluidas las que aún no se había llevado. No
+  salta ningún error: simplemente faltan datos. Se vio contra el servidor real
+  —se traía 2.000 de las 3.873 que había y se paraba— y no en los tests, que
+  usaban pasadas más pequeñas que la página.
 - **`node:sqlite` devuelve objetos sin prototipo.** El almacén los convierte a
   objetos normales antes de devolverlos; mantén esa costumbre o `deepEqual`
   fallará en los tests.

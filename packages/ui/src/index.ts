@@ -10,3 +10,4 @@ export * from './sincronizacion.ts';
 export * from './cliente-sync.ts';
 export * from './arbitro.ts';
 export * from './pistas.ts';
+export * from './descargas.ts';

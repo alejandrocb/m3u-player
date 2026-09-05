@@ -31,7 +31,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { avanceDePrograma, programaActual } from '@m3u/core';
+import { avanceDePrograma, leerClaveDeEpisodio, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 import type {
   Ajustes,
@@ -39,6 +39,7 @@ import type {
   Marcable,
   Biblioteca,
   Cuenta,
+  Descarga,
   Elemento,
   EstadoPantalla,
   Ficha as FichaDetalle,
@@ -58,7 +59,10 @@ import {
   ClienteSync,
   GestorCuentas,
   Arbitro,
+  ColaDeDescargas,
   MODOS_INICIO,
+  claveDeDescarga,
+  ficheroDe,
   canalDeElemento,
   medioDeElemento,
   elementosDeFila,
@@ -70,6 +74,7 @@ import {
 } from '@m3u/ui';
 
 import { almacenDeCuentas } from './src/almacen';
+import { rutaDe, transferenciaDeAndroid } from './src/descargas-base';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -202,6 +207,14 @@ function Raiz() {
     descarga. Se crea una vez y se le dicen las ranuras al conectar.
   */
   const arbitro = useRef(new Arbitro(1));
+  /*
+    La cola de descargas, aquí al lado del árbitro y por el mismo motivo: la
+    ranura del panel es de la casa, y quien la pide para bajar algo tiene que
+    ser el mismo que la pide para reproducir. Se monta al conectar con la
+    lista, que es cuando hay base donde apuntar.
+  */
+  const cola = useRef<ColaDeDescargas | null>(null);
+  const [descargas, setDescargas] = useState<Descarga[]>([]);
   /**
    * El cliente de sincronización, uno para toda la vida de la app.
    *
@@ -262,6 +275,7 @@ function Raiz() {
       const {
         biblioteca: datos,
         perfiles: almacen,
+        descargas: descargasDeLaBase,
         programacion: parrilla,
         medicion,
       } = await cargarCatalogo(
@@ -277,6 +291,15 @@ function Raiz() {
       biblioteca.current = datos;
       perfiles.current = almacen;
       programacion.current = parrilla;
+
+      cola.current = new ColaDeDescargas({
+        arbitro: arbitro.current,
+        transferencia: transferenciaDeAndroid(),
+        almacen: descargasDeLaBase,
+        alCambiar: setDescargas,
+      });
+      // Lo que quedó a medias anoche sigue por donde iba.
+      void cola.current.cargar();
       // Lo que diga el panel, no lo que supongamos: hay cuentas de 1 y de 3.
       if (medicion.conexiones) arbitro.current.ajustarRanuras(medicion.conexiones);
       await gestor.current?.conectar(elegida.id);
@@ -486,6 +509,8 @@ function Raiz() {
       biblioteca={biblioteca.current!}
       perfiles={perfiles.current!}
       programacion={programacion.current!}
+      cola={cola.current}
+      descargas={descargas}
       perfil={fase.perfil}
       cuenta={fase.cuenta}
       medicion={fase.medicion}
@@ -523,6 +548,8 @@ function BibliotecaVista({
   cuenta,
   medicion,
   arbitro,
+  cola,
+  descargas,
   onCerrarSesion,
   onCambiarPerfil,
   onActualizar,
@@ -540,6 +567,9 @@ function BibliotecaVista({
   medicion: Medicion;
   /** Reparte las conexiones del panel entre el vídeo y lo que venga. */
   arbitro: Arbitro;
+  /** La cola de descargas. Nula hasta que se conecta con una lista. */
+  cola: ColaDeDescargas | null;
+  descargas: Descarga[];
   /** Lo que el servidor haya preparado para el inicio, si hay servidor. */
   preparado: Preparado;
   /** El nombre de este aparato en la casa, para poder decir dónde suena algo. */
@@ -582,6 +612,8 @@ function BibliotecaVista({
   const [aPantallaCompleta, setAPantallaCompleta] = useState(true);
 
   const [verAjustes, setVerAjustes] = useState(false);
+  /** La lista de descargas, que cuelga del menú del perfil. */
+  const [verDescargas, setVerDescargas] = useState(false);
   /**
    * El capítulo que va después del que se está viendo.
    *
@@ -1013,6 +1045,10 @@ function BibliotecaVista({
     if (!instancia) return false;
 
     // Lo que esté encima se cierra antes que nada, de más reciente a menos.
+    if (verDescargas) {
+      setVerDescargas(false);
+      return true;
+    }
     if (menuFicha) {
       setMenuFicha(null);
       return true;
@@ -1053,7 +1089,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha, verDescargas]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -1093,7 +1129,7 @@ function BibliotecaVista({
         return;
       }
       if (descargar) {
-        setAviso('Las descargas llegan en la próxima versión');
+        void meterEnCola(descargar);
         return;
       }
       if (!reproducir) return;
@@ -1306,7 +1342,7 @@ function BibliotecaVista({
         marcar nada: el gesto solo existía por pantalla táctil.
       */
       case 'longSelect':
-        if (verAjustes || verPerfil || menuFicha || enCabecera || reproduciendo || !estado) return;
+        if (verAjustes || verPerfil || menuFicha || verDescargas || enCabecera || reproduciendo || !estado) return;
         if (estado.inicio) mantenerEnInicio(estado.inicio.fila, estado.inicio.columna);
         else if (!estado.lateral?.dentro) mantener(estado.foco);
         return;
@@ -1428,6 +1464,46 @@ function BibliotecaVista({
    * tráiler— así que ahí solo queda Mi Lista. Y una serie no se descarga: se
    * descargan sus episodios, desde dentro.
    */
+  /**
+   * Mete una película o un episodio en la cola de descargas.
+   *
+   * La URL sale de la mejor variante, que es la misma que se reproduciría: lo
+   * que se baja es lo que se vería. El nombre del fichero conserva la
+   * extensión que traiga la URL —el contenedor de verdad se mira al abrirlo, y
+   * a `react-native-video` le da igual—.
+   */
+  const meterEnCola = useCallback(
+    async (medio: { clase: string; id: string; titulo: string }) => {
+      if (!cola) {
+        setAviso('Las descargas no están listas todavía');
+        return;
+      }
+      if (medio.clase !== 'pelicula' && medio.clase !== 'episodio') return;
+      const clase = medio.clase;
+
+      const variantes = await biblioteca.variantes(clase, medio.id).catch(() => []);
+      const mejor = variantes[0];
+      if (!mejor) {
+        setAviso('Esta ficha no tiene ninguna URL asociada');
+        return;
+      }
+
+      const clave = claveDeDescarga(clase, medio.id);
+      const extension = mejor.url.split('.').pop()?.slice(0, 4) || 'mkv';
+      await cola.anadir({
+        id: clave,
+        clase,
+        itemId: medio.id,
+        titulo: medio.titulo,
+        serieId: clase === 'episodio' ? (leerClaveDeEpisodio(medio.id)?.serieId ?? null) : null,
+        url: mejor.url,
+        fichero: ficheroDe(clave, extension),
+      });
+      setAviso(`${medio.titulo} · a la cola de descargas`);
+    },
+    [biblioteca, cola],
+  );
+
   const opcionesFicha: Array<{ texto: string; onPress: () => void }> = menuFicha
     ? [
         ...(menuFicha.clase === 'pelicula' || menuFicha.clase === 'serie'
@@ -1451,11 +1527,17 @@ function BibliotecaVista({
             });
           },
         },
-        ...(menuFicha.clase === 'pelicula'
+        ...(menuFicha.clase === 'pelicula' || menuFicha.clase === 'episodio'
           ? [
               {
-                texto: 'Descargar',
-                onPress: () => setAviso('Las descargas llegan en la próxima versión'),
+                texto: descargas.some((una) => una.id === claveDeDescarga(menuFicha.clase as 'pelicula', menuFicha.id))
+                  ? 'Quitar de descargas'
+                  : 'Descargar',
+                onPress: () => {
+                  const clave = claveDeDescarga(menuFicha.clase as 'pelicula', menuFicha.id);
+                  if (descargas.some((una) => una.id === clave)) void cola?.quitar(clave);
+                  else void meterEnCola(menuFicha);
+                },
               },
             ]
           : []),
@@ -1484,6 +1566,9 @@ function BibliotecaVista({
       texto: `Reproducción continua: ${ajustes.continua ? 'sí' : 'no'}`,
       onPress: () => void alternarContinua(),
     },
+    ...(descargas.length > 0
+      ? [{ texto: `Descargas (${descargas.length})`, onPress: () => setVerDescargas(true) }]
+      : []),
     { texto: 'Perfiles', onPress: onCambiarPerfil },
     { texto: 'Actualizar catálogo', onPress: onActualizar },
     { texto: 'Cerrar sesión', onPress: onCerrarSesion },
@@ -1802,6 +1887,43 @@ function BibliotecaVista({
         puntero al que anclarlo, y con el dedo la carátula puede estar en un
         borde.
       */}
+      {/*
+        Las descargas: qué hay bajado, qué se está bajando y por dónde va.
+
+        Va como panel y no como pantalla porque no se navega por ella: se mira,
+        se quita algo si estorba y se sale. Con el mando se recorre con arriba
+        y abajo, como el resto de menús.
+      */}
+      {verDescargas ? (
+        <View style={estilos.panelDescargas}>
+          <Text style={estilos.menuNombre}>Descargas</Text>
+          {descargas.map((una) => (
+            <Pressable
+              key={una.id}
+              focusable={false}
+              style={estilos.menuOpcion}
+              onPress={() => void cola?.quitar(una.id)}
+            >
+              <Text style={estilos.menuOpcionTexto} numberOfLines={1}>
+                {una.titulo}
+              </Text>
+              <Text style={estilos.descargaEstado}>{comoVaLaDescarga(una)}</Text>
+              {una.total ? (
+                <View style={estilos.descargaBarra}>
+                  <View
+                    style={[
+                      estilos.descargaBarraHecha,
+                      { width: `${Math.min(100, Math.round((una.bytes / una.total) * 100))}%` },
+                    ]}
+                  />
+                </View>
+              ) : null}
+            </Pressable>
+          ))}
+          <Text style={estilos.descargaAyuda}>Toca una para quitarla de la lista</Text>
+        </View>
+      ) : null}
+
       {menuFicha ? (
         <View style={estilos.menuPerfil}>
           <Text style={estilos.menuNombre} numberOfLines={2}>
@@ -2589,6 +2711,38 @@ const Destacado = memo(function Destacado({
  * También con `memo`: al mover el foco entre filas, las demás no tienen nada
  * que repintar, y son ocho o diez por pantalla.
  */
+/**
+ * Cómo va una descarga, en una línea.
+ *
+ * En megas y no en porcentaje mientras no se sepa el tamaño: el panel no
+ * siempre manda `Content-Length`, y un porcentaje inventado es peor que un
+ * número que crece.
+ */
+function comoVaLaDescarga(descarga: Descarga): string {
+  const megas = (bytes: number): string => `${Math.round(bytes / 1_000_000)} MB`;
+
+  if (descarga.estado === 'hecha') return `Bajada · ${megas(descarga.bytes)}`;
+  if (descarga.estado === 'fallida') return `Falló · ${descarga.error ?? 'sin motivo'}`;
+  if (descarga.estado === 'pausada') return `En pausa · ${megas(descarga.bytes)}`;
+  if (descarga.estado === 'en cola') return 'Esperando turno';
+  return descarga.total
+    ? `${Math.round((descarga.bytes / descarga.total) * 100)} % · ${megas(descarga.bytes)} de ${megas(descarga.total)}`
+    : `Bajando · ${megas(descarga.bytes)}`;
+}
+
+/**
+ * El fichero ya bajado de lo que se va a reproducir, si lo hay.
+ *
+ * Solo cuenta lo terminado: media película en el disco no se puede ver, y
+ * apuntar al fichero a medias daría un vídeo que se corta sin explicación.
+ */
+function ficheroBajadoDe(descargas: Descarga[], medio: { clase: string; id: string }): string | null {
+  if (medio.clase !== 'pelicula' && medio.clase !== 'episodio') return null;
+  const clave = claveDeDescarga(medio.clase, medio.id);
+  const hecha = descargas.find((una) => una.id === clave && una.estado === 'hecha');
+  return hecha ? rutaDe(hecha) : null;
+}
+
 const Carrusel = memo(function Carrusel({
   titulo,
   fila,
@@ -3300,6 +3454,40 @@ const estilos = StyleSheet.create({
     color: TINTA_SUAVE,
     fontSize: 24,
     lineHeight: 26,
+  },
+  panelDescargas: {
+    backgroundColor: '#0d2231',
+    borderRadius: 12,
+    elevation: 12,
+    gap: 10,
+    maxHeight: '80%',
+    padding: 18,
+    position: 'absolute',
+    right: 24,
+    top: 78,
+    width: 380,
+    zIndex: 20,
+  },
+  descargaEstado: {
+    color: '#9fb4c4',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  descargaBarra: {
+    backgroundColor: '#1d3a4d',
+    borderRadius: 2,
+    height: 4,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  descargaBarraHecha: {
+    backgroundColor: VERDE,
+    height: 4,
+  },
+  descargaAyuda: {
+    color: '#6f8798',
+    fontSize: 12,
+    marginTop: 4,
   },
   menuPerfil: {
     backgroundColor: '#0d2231',

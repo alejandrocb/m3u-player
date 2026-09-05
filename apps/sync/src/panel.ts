@@ -689,7 +689,7 @@ export class Panel {
 
     this.#db.exec('BEGIN');
     try {
-      for (const ficha of fichas) {
+      for (const [puesto, ficha] of fichas.entries()) {
         /*
           Lo que venga vacío **no borra lo que ya había**. Una fila puede traer
           el género del panel de una pasada anterior y que TMDb no conozca la
@@ -725,7 +725,18 @@ export class Panel {
             ficha.nota ?? null,
             ficha.votos ?? null,
             ficha.popularidad ?? null,
-            sello,
+            /*
+              **Un sello por fila, no uno por pasada.** El aparato pide "lo
+              posterior a este sello" y se lleva mil de una vez: con el sello
+              compartido, al pedir lo siguiente se saltaba **todas** las de esa
+              pasada, incluidas las mil que aún no se había llevado. Medido
+              contra el servidor real: se traía 2.000 de las 3.873 que había y
+              se paraba tan tranquilo.
+
+              Sumar el puesto basta y no se pisa con la pasada siguiente, que
+              va una hora después y son milisegundos.
+            */
+            sello + puesto,
           ],
         );
       }

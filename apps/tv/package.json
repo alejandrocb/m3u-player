@@ -16,6 +16,7 @@
     "@react-native/new-app-screen": "0.83.0",
     "react": "19.2.0",
     "react-native": "npm:react-native-tvos@0.83.0-0",
+    "react-native-blob-util": "^0.24.10",
     "react-native-keychain": "^10.0.0",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-video": "^6.19.2"

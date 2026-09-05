@@ -514,6 +514,48 @@ test('la nota de TMDb viaja con la ficha', async () => {
   }
 });
 
+test('una pasada larga se entrega entera, aunque no quepa de una vez', async () => {
+  /*
+    El aparato pide "lo posterior a este sello" y se lleva un puñado. Con un
+    solo sello para toda la pasada, la segunda petición se saltaba **todas**
+    las de esa pasada, incluidas las que aún no se había llevado: contra el
+    servidor real se traía 2.000 de las 3.873 que había y se paraba.
+  */
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    const lista = m.panel.listasDe('casa-triana')[0]!.id;
+
+    // Una pasada de 2.500, más de lo que cabe en una respuesta.
+    m.panel.guardarFichas(
+      lista,
+      Array.from({ length: 2_500 }, (_, i) => ({
+        id: `pelicula-${i}`,
+        clase: 'pelicula' as const,
+        genero: 'Drama',
+      })),
+      1_000,
+    );
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+
+    const vistas = new Set<string>();
+    let desde = 0;
+    for (let vuelta = 0; vuelta < 10; vuelta += 1) {
+      const traidas = await pedir(m.url, `/api/fichas?desde=${desde}`, { metodo: 'GET', token });
+      const fichas = traidas.datos.fichas as Array<{ id: string }>;
+      if (fichas.length === 0) break;
+      for (const ficha of fichas) vistas.add(ficha.id);
+      desde = traidas.datos.hasta as number;
+    }
+
+    assert.equal(vistas.size, 2_500, 'no se queda ninguna por el camino');
+  } finally {
+    await m.cerrar();
+  }
+});
+
 test('sin token no se ven las fichas', async () => {
   const m = await montar();
   try {
