@@ -903,6 +903,20 @@ Dos cosas que no son opcionales:
   error de red; contarlo como fallo dejaría marcado como roto justo lo que la
   cola quiere reanudar.
 
+**Un corte no es un fallo.** "Download interrupted" quiere decir que el flujo
+se acabó antes de tiempo, y en una tablet vieja con un wifi flojo eso pasa
+varias veces en una película de dos gigas: lo que toca es seguir por donde
+iba. Solo se da por fallida cuando se corta **cinco veces seguidas sin avanzar
+un byte** (`CORTES_SEGUIDOS`), que es lo que ocurre de verdad cuando el disco
+está lleno o el panel ha dejado de servir ese fichero. El contador se pone a
+cero en cuanto entra un byte nuevo.
+
+**Y a quien el árbitro echa hay que pararlo de verdad.** El árbitro solo
+reparte: devuelve a quién expulsar y quien pide es responsable de cortarlo. El
+reproductor no lo hacía, así que la descarga seguía bajando, el panel acababa
+cortando una de las dos conexiones por su cuenta y salía justo ese "Download
+interrupted".
+
 Y lo que se guarda son **bytes, no porcentaje**: el porcentaje es para pintar,
 lo que hace falta para reanudar es el byte. Al arrancar, lo que quedó como
 "bajando" vuelve a la cola: al cerrar la aplicación no estaba bajando nada.

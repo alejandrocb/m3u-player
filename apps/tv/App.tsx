@@ -1040,6 +1040,13 @@ function BibliotecaVista({
     setEnCabecera(false);
   }, [estado?.titulo]);
 
+  /*
+    Al reproductor le hace falta poder parar lo que el árbitro eche. Va con
+    `useCallback` porque baja como prop hasta un efecto: una función nueva por
+    pintado lo volvería a disparar.
+  */
+  const pararDescarga = useCallback((id: string) => cola?.expulsar(id), [cola]);
+
   const meterEnCola = useCallback(
     async (medio: { clase: string; id: string; titulo: string }) => {
       if (!cola) {
@@ -2078,6 +2085,9 @@ function BibliotecaVista({
             poder verlo sin red—.
           */
           ficheroLocal={ficheroBajadoDe(descargas, reproduciendo)}
+          // Lo que el árbitro eche para dejar sitio a esta película: hoy solo
+          // pueden ser descargas, que son lo único que vale menos.
+          onExpulsar={pararDescarga}
           continua={ajustes.continua}
           onAbrir={() => setAPantallaCompleta(true)}
         />

@@ -47,6 +47,15 @@ export interface Descarga {
   total: number | null;
   /** Cuándo se pidió, en ISO. Ordena la cola: primero lo que se pidió antes. */
   creada: string;
+  /**
+   * Cuántas veces se ha cortado seguidas sin avanzar nada.
+   *
+   * Se pone a cero en cuanto entra un byte nuevo: lo que importa no es cuántos
+   * cortes ha habido —en una película de dos gigas por un wifi flojo hay
+   * muchos— sino cuántos van sin avanzar, que es lo que distingue una red
+   * regular de algo que de verdad no se puede bajar.
+   */
+  intentos: number;
   error: string | null;
 }
 
@@ -84,6 +93,8 @@ export interface OpcionesCola {
   alCambiar?: (descargas: Descarga[]) => void;
   /** Para poder probar sin esperar. */
   ahora?: () => number;
+  /** Ídem: en los tests se dispara a mano en vez de esperar de verdad. */
+  esperar?: (hacer: () => void, ms: number) => void;
 }
 
 /**
@@ -95,6 +106,20 @@ export interface OpcionesCola {
  * megas que se vuelven a bajar.
  */
 const APUNTAR_CADA_MS = 5_000;
+
+/**
+ * Cuántos cortes seguidos sin avanzar antes de darla por fallida.
+ *
+ * Un corte no es un fallo: en un wifi flojo, dos gigas se cortan varias veces
+ * y lo único que hay que hacer es seguir por donde iba, que para eso están los
+ * bytes apuntados. Lo que sí es un fallo es cortarse una y otra vez **sin
+ * avanzar nada**, que es lo que pasa cuando el disco está lleno o el panel ha
+ * dejado de servir ese fichero.
+ */
+const CORTES_SEGUIDOS = 5;
+
+/** Cuánto se espera antes de volver a intentarlo tras un corte. */
+const TRAS_UN_CORTE_MS = 5_000;
 
 export class ColaDeDescargas {
   #arbitro: Arbitro;
@@ -108,6 +133,7 @@ export class ColaDeDescargas {
   #cancelar: (() => void) | null = null;
   #bajando: string | null = null;
   #ultimoApunte = 0;
+  #esperar: (hacer: () => void, ms: number) => void;
 
   constructor(opciones: OpcionesCola) {
     this.#arbitro = opciones.arbitro;
@@ -115,6 +141,7 @@ export class ColaDeDescargas {
     this.#almacen = opciones.almacen;
     this.#alCambiar = opciones.alCambiar;
     this.#ahora = opciones.ahora ?? (() => Date.now());
+    this.#esperar = opciones.esperar ?? ((hacer, ms) => setTimeout(hacer, ms));
   }
 
   /** Lo guardado de la vez anterior. Lo que quedó a medias vuelve a la cola. */
@@ -147,11 +174,14 @@ export class ColaDeDescargas {
    * Volver a pedir algo que falló lo reintenta: es lo que uno espera al pulsar
    * "Descargar" sobre una ficha que se quedó a medias.
    */
-  async anadir(nueva: Omit<Descarga, 'estado' | 'bytes' | 'total' | 'creada' | 'error'>): Promise<void> {
+  async anadir(
+    nueva: Omit<Descarga, 'estado' | 'bytes' | 'total' | 'creada' | 'intentos' | 'error'>,
+  ): Promise<void> {
     const antigua = this.de(nueva.id);
     if (antigua) {
       if (antigua.estado !== 'fallida' && antigua.estado !== 'pausada') return;
       antigua.estado = 'en cola';
+      antigua.intentos = 0;
       antigua.error = null;
       await this.#apuntar(antigua);
     } else {
@@ -161,6 +191,7 @@ export class ColaDeDescargas {
         bytes: 0,
         total: null,
         creada: new Date(this.#ahora()).toISOString(),
+        intentos: 0,
         error: null,
       };
       this.#cola.push(descarga);
@@ -265,6 +296,10 @@ export class ColaDeDescargas {
     siguiente.estado = 'bajando';
     this.#avisar();
 
+    // Por dónde iba al empezar: es lo que dice, si esto se corta, si ha
+    // avanzado algo o se ha quedado clavada.
+    const arrancoEn = siguiente.bytes;
+
     this.#cancelar = this.#transferencia.empezar({
       descarga: siguiente,
       desde: siguiente.bytes,
@@ -284,6 +319,7 @@ export class ColaDeDescargas {
       },
       alTerminar: () => {
         siguiente.estado = 'hecha';
+        siguiente.intentos = 0;
         siguiente.error = null;
         if (siguiente.total === null) siguiente.total = siguiente.bytes;
         this.#parar();
@@ -291,11 +327,24 @@ export class ColaDeDescargas {
         void this.#seguir();
       },
       alFallar: (razon) => {
-        siguiente.estado = 'fallida';
+        /*
+          **Un corte no es un fallo.** Una película de dos gigas por un wifi
+          flojo se corta varias veces, y lo único que hay que hacer es seguir
+          por donde iba. Solo se da por fallida cuando se corta varias veces
+          **sin avanzar nada**, que es lo que pasa de verdad cuando el disco
+          está lleno o el panel ha dejado de servir ese fichero.
+        */
+        siguiente.intentos = siguiente.bytes > arrancoEn ? 0 : siguiente.intentos + 1;
         siguiente.error = razon;
+        siguiente.estado = siguiente.intentos >= CORTES_SEGUIDOS ? 'fallida' : 'en cola';
+
         this.#parar();
         void this.#apuntar(siguiente).then(() => this.#avisar());
-        void this.#seguir();
+
+        // Un momento antes de volver: si el corte es de la red, insistir en el
+        // acto es gastar batería para nada.
+        if (siguiente.estado === 'en cola') this.#esperar(() => void this.#seguir(), TRAS_UN_CORTE_MS);
+        else void this.#seguir();
       },
     });
   }

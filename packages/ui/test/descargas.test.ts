@@ -62,11 +62,13 @@ function montar(inicial: Descarga[] = []) {
   const { almacen, filas } = almacenFalso(inicial);
   const arbitro = new Arbitro(1);
   let reloj = 1_000;
+  const esperas: Array<() => void> = [];
   const cola = new ColaDeDescargas({
     arbitro,
     transferencia: transporte.transferencia,
     almacen,
     ahora: () => reloj,
+    esperar: (hacer) => esperas.push(hacer),
   });
 
   /*
@@ -76,6 +78,11 @@ function montar(inicial: Descarga[] = []) {
   */
   const pasarElEnfriamiento = async (): Promise<void> => {
     reloj += ENFRIAMIENTO_MS + 1;
+    // Lo que quedó esperando tras un corte se dispara aquí, sin esperar de
+    // verdad los cinco segundos.
+    const pendientes = [...esperas];
+    esperas.length = 0;
+    for (const hacer of pendientes) hacer();
     await cola.reintentar();
   };
 
@@ -171,6 +178,7 @@ test('al arrancar, lo que se quedó bajando vuelve a la cola', async () => {
     bytes: 900,
     total: 5_000,
     creada: '2026-09-05T20:00:00.000Z',
+    intentos: 0,
     error: null,
   };
 
@@ -192,19 +200,47 @@ test('lo hecho no se vuelve a bajar al pedirlo otra vez', async () => {
   assert.equal(cola.de('pelicula:ya-esta')?.estado, 'hecha');
 });
 
-test('lo fallido se reintenta al volver a pedirlo', async () => {
+test('un corte no es un fallo: se vuelve por donde iba', async () => {
+  /*
+    Una película de dos gigas por un wifi flojo se corta varias veces. Lo
+    único que hay que hacer es seguir: los bytes están apuntados. Marcarla
+    como rota a la primera obligaba a pedirla otra vez a mano, y en la
+    Samsung eso pasaba siempre.
+  */
   const { cola, transporte, pasarElEnfriamiento } = montar();
-  await cola.anadir(pelicula('la-que-falla'));
-  transporte.ultima().alFallar('se cortó la red');
+  await cola.anadir(pelicula('la-que-se-corta'));
+
+  transporte.ultima().alAvanzar(500_000, 2_000_000);
+  transporte.ultima().alFallar('Download interrupted.');
   await new Promise((sigue) => setTimeout(sigue, 0));
 
-  assert.equal(cola.de('pelicula:la-que-falla')?.estado, 'fallida');
-  assert.equal(cola.de('pelicula:la-que-falla')?.error, 'se cortó la red');
+  assert.equal(cola.de('pelicula:la-que-se-corta')?.estado, 'en cola', 'no se da por perdida');
+  assert.equal(cola.de('pelicula:la-que-se-corta')?.intentos, 0, 'había avanzado: no cuenta');
 
-  await cola.anadir(pelicula('la-que-falla'));
   await pasarElEnfriamiento();
-  assert.equal(transporte.ordenes.length, 2);
-  assert.equal(cola.de('pelicula:la-que-falla')?.error, null);
+  assert.equal(transporte.ordenes.length, 2, 'vuelve sola');
+  assert.equal(transporte.ultima().desde, 500_000, 'y por donde iba');
+});
+
+test('cortarse una y otra vez sin avanzar sí es un fallo', async () => {
+  // Es lo que pasa cuando el disco está lleno o el panel ha dejado de servir
+  // ese fichero: insistir para siempre sería gastar batería por nada.
+  const { cola, transporte, pasarElEnfriamiento } = montar();
+  await cola.anadir(pelicula('la-imposible'));
+
+  for (let corte = 0; corte < 5; corte += 1) {
+    transporte.ultima().alFallar('Download interrupted.');
+    await new Promise((sigue) => setTimeout(sigue, 0));
+    await pasarElEnfriamiento();
+  }
+
+  assert.equal(cola.de('pelicula:la-imposible')?.estado, 'fallida');
+  assert.equal(cola.de('pelicula:la-imposible')?.intentos, 5);
+
+  // Y pedirla a mano la pone a cero: quizá se ha hecho sitio en el disco.
+  await cola.anadir(pelicula('la-imposible'));
+  assert.equal(cola.de('pelicula:la-imposible')?.intentos, 0);
+  assert.equal(cola.de('pelicula:la-imposible')?.error, null);
 });
 
 test('quitar una borra su fila y deja paso a la siguiente', async () => {

@@ -162,6 +162,13 @@ interface Props {
    */
   ficheroLocal?: string | null;
   /**
+   * Qué hacer con lo que el árbitro echa para dejar sitio a esto.
+   *
+   * El árbitro no conoce ni descargas ni reproductores: dice a quién hay que
+   * parar y quien pide es responsable de pararlo.
+   */
+  onExpulsar?: (id: string) => void;
+  /**
    * Encadenar con el siguiente al terminar.
    *
    * Es un ajuste del perfil, no del aparato: lo decide quien está viendo. Solo
@@ -249,6 +256,7 @@ export function Reproductor({
   programacion,
   arbitro,
   ficheroLocal,
+  onExpulsar,
   continua = false,
   caja,
   resaltado,
@@ -528,6 +536,13 @@ export function Reproductor({
           setEspera(Math.max(1, Math.ceil(permiso.esperar / 1000)));
           return;
         }
+        /*
+          Y a quien haya echado hay que **pararlo de verdad**. El árbitro solo
+          reparte: si nadie corta la descarga expulsada, se queda bajando y el
+          panel acaba cortando una de las dos conexiones por su cuenta —que es
+          justo el "Download interrupted" que se veía—.
+        */
+        if (permiso?.concedido) for (const echado of permiso.expulsados) onExpulsar?.(echado);
         setEspera(null);
         setUrl(mejor.url);
       })
@@ -538,7 +553,7 @@ export function Reproductor({
       if (temporizador.current) clearTimeout(temporizador.current);
     };
     // `intento` está a propósito: subirlo es lo que rehace la petición.
-  }, [biblioteca, medio, intento, arbitro, idRanura, usoRanura, ficheroLocal]);
+  }, [biblioteca, medio, intento, arbitro, idRanura, usoRanura, ficheroLocal, onExpulsar]);
 
   /*
     La cuenta atrás del reintento.
