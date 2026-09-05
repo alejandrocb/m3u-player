@@ -112,26 +112,44 @@ CREATE TABLE IF NOT EXISTS programa (
 -- Por canal y hora, que es como se pregunta: "lo de este canal a partir de ahora".
 CREATE INDEX IF NOT EXISTS programa_por_canal ON programa (lista_id, canal, desde);
 
--- El género de cada película, que el catálogo del panel no trae: hay que
--- preguntarlo una por una y son 18.000, así que se rellena un puñado al día y
--- se guarda para siempre.
+-- La ficha larga de cada película y cada serie: género, sinopsis, reparto,
+-- imagen apaisada y tráiler. El catálogo del panel no trae nada de esto —da
+-- título, cartel, nota y año— y preguntarlo cuesta una petición por título,
+-- así que se rellena poco a poco y se guarda para siempre.
 --
--- Se apunta también lo que el panel dejó en blanco —con genero = ''— porque si
--- no, cada pasada volvería a preguntar por las mismas y no avanzaría nunca.
+-- Se apunta también lo que nadie supo contestar, con los campos vacíos: si no,
+-- cada pasada volvería sobre las mismas y no avanzaría nunca. Eso es lo que
+-- marca la columna completa, que quiere decir "ya se preguntó", no "salió
+-- con datos".
 --
 -- El sello es la hora de la pasada en milisegundos: es por donde el aparato
--- pide "lo que no tengo", en vez de bajarse los 18.000 en cada arranque. Que
+-- pide "lo que no tengo", en vez de bajarse las 24.000 en cada arranque. Que
 -- sea una hora y no un contador ahorra una tabla —de ahí sale también cuándo
 -- fue la última pasada— y vale como marca de agua entre listas distintas,
 -- porque el reloj es el mismo para todas.
-CREATE TABLE IF NOT EXISTS genero (
+CREATE TABLE IF NOT EXISTS ficha (
   lista_id TEXT NOT NULL,
   item_id  TEXT NOT NULL,
+  clase    TEXT NOT NULL,
   genero   TEXT NOT NULL,
+  sinopsis TEXT,
+  reparto  TEXT,
+  -- La imagen apaisada, ya como URL entera: el aparato no tiene por qué saber
+  -- cómo monta TMDb las direcciones de sus imágenes.
+  fondo    TEXT,
+  -- El identificador de YouTube, que es lo que abre la aplicación por fuera.
+  trailer  TEXT,
+  completa INTEGER NOT NULL DEFAULT 0,
   sello    INTEGER NOT NULL,
   PRIMARY KEY (lista_id, item_id)
 ) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS genero_por_sello ON genero (lista_id, sello);
+CREATE INDEX IF NOT EXISTS ficha_por_sello ON ficha (lista_id, sello);
+
+-- La tabla anterior, que solo guardaba el género. Se tira: lo que tenía hay
+-- que volver a preguntarlo de todas formas —ahora se pide también la sinopsis,
+-- el reparto y el fondo—, y dejarla ahí sería tener dos sitios donde mirar. Es
+-- una caché: se vuelve a llenar sola.
+DROP TABLE IF EXISTS genero;
 
 -- Cuándo se trajo la parrilla de cada lista, para saber si toca rehacerla.
 CREATE TABLE IF NOT EXISTS parrilla (
@@ -186,10 +204,21 @@ export interface Lista {
  * que viaja por JSON y lo que el aparato vuelve a convertir con su propio
  * huso. Convertirlas aquí a hora local sería decidir por él.
  */
-/** Una película y su género, tal como se guarda y se entrega. */
-export interface GeneroGuardado {
+/**
+ * La ficha larga de una película o una serie, tal como se guarda y se entrega.
+ *
+ * El género va como cadena —vacía si no se sabe— y lo demás como opcional: la
+ * diferencia importa al guardar, porque lo que llega sin valor no pisa lo que
+ * ya hubiera.
+ */
+export interface FichaGuardada {
   id: string;
+  clase: 'pelicula' | 'serie';
   genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  fondo?: string;
+  trailer?: string;
 }
 
 export interface ProgramaGuardado {
@@ -601,9 +630,9 @@ export class Panel {
   // --- Géneros ---------------------------------------------------------------
 
   /** Lo ya preguntado de una lista, con género o sin él. */
-  generosConocidos(listaId: string): Set<string> {
+  fichasConocidas(listaId: string): Set<string> {
     return new Set(
-      this.#filas('SELECT item_id FROM genero WHERE lista_id = ?', [listaId]).map(
+      this.#filas('SELECT item_id FROM ficha WHERE lista_id = ? AND completa = 1', [listaId]).map(
         (fila) => fila.item_id as string,
       ),
     );
@@ -616,16 +645,41 @@ export class Panel {
    * poder decir "dame lo posterior a esto", y para eso basta un número por
    * pasada.
    */
-  guardarGeneros(listaId: string, pares: GeneroGuardado[], sello = Date.now()): void {
-    if (pares.length === 0) return;
+  guardarFichas(listaId: string, fichas: FichaGuardada[], sello = Date.now()): void {
+    if (fichas.length === 0) return;
 
     this.#db.exec('BEGIN');
     try {
-      for (const par of pares) {
+      for (const ficha of fichas) {
+        /*
+          Lo que venga vacío **no borra lo que ya había**. Una fila puede traer
+          el género del panel de una pasada anterior y que TMDb no conozca la
+          película: quedarse sin género por haber preguntado otra vez sería ir
+          para atrás.
+        */
         this.#ejecutar(
-          `INSERT INTO genero (lista_id, item_id, genero, sello) VALUES (?, ?, ?, ?)
-           ON CONFLICT(lista_id, item_id) DO UPDATE SET genero = excluded.genero, sello = excluded.sello`,
-          [listaId, par.id, par.genero, sello],
+          `INSERT INTO ficha (lista_id, item_id, clase, genero, sinopsis, reparto, fondo, trailer, completa, sello)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+           ON CONFLICT(lista_id, item_id) DO UPDATE SET
+             clase    = excluded.clase,
+             genero   = CASE WHEN excluded.genero <> '' THEN excluded.genero ELSE ficha.genero END,
+             sinopsis = COALESCE(excluded.sinopsis, ficha.sinopsis),
+             reparto  = COALESCE(excluded.reparto, ficha.reparto),
+             fondo    = COALESCE(excluded.fondo, ficha.fondo),
+             trailer  = COALESCE(excluded.trailer, ficha.trailer),
+             completa = 1,
+             sello    = excluded.sello`,
+          [
+            listaId,
+            ficha.id,
+            ficha.clase,
+            ficha.genero,
+            ficha.sinopsis ?? null,
+            ficha.reparto ?? null,
+            ficha.fondo ?? null,
+            ficha.trailer ?? null,
+            sello,
+          ],
         );
       }
       this.#db.exec('COMMIT');
@@ -641,12 +695,12 @@ export class Panel {
    * Lo de "cuándo" sale del propio sello, que es la hora en milisegundos: por
    * eso no hace falta una tabla aparte para llevar la cuenta del trabajo.
    */
-  cuantosGeneros(listaId: string): { preguntadas: number; conGenero: number; ultima: number } {
+  cuantasFichas(listaId: string): { preguntadas: number; conGenero: number; ultima: number } {
     const fila = this.#filas(
-      `SELECT COUNT(*) AS todas,
+      `SELECT SUM(completa) AS todas,
               SUM(CASE WHEN genero <> '' THEN 1 ELSE 0 END) AS llenas,
               MAX(sello) AS ultima
-         FROM genero WHERE lista_id = ?`,
+         FROM ficha WHERE lista_id = ?`,
       [listaId],
     )[0];
     return {
@@ -659,19 +713,28 @@ export class Panel {
   /**
    * Lo averiguado después de un sello, para que el aparato pida solo lo nuevo.
    *
-   * Solo lo que tiene género: lo que el panel dejó en blanco se guarda aquí
-   * para no volver a preguntarlo, pero no le sirve de nada al aparato.
+   * Solo lo que trae algo: lo que nadie supo contestar se guarda aquí para no
+   * volver a preguntarlo, pero al aparato no le sirve de nada.
    */
-  generosDesde(listaId: string, desde: number, limite: number): { generos: GeneroGuardado[]; hasta: number } {
+  fichasDesde(listaId: string, desde: number, limite: number): { fichas: FichaGuardada[]; hasta: number } {
     const filas = this.#filas(
-      `SELECT item_id, genero, sello FROM genero
-        WHERE lista_id = ? AND sello > ? AND genero <> ''
-        ORDER BY sello LIMIT ?`,
+      `SELECT item_id, clase, genero, sinopsis, reparto, fondo, trailer, sello FROM ficha
+        WHERE lista_id = ? AND sello > ?
+          AND (genero <> '' OR sinopsis IS NOT NULL OR fondo IS NOT NULL OR trailer IS NOT NULL)
+        ORDER BY sello, item_id LIMIT ?`,
       [listaId, desde, limite],
     );
 
     return {
-      generos: filas.map((fila) => ({ id: fila.item_id as string, genero: fila.genero as string })),
+      fichas: filas.map((fila) => ({
+        id: fila.item_id as string,
+        clase: fila.clase as FichaGuardada['clase'],
+        genero: fila.genero as string,
+        sinopsis: (fila.sinopsis as string | null) ?? undefined,
+        reparto: (fila.reparto as string | null) ?? undefined,
+        fondo: (fila.fondo as string | null) ?? undefined,
+        trailer: (fila.trailer as string | null) ?? undefined,
+      })),
       hasta: filas.reduce((alto, fila) => Math.max(alto, Number(fila.sello)), desde),
     };
   }

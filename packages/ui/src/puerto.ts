@@ -62,6 +62,19 @@ export interface SerieFicha {
  * Todo puede faltar. Cada panel rellena lo que quiere, y la interfaz omite lo
  * que no venga en vez de dejar huecos con etiquetas vacías.
  */
+export interface FichaDelServidor {
+  id: string;
+  clase: 'pelicula' | 'serie';
+  /** Vacío si no se sabe: es lo que distingue "no hay" de "no se preguntó". */
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  /** La imagen apaisada, ya como URL entera. */
+  fondo?: string;
+  /** El identificador de YouTube, para abrirlo fuera. */
+  trailer?: string;
+}
+
 export interface FichaLarga {
   sinopsis: string | null;
   /** Reparto tal y como lo da el panel: nombres separados por comas. */
@@ -277,12 +290,15 @@ export interface Biblioteca {
    */
   detalleDeSerie(id: string): Promise<FichaLarga | null>;
   /**
-   * Anota el género de unas cuantas películas, que el catálogo no trae.
+   * Anota las fichas largas que manda el servidor de la casa.
    *
-   * Lo manda el servidor de la casa, que se lo pregunta al panel una vez al
-   * día. Aquí solo se guarda: la próxima consulta ya lo devuelve con la ficha.
+   * Género, sinopsis, reparto, imagen apaisada y tráiler: nada de eso viene
+   * con el catálogo del panel y averiguarlo cuesta una petición por título,
+   * así que lo hace el servidor una vez para toda la casa. Aquí solo se
+   * guarda, y **solo lo que falte**: si esta ficha ya se preguntó por su
+   * cuenta —presidió el inicio—, lo suyo es más completo que esto.
    */
-  guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void>;
+  guardarFichas(fichas: FichaDelServidor[]): Promise<void>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".

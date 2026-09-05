@@ -17,14 +17,14 @@ import { json, leerJson, tokenDe } from './http.ts';
 import type { Panel } from './panel.ts';
 
 /**
- * Cuántos géneros se entregan de una vez.
+ * Cuántas fichas se entregan de una vez.
  *
- * Al día se averiguan quinientos, así que una casa que encienda la tele cada
- * pocos días se lo lleva todo en una petición. Si se hubiera quedado más
- * atrás, la siguiente sesión recoge el resto: no pasa nada por ir con un día
- * de retraso en un dato que no cambia.
+ * Ahora cada una lleva su sinopsis dentro, así que mil son más de medio mega y
+ * mandar las 24.000 de golpe serían quince. El aparato pide varias veces
+ * seguidas hasta que una respuesta venga a medias, que es como sabe que ya no
+ * queda nada.
  */
-const LIMITE_GENEROS = 3000;
+const LIMITE_FICHAS = 1000;
 
 /** Un texto de la petición, o null si no vale. */
 function texto(datos: Record<string, unknown>, clave: string, largo = 200): string | null {
@@ -95,7 +95,7 @@ export async function manejarApi(
       ruta === '/api/listas' ||
       ruta === '/api/portadas' ||
       ruta === '/api/epg' ||
-      ruta === '/api/generos'
+      ruta === '/api/fichas'
     ) {
       json(res, 401, { error: 'token no válido' });
       return true;
@@ -155,12 +155,13 @@ export async function manejarApi(
     return true;
   }
 
-  // --- Los géneros de las películas ---------------------------------------
-  if (ruta === '/api/generos' && req.method === 'GET') {
+  // --- Las fichas largas: género, sinopsis, reparto, fondo y tráiler -------
+  if (ruta === '/api/fichas' && req.method === 'GET') {
     /*
       Lo que el servidor lleva averiguado desde la última vez que preguntó este
-      aparato. Se pide por marca de agua y no entero porque son 18.000 y crecen
-      quinientos al día: la primera vez se baja lo que haya, y a partir de ahí
+      aparato. Se pide por marca de agua y no entero porque son 24.000 con su
+      sinopsis dentro: la primera vez el aparato da varias vueltas —hasta que
+      una venga a medias, que quiere decir que ya no hay más— y a partir de ahí
       es una lista corta.
 
       El sello es la hora de la pasada, así que vale para las dos listas de una
@@ -169,11 +170,11 @@ export async function manejarApi(
     const desde = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('desde')) || 0;
     const listas = panel.listasDe(aparato.grupoId);
 
-    const traidos = listas.map((lista) => panel.generosDesde(lista.id, desde, LIMITE_GENEROS));
+    const traidas = listas.map((lista) => panel.fichasDesde(lista.id, desde, LIMITE_FICHAS));
 
     json(res, 200, {
-      generos: traidos.flatMap((uno) => uno.generos),
-      hasta: traidos.reduce((alto, uno) => Math.max(alto, uno.hasta), desde),
+      fichas: traidas.flatMap((uno) => uno.fichas),
+      hasta: traidas.reduce((alto, uno) => Math.max(alto, uno.hasta), desde),
     });
     return true;
   }

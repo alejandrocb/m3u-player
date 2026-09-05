@@ -100,12 +100,14 @@ preguntando al panel ellos mismos.
 docker compose -f apps/sync/compose.yaml logs -f sync | grep portadas
 ```
 
-## Los géneros de las películas
+## Las fichas largas: género, sinopsis, reparto, fondo y tráiler
 
-El catálogo del panel no trae el género de una película: está en
-`get_vod_info`, que es **una petición por título**, y hay 18.042. Así que el
-servidor los va averiguando poco a poco y los guarda en la tabla `genero`,
-empezando por lo último que ha entrado, que es lo que llena los carruseles.
+El catálogo del panel da título, cartel, nota y año, y **nada más**: el
+género, la sinopsis, el reparto, la imagen apaisada y el tráiler están en
+`get_vod_info`, que es **una petición por título**, y hay 18.042 películas y
+6.540 series. Así que el servidor las va averiguando poco a poco y las guarda
+en la tabla `ficha`, empezando por lo último que ha entrado, que es lo que
+llena los carruseles.
 
 **Pregunta a dos sitios, en este orden.** Primero a **TMDb**, que no limita
 conexiones y devuelve una lista cerrada de géneros en español —"Ciencia
@@ -137,17 +139,23 @@ Sin ese fichero el servidor arranca igual y se queda con el panel: TMDb
 acelera, no sostiene. Sus condiciones piden decir que los datos son suyos, así
 que eso hay que ponerlo en la pantalla de información de la aplicación.
 
-Los aparatos las recogen con `GET /api/generos?desde=<sello>`, donde el sello
-es la hora de la última pasada que se llevaron: así la primera vez baja lo que
-haya y a partir de ahí son unos cientos. Con eso el inicio puede ordenar las
-filas por **tema** —drama, comedia, documental— en vez de por las categorías
-del proveedor.
+Los aparatos las recogen con `GET /api/fichas?desde=<sello>`, donde el sello
+es la hora de la última pasada que se llevaron: así la primera vez dan varias
+vueltas —mil por respuesta, que con la sinopsis dentro ya es medio mega— y a
+partir de ahí es una lista corta. Con eso el inicio ordena las filas por
+**tema** —drama, comedia, documental— en vez de por las categorías del
+proveedor, y la pantalla de información sale llena sin preguntarle nada al
+panel.
 
-Se apunta también lo que el panel no sabe contestar, con el género vacío: si
-no, cada pasada volvería sobre las mismas y el recorrido no avanzaría.
+**De las series no se le pregunta al panel**, solo a TMDb: su ficha viene con
+la lista entera de episodios detrás, y bajarse eso 6.500 veces por una sinopsis
+no sale a cuenta.
+
+Se apunta también aquello de lo que nadie supo nada, vacío: si no, cada pasada
+volvería sobre las mismas y el recorrido no avanzaría.
 
 ```bash
-docker compose -f apps/sync/compose.yaml logs -f sync | grep generos
+docker compose -f apps/sync/compose.yaml logs -f sync | grep fichas
 ```
 
 ## Copias de seguridad
@@ -168,4 +176,4 @@ docker run --rm -v m3u-sync-datos:/datos -v "$PWD":/copia alpine \
 | `PUERTO` | `3300` | Dónde escucha |
 | `ESCUCHA` | `0.0.0.0` | Interfaz; dentro del contenedor da igual, lo acota Docker |
 | `DATOS` | `/datos` | Dónde van las bases |
-| `TMDB_TOKEN` | (vacío) | Token de lectura de TMDb, para los géneros. Sin él se le pregunta al panel |
+| `TMDB_TOKEN` | (vacío) | Token de lectura de TMDb, para las fichas. Sin él se le pregunta al panel |

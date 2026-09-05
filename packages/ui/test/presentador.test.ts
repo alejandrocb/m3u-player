@@ -117,7 +117,7 @@ function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = []): Biblioteca {
         trailer: 'dQw4w9WgXcQ',
       };
     },
-    async guardarGeneros() {},
+    async guardarFichas() {},
     async gruposDe(_clase: ClaseMedio, id: string) {
       // En el catálogo falso, cada película está en la categoría que dice su
       // nombre; lo demás no pertenece a ninguna.

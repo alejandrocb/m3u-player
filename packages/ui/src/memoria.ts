@@ -272,7 +272,7 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
       return { sinopsis: null, reparto: null, fondo: null, genero: null, trailer: null };
     },
 
-    async guardarGeneros(): Promise<void> {
+    async guardarFichas(): Promise<void> {
       // Sin base donde guardarlo: esta biblioteca vive en memoria.
     },
 

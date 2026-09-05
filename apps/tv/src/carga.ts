@@ -22,7 +22,7 @@ import type {
   Biblioteca,
   Cuenta,
   FichaLarga,
-  GenerosNuevos,
+  FichasNuevas,
   Programacion,
   ProgramaRemoto,
 } from '@m3u/ui';
@@ -81,40 +81,60 @@ export interface OpcionesCarga {
    */
   parrilla?: () => Promise<ProgramaRemoto[]>;
   /**
-   * Los géneros que el servidor de la casa lleva averiguados.
+   * Las fichas largas que el servidor de la casa lleva averiguadas.
    *
-   * También opcional, y por lo mismo: sin servidor, las películas salen con el
-   * género que traiga el catálogo del panel, que no es ninguno.
+   * También opcional, y por lo mismo: sin servidor, cada ficha se le pregunta
+   * al panel cuando se abre, que es una petición y 400 ms.
    */
-  generos?: (desde: number) => Promise<GenerosNuevos>;
+  fichas?: (desde: number) => Promise<FichasNuevas>;
 }
 
-/** Por dónde iba la recogida de géneros. Es la marca de agua del servidor. */
-const MARCA_GENEROS = 'generos:desde';
+/** Por dónde iba la recogida de fichas. Es la marca de agua del servidor. */
+const MARCA_FICHAS = 'fichas:desde';
 
 /**
- * Recoge del servidor los géneros nuevos y los anota en la base.
+ * Cuántas vueltas se dan como mucho en una recogida.
  *
- * Se pide "lo posterior a la última vez" y no todo: el servidor va rellenando
- * quinientas películas al día, así que la primera vez llega lo que haya y a
- * partir de ahí son unos cientos. Si algo falla, se queda como estaba: el
- * género es un adorno de la ficha, no algo de lo que dependa la pantalla.
+ * El servidor manda mil por respuesta y el catálogo son 24.000, así que la
+ * primera vez hacen falta unas cuantas vueltas. El tope está para que un
+ * servidor que devolviera siempre lo mismo no dejara la aplicación dando
+ * vueltas sin arrancar: lo que falte se recoge en la sesión siguiente.
  */
-async function recogerGeneros(
+const VUELTAS = 30;
+
+/**
+ * Recoge del servidor las fichas nuevas y las anota en la base.
+ *
+ * Se pide "lo posterior a la última vez" y no todo, y se vuelve a pedir
+ * mientras las respuestas lleguen llenas: es como se sabe que ya no queda
+ * nada. Si algo falla, se queda como estaba: esto adorna la ficha, no sostiene
+ * la pantalla.
+ */
+async function recogerFichas(
   db: ReturnType<typeof abrirBase>['db'],
   biblioteca: Biblioteca,
-  pedir: (desde: number) => Promise<GenerosNuevos>,
+  pedir: (desde: number) => Promise<FichasNuevas>,
 ): Promise<void> {
   try {
-    const desde = Number(meta(db, MARCA_GENEROS)) || 0;
-    const nuevos = await pedir(desde);
-    if (nuevos.generos.length === 0) return;
+    let desde = Number(meta(db, MARCA_FICHAS)) || 0;
+    let traidas = 0;
 
-    await biblioteca.guardarGeneros(nuevos.generos);
-    ponerMeta(db, MARCA_GENEROS, String(nuevos.hasta));
-    console.log(`[generos] ${nuevos.generos.length} del servidor, hasta ${nuevos.hasta}`);
+    for (let vuelta = 0; vuelta < VUELTAS; vuelta += 1) {
+      const nuevas = await pedir(desde);
+      if (nuevas.fichas.length === 0) break;
+
+      await biblioteca.guardarFichas(nuevas.fichas);
+      traidas += nuevas.fichas.length;
+
+      // La marca no avanza: sin ella la siguiente vuelta pediría lo mismo.
+      if (nuevas.hasta <= desde) break;
+      desde = nuevas.hasta;
+      ponerMeta(db, MARCA_FICHAS, String(desde));
+    }
+
+    if (traidas > 0) console.log(`[fichas] ${traidas} del servidor, hasta ${desde}`);
   } catch (fallo) {
-    console.warn('[generos] no se pudieron recoger', fallo);
+    console.warn('[fichas] no se pudieron recoger', fallo);
   }
 }
 
@@ -155,7 +175,7 @@ export async function cargarCatalogo(
 
   const guardado = estadoGuardado(db, cuenta.id);
   if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) {
-    if (opciones.generos) await recogerGeneros(db, biblioteca, opciones.generos);
+    if (opciones.fichas) await recogerFichas(db, biblioteca, opciones.fichas);
     const totales = await biblioteca.totales();
     return {
       biblioteca,
@@ -186,12 +206,12 @@ export async function cargarCatalogo(
 
   /*
     Después de importar, y desde el principio: el catálogo recién traído no
-    lleva ningún género, así que hay que volver a pedirlos todos. Reimportar no
+    lleva ninguna ficha, así que hay que volver a pedirlas todas. Reimportar no
     es olvidar lo que el servidor sabe.
   */
-  if (opciones.generos) {
-    ponerMeta(db, MARCA_GENEROS, '0');
-    await recogerGeneros(db, biblioteca, opciones.generos);
+  if (opciones.fichas) {
+    ponerMeta(db, MARCA_FICHAS, '0');
+    await recogerFichas(db, biblioteca, opciones.fichas);
   }
 
   return {

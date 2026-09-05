@@ -11,8 +11,17 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { crearTmdb } from '../src/tmdb.ts';
+import type { Tmdb } from '../src/tmdb.ts';
+
+/** El género de una película, que es lo que mira casi todo este fichero. */
+async function genero(tmdb: Tmdb, titulo: string, anio: number | null): Promise<string> {
+  return (await tmdb.fichaDe(titulo, anio, 'pelicula'))?.genero ?? '';
+}
 
 interface Peli {
+  id?: number;
+  overview?: string;
+  backdrop_path?: string;
   title: string;
   original_title?: string;
   release_date: string;
@@ -26,7 +35,22 @@ function tmdbFalso(porConsulta: Record<string, Peli[]>, pedidas: string[] = []):
     const responder = (datos: unknown): Response =>
       new Response(JSON.stringify(datos), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
-    if (url.pathname === '/3/genre/movie/list') {
+    // La ficha, que es la segunda petición: reparto y tráiler.
+    if (/^\/3\/(movie|tv)\/\d+$/.test(url.pathname)) {
+      return responder({
+        credits: { cast: [{ name: 'Actriz Primera' }, { name: 'Actor Segundo' }] },
+        aggregate_credits: { cast: [{ name: 'Actriz Primera' }] },
+        videos: {
+          results: [
+            { site: 'Vimeo', type: 'Trailer', key: 'noesestaa' },
+            { site: 'YouTube', type: 'Featurette', key: 'tampocoesta' },
+            { site: 'YouTube', type: 'Trailer', key: 'dQw4w9WgXcQ' },
+          ],
+        },
+      });
+    }
+
+    if (url.pathname === '/3/genre/movie/list' || url.pathname === '/3/genre/tv/list') {
       return responder({
         genres: [
           { id: 18, name: 'Drama' },
@@ -44,14 +68,51 @@ function tmdbFalso(porConsulta: Record<string, Peli[]>, pedidas: string[] = []):
   }) as typeof globalThis.fetch;
 }
 
-test('con el título y el año, el género', async () => {
+test('la ficha entera: género, sinopsis, fondo, reparto y tráiler', async () => {
   const tmdb = crearTmdb('t', {
     fetch: tmdbFalso({
-      'El aviso|2018': [{ title: 'El aviso', release_date: '2018-03-23', genre_ids: [18, 878] }],
+      'El aviso|2018': [
+        {
+          id: 42,
+          title: 'El aviso',
+          release_date: '2018-03-23',
+          genre_ids: [18, 878],
+          overview: 'Un chico descubre un patrón.',
+          backdrop_path: '/fondo.jpg',
+        },
+      ],
     }),
   });
 
-  assert.equal(await tmdb.generoDe('El aviso', 2018), 'Drama, Ciencia ficción');
+  assert.deepEqual(await tmdb.fichaDe('El aviso', 2018, 'pelicula'), {
+    genero: 'Drama, Ciencia ficción',
+    sinopsis: 'Un chico descubre un patrón.',
+    // La dirección entera, con el ancho ya elegido: el aparato no tiene por
+    // qué saber cómo monta TMDb las suyas.
+    fondo: 'https://image.tmdb.org/t/p/w1280/fondo.jpg',
+    reparto: 'Actriz Primera, Actor Segundo',
+    // Ni el de Vimeo ni el "detrás de las cámaras": el tráiler de YouTube.
+    trailer: 'dQw4w9WgXcQ',
+  });
+});
+
+test('con el título y el año, el género', async () => {
+  const tmdb = crearTmdb('t', {
+    fetch: tmdbFalso({
+      'El aviso|2018': [
+        {
+          id: 42,
+          title: 'El aviso',
+          release_date: '2018-03-23',
+          genre_ids: [18, 878],
+          overview: 'Un chico descubre un patrón.',
+          backdrop_path: '/fondo.jpg',
+        },
+      ],
+    }),
+  });
+
+  assert.equal(await genero(tmdb, 'El aviso', 2018), 'Drama, Ciencia ficción');
 });
 
 test('la búsqueda lleva el año, que es lo que separa dos películas del mismo título', async () => {
@@ -63,7 +124,7 @@ test('la búsqueda lleva el año, que es lo que separa dos películas del mismo 
     ),
   });
 
-  assert.equal(await tmdb.generoDe('Robin Hood', 2018), 'Drama');
+  assert.equal(await genero(tmdb, 'Robin Hood', 2018), 'Drama');
   assert.deepEqual(pedidas, ['Robin Hood|2018'], 'no hace falta una segunda búsqueda');
 });
 
@@ -86,7 +147,7 @@ test('si el título no cuadra y hay varios candidatos, sin género', async () =>
     }),
   });
 
-  assert.equal(await tmdb.generoDe('Pelicula raruna', 2020), '');
+  assert.equal(await genero(tmdb, 'Pelicula raruna', 2020), '');
 });
 
 test('con año y un solo candidato, se acepta aunque el título esté escrito de otra forma', async () => {
@@ -99,7 +160,7 @@ test('con año y un solo candidato, se acepta aunque el título esté escrito de
     }),
   });
 
-  assert.equal(await tmdb.generoDe('Amor es amor-Love is Love', 2019), 'Comedia');
+  assert.equal(await genero(tmdb, 'Amor es amor-Love is Love', 2019), 'Comedia');
 });
 
 test('sin año, el título tiene que cuadrar exactamente', async () => {
@@ -112,8 +173,8 @@ test('sin año, el título tiene que cuadrar exactamente', async () => {
     }),
   });
 
-  assert.equal(await tmdb.generoDe('El aviso', null), 'Drama');
-  assert.equal(await tmdb.generoDe('Otra que no está', null), '');
+  assert.equal(await genero(tmdb, 'El aviso', null), 'Drama');
+  assert.equal(await genero(tmdb, 'Otra que no está', null), '');
 });
 
 test('el título casa aunque cambien las tildes y las mayúsculas', async () => {
@@ -129,7 +190,7 @@ test('el título casa aunque cambien las tildes y las mayúsculas', async () => 
     }),
   });
 
-  assert.equal(await tmdb.generoDe('EL ULTIMO REDUCTO', 2021), 'Drama');
+  assert.equal(await genero(tmdb, 'EL ULTIMO REDUCTO', 2021), 'Drama');
 });
 
 test('un año que se va por veinte no es la misma película', async () => {
@@ -141,5 +202,5 @@ test('un año que se va por veinte no es la misma película', async () => {
     }),
   });
 
-  assert.equal(await tmdb.generoDe('Los intocables', 2018), '');
+  assert.equal(await genero(tmdb, 'Los intocables', 2018), '');
 });

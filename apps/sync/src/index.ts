@@ -16,7 +16,7 @@
 import { codigoCorto } from './claves.ts';
 import { Panel } from './panel.ts';
 import { crearServidor } from './servidor.ts';
-import { comoSeAveriguanLosGeneros, vigilarPortadas } from './tareas.ts';
+import { comoSeAveriguanLasFichas, vigilarPortadas } from './tareas.ts';
 
 const PUERTO = Number(process.env.PUERTO ?? 3300);
 const ESCUCHA = process.env.ESCUCHA ?? '0.0.0.0';
@@ -54,7 +54,7 @@ servidor.listen(PUERTO, ESCUCHA, () => {
   // De dónde van a salir los géneros. Sin esta línea, un token que no llega
   // se nota solo en que el servidor se queda callado, y eso no se distingue
   // de que esté esperando a la madrugada.
-  console.log(`[generos] ${comoSeAveriguanLosGeneros()}`);
+  console.log(`[fichas] ${comoSeAveriguanLasFichas()}`);
 });
 
 for (const senal of ['SIGTERM', 'SIGINT'] as const) {

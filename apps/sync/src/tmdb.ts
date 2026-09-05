@@ -1,5 +1,5 @@
 /**
- * TMDb: el género de una película, buscándola por título y año.
+ * TMDb: la ficha larga de una película o una serie, por título y año.
  *
  * El panel sabe el género de casi todo lo suyo —el 97 % de lo que se le
  * pregunta—, pero cuesta una petición por título y hay que ir con cuidado con
@@ -8,6 +8,11 @@
  * que es justo lo que hace falta para que las filas del inicio salgan limpias.
  * Del panel viene texto libre, y por eso hubo que juntar a mano las tres
  * formas de escribir lo mismo.
+ *
+ * Son **dos peticiones por título**: la búsqueda, que ya trae el género, la
+ * sinopsis y la imagen apaisada, y la ficha, que añade el reparto y el
+ * tráiler. Se piden juntas porque quien mira una película quiere las dos
+ * cosas, y volver mañana a por la mitad que falta costaría otra búsqueda.
  *
  * Lo difícil no es pedir el dato, es **casar nuestra película con la suya**. El
  * proveedor escribe los títulos como le parece, así que se busca por título y
@@ -41,25 +46,70 @@ const ESPERA_MS = 1_000;
 const PLAZO_MS = 15_000;
 
 interface Resultado {
+  id?: number;
+  /** En las series se llama `name`, y el año va en `first_air_date`. */
   title?: string;
+  name?: string;
   original_title?: string;
+  original_name?: string;
   release_date?: string;
+  first_air_date?: string;
+  overview?: string;
+  backdrop_path?: string | null;
   genre_ids?: number[];
 }
 
+/** Lo que TMDb sabe de una ficha. Todo puede faltar. */
+export interface FichaTmdb {
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  fondo?: string;
+  trailer?: string;
+}
+
+export type ClaseTmdb = 'pelicula' | 'serie';
+
 export interface Tmdb {
   /**
-   * El género de una película, o cadena vacía si no se sabe.
+   * La ficha de una película o una serie, o `null` si no se sabe cuál es.
    *
-   * Vacío significa "TMDb no la conoce o no me fío de la coincidencia", y es
+   * `null` significa "TMDb no la conoce o no me fío de la coincidencia", y es
    * lo que hace que se le pregunte al panel a continuación.
    */
-  generoDe(titulo: string, anio: number | null): Promise<string>;
+  fichaDe(titulo: string, anio: number | null, clase: ClaseTmdb): Promise<FichaTmdb | null>;
 }
+
+/**
+ * El ancho con el que se pide la imagen apaisada.
+ *
+ * 1280 es de sobra para el fondo de una televisión —se pinta oscurecido y
+ * detrás de un degradado— y pesa la cuarta parte que el original.
+ */
+const IMAGENES = 'https://image.tmdb.org/t/p/w1280';
+
+/** Cuántos nombres del reparto se guardan. Los demás no caben en la ficha. */
+const CUANTOS_ACTORES = 6;
 
 /** ¿Dicen lo mismo los dos títulos, mirando solo las letras? */
 function casan(uno: string | undefined, otro: string): boolean {
   return uno !== undefined && fold(uno) === fold(otro);
+}
+
+/**
+ * El título de un resultado, que cambia de nombre entre películas y series.
+ *
+ * TMDb llama `title` a una película y `name` a una serie, y lo mismo con la
+ * fecha. Es la única diferencia real entre las dos búsquedas.
+ */
+function tituloDe(uno: Resultado): string[] {
+  return [uno.title, uno.name, uno.original_title, uno.original_name].filter(
+    (texto): texto is string => texto !== undefined,
+  );
+}
+
+function estrenoDe(uno: Resultado): string | undefined {
+  return uno.release_date ?? uno.first_air_date;
 }
 
 /** El año de una fecha de estreno de TMDb ("2018-09-21"). */
@@ -76,7 +126,7 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
     números —28, 35, 18— y la lista que los traduce cambia una vez cada varios
     años.
   */
-  let nombres: Promise<Map<number, string>> | null = null;
+  const nombres: Partial<Record<ClaseTmdb, Promise<Map<number, string>>>> = {};
 
   async function pedir(ruta: string): Promise<Record<string, unknown> | null> {
     for (let intento = 0; intento < 2; intento += 1) {
@@ -96,25 +146,23 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
     return null;
   }
 
-  function tabla(): Promise<Map<number, string>> {
+  function tabla(clase: ClaseTmdb): Promise<Map<number, string>> {
     /*
-      Se guarda la promesa y no el resultado: las películas se preguntan de
-      cinco en cinco, así que las cinco primeras llegan aquí a la vez y con el
+      Se guarda la promesa y no el resultado: las fichas se preguntan de cinco
+      en cinco, así que las cinco primeras llegan aquí a la vez y con el
       resultado a secas las cinco pedirían la lista.
     */
-    nombres ??= (async () => {
-      const datos = await pedir(`/genre/movie/list?language=${IDIOMA}`);
+    nombres[clase] ??= (async () => {
+      const datos = await pedir(`/genre/${clase === 'serie' ? 'tv' : 'movie'}/list?language=${IDIOMA}`);
       const lista = (datos?.genres as Array<{ id: number; name: string }> | undefined) ?? [];
       return new Map(lista.map((genero) => [genero.id, genero.name]));
     })();
-    return nombres;
+    return nombres[clase];
   }
 
   /** El resultado en el que se puede confiar, si hay alguno. */
   function elMejor(resultados: Resultado[], titulo: string, anio: number | null): Resultado | null {
-    const porTitulo = resultados.find(
-      (uno) => casan(uno.title, titulo) || casan(uno.original_title, titulo),
-    );
+    const porTitulo = resultados.find((uno) => tituloDe(uno).some((suyo) => casan(suyo, titulo)));
     if (porTitulo) return porTitulo;
 
     /*
@@ -127,37 +175,91 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
     return null;
   }
 
+  /** Busca y devuelve el resultado del que fiarse, si lo hay. */
+  async function encontrar(titulo: string, anio: number | null, clase: ClaseTmdb): Promise<Resultado | null> {
+    const donde = clase === 'serie' ? 'tv' : 'movie';
+    const porAnio = clase === 'serie' ? 'first_air_date_year' : 'year';
+    const consulta = `query=${encodeURIComponent(titulo)}&language=${IDIOMA}&include_adult=false`;
+
+    // Con el año primero, que es lo que distingue los cuatro "Robin Hood".
+    if (anio !== null) {
+      const datos = await pedir(`/search/${donde}?${consulta}&${porAnio}=${anio}`);
+      const elegido = elMejor((datos?.results as Resultado[] | undefined) ?? [], titulo, anio);
+      if (elegido) return elegido;
+    }
+
+    /*
+      Y si no, sin año, pero entonces el título tiene que cuadrar y el año no
+      puede andar lejos: las reposiciones y los remontajes cambian de fecha por
+      uno o dos, no por veinte.
+    */
+    const datos = await pedir(`/search/${donde}?${consulta}`);
+    const cerca = ((datos?.results as Resultado[] | undefined) ?? []).filter((uno) => {
+      const suyo = anioDe(estrenoDe(uno));
+      return anio === null || suyo === null || Math.abs(suyo - anio) <= 2;
+    });
+    return cerca.find((uno) => tituloDe(uno).some((suyo) => casan(suyo, titulo))) ?? null;
+  }
+
+  /**
+   * El reparto y el tráiler, que la búsqueda no trae.
+   *
+   * Va en una sola petición con `append_to_response`: pedir los créditos y los
+   * vídeos por separado serían tres viajes por película en vez de dos.
+   */
+  async function elResto(id: number, clase: ClaseTmdb): Promise<{ reparto?: string; trailer?: string }> {
+    const donde = clase === 'serie' ? 'tv' : 'movie';
+    const creditos = clase === 'serie' ? 'aggregate_credits' : 'credits';
+    const datos = await pedir(`/${donde}/${id}?language=${IDIOMA}&append_to_response=videos,${creditos}`);
+    if (!datos) return {};
+
+    const reparto = (
+      (datos[creditos] as { cast?: Array<{ name?: string }> } | undefined)?.cast ?? []
+    )
+      .slice(0, CUANTOS_ACTORES)
+      .map((quien) => quien.name)
+      .filter((nombre): nombre is string => typeof nombre === 'string' && nombre.length > 0)
+      .join(', ');
+
+    /*
+      De los vídeos, el primer tráiler de YouTube. Lo demás que cuelga ahí
+      —escenas, entrevistas, carteles animados— no es lo que uno espera al
+      darle a "Tráiler".
+    */
+    const videos = (datos.videos as { results?: Array<Record<string, unknown>> } | undefined)?.results ?? [];
+    const trailer = videos.find(
+      (video) => video.site === 'YouTube' && (video.type === 'Trailer' || video.type === 'Teaser'),
+    )?.key;
+
+    return {
+      reparto: reparto || undefined,
+      trailer: typeof trailer === 'string' ? trailer : undefined,
+    };
+  }
+
   return {
-    async generoDe(titulo: string, anio: number | null): Promise<string> {
+    async fichaDe(titulo: string, anio: number | null, clase: ClaseTmdb): Promise<FichaTmdb | null> {
       const limpio = titulo.trim();
-      if (!limpio) return '';
+      if (!limpio) return null;
 
-      const consulta = `query=${encodeURIComponent(limpio)}&language=${IDIOMA}&include_adult=false`;
+      const elegido = await encontrar(limpio, anio, clase);
+      if (!elegido) return null;
 
-      // Con el año primero, que es lo que distingue los cuatro "Robin Hood".
-      let datos = anio !== null ? await pedir(`/search/movie?${consulta}&year=${anio}`) : null;
-      let resultados = (datos?.results as Resultado[] | undefined) ?? [];
-      let elegido = elMejor(resultados, limpio, anio);
-
-      if (!elegido) {
-        // Y si no, sin año, pero entonces el título tiene que cuadrar y el año
-        // no puede andar lejos: las reposiciones y los remontajes cambian de
-        // fecha por uno o dos, no por veinte.
-        datos = await pedir(`/search/movie?${consulta}`);
-        resultados = (datos?.results as Resultado[] | undefined) ?? [];
-        const cerca = resultados.filter((uno) => {
-          const suyo = anioDe(uno.release_date);
-          return anio === null || suyo === null || Math.abs(suyo - anio) <= 2;
-        });
-        elegido = cerca.find((uno) => casan(uno.title, limpio) || casan(uno.original_title, limpio)) ?? null;
-      }
-      if (!elegido) return '';
-
-      const nombresDe = await tabla();
-      return (elegido.genre_ids ?? [])
+      const nombresDe = await tabla(clase);
+      const genero = (elegido.genre_ids ?? [])
         .map((id) => nombresDe.get(id))
         .filter((nombre): nombre is string => nombre !== undefined)
         .join(', ');
+
+      // El reparto y el tráiler solo si hay a quién preguntárselos.
+      const resto = elegido.id !== undefined ? await elResto(elegido.id, clase) : {};
+
+      return {
+        genero,
+        sinopsis: elegido.overview?.trim() || undefined,
+        fondo: elegido.backdrop_path ? `${IMAGENES}${elegido.backdrop_path}` : undefined,
+        ...resto,
+      };
     },
   };
 }

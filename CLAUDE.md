@@ -126,6 +126,25 @@ madrugada, algo más de un mes. El token se lee de `TMDB_TOKEN` y **no está en
 el repositorio, que es público**: vive en un fichero del VPS. Sin él todo sigue
 funcionando, solo que más despacio.
 
+**Y de paso viene la ficha entera**, no solo el género: sinopsis, reparto,
+imagen apaisada y tráiler, para las 18.000 películas y las 6.500 series. Son
+dos peticiones por título —la búsqueda ya trae género, sinopsis y fondo; la
+ficha añade reparto y tráiler— y se piden juntas, porque quien abre una
+película quiere las dos cosas y volver mañana a por la mitad costaría otra
+búsqueda. El aparato lo guarda en las mismas columnas que llenaría el panel
+(`plot`, `actors`, `backdrop`, `genre`, `trailer`) y **solo donde falte**: lo
+que se preguntó al panel por su cuenta es más de fiar.
+
+**De las series no se le pregunta al panel.** Su ficha está en
+`get_series_info`, que devuelve además la lista entera de episodios: pedirla
+6.500 veces por una sinopsis sería bajarse el catálogo de capítulos completo
+para tirarlo. Su género, además, ya viene con el catálogo.
+
+Al guardar una ficha del servidor **solo se marca `detalle_pedido` si trae
+sinopsis**. Esa marca quiere decir "ya se preguntó" y evita que la pantalla de
+información vuelva al panel en cada arranque; ponerla con un género suelto
+dejaría la ficha vacía para siempre.
+
 Casar nuestra película con la de TMDb se hace por **título y año**, y ahí el
 sesgo es **el contrario** del que lleva el clasificador: ante la duda, **sin
 género**. Una película sin género sale igual en su fila; una con el género de
@@ -987,8 +1006,9 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
 - **La ficha larga de una película** —sinopsis, reparto e imagen apaisada—
   **no viene con el catálogo**: `get_vod_streams` da título, cartel, nota y
   año. Lo demás está en `get_vod_info`, que es una petición por película:
-  inviable para 18.000, pero se pide para la que preside el inicio y se
-  guarda. Medido contra el panel real: sinopsis, reparto y fondo, los tres.
+  inviable para 18.000 desde un televisor, y por eso lo hace el servidor de la
+  casa una vez para todos. En el aparato se sigue pidiendo al abrir una ficha
+  que el servidor aún no haya cubierto. Medido contra el panel real: sinopsis, reparto y fondo, los tres.
   El identificador de panel de una película **no se guarda al importar**; sale
   del último tramo de la URL de su variante (`/movie/usuario/clave/12345.mkv`).
 - **La media estrella (U+2BE8) no está en la fuente de un televisor** y sale

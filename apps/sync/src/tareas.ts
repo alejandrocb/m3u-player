@@ -20,7 +20,7 @@
  * y que falle una no puede llevarse la otra por delante.
  */
 
-import { rellenarGeneros } from './generos.ts';
+import { rellenarFichas } from './fichas.ts';
 import type { Panel } from './panel.ts';
 import { traerParrilla } from './parrilla.ts';
 import { VERSION, prepararPortadas } from './portadas.ts';
@@ -76,8 +76,8 @@ export function tmdbSiHay(): Tmdb | undefined {
   return token ? crearTmdb(token) : undefined;
 }
 
-/** Con qué cuenta el servidor para los géneros. Se dice al arrancar. */
-export function comoSeAveriguanLosGeneros(): string {
+/** Con qué cuenta el servidor para las fichas. Se dice al arrancar. */
+export function comoSeAveriguanLasFichas(): string {
   return tmdbSiHay()
     ? `TMDb (${GENEROS_POR_PASADA.tmdb} por pasada, cada ${GENEROS_CADA_HORAS.tmdb} h)`
     : `solo el panel (${GENEROS_POR_PASADA.panel} al día, de ${MADRUGADA.desde} a ${MADRUGADA.hasta} h).` +
@@ -174,7 +174,7 @@ export async function traerParrillasQueToquen(panel: Panel, ahora = new Date()):
  * y lo primero que se cubre es lo último que ha entrado, que es lo que se está
  * mirando.
  */
-export async function rellenarGenerosQueToquen(
+export async function rellenarFichasQueToquen(
   panel: Panel,
   ahora = new Date(),
   opciones: { forzar?: boolean } = {},
@@ -188,7 +188,7 @@ export async function rellenarGenerosQueToquen(
     const primera = mismas[0];
     if (!primera) continue;
 
-    const cuenta = panel.cuantosGeneros(primera.id);
+    const cuenta = panel.cuantasFichas(primera.id);
     /*
       La primera revisión de cada arranque no espera a que se cumpla el plazo.
       Con el plazo a rajatabla, redesplegar dos veces seguidas dejaba al
@@ -207,12 +207,12 @@ export async function rellenarGenerosQueToquen(
         Lo ya preguntado se mira en una sola lista: las que comparten URL
         comparten catálogo, y todo lo que se averigua se guarda en las dos.
       */
-      const averiguados = await rellenarGeneros(url, {
-        conocidas: panel.generosConocidos(primera.id),
+      const averiguados = await rellenarFichas(url, {
+        conocidas: panel.fichasConocidas(primera.id),
         cuantas: GENEROS_POR_PASADA[via],
         tmdb,
-        avisar: (faltan, deEstaVez) =>
-          console.log(`[generos] ${nombre} (${via}): empezando, ${deEstaVez} de las ${faltan} que faltan`),
+        avisar: (faltan: number, deEstaVez: number) =>
+          console.log(`[fichas] ${nombre} (${via}): empezando, ${deEstaVez} de las ${faltan} que faltan`),
       });
       // Nada que guardar: el catálogo está cubierto y no ha entrado nada
       // nuevo. No se anota ni se registra, que si no sería una línea por hora
@@ -222,16 +222,16 @@ export async function rellenarGenerosQueToquen(
       // El mismo sello para todas: es lo que hace que la marca de agua del
       // aparato valga aunque la casa tenga dos listas.
       const sello = Date.now();
-      for (const lista of mismas) panel.guardarGeneros(lista.id, averiguados, sello);
+      for (const lista of mismas) panel.guardarFichas(lista.id, averiguados, sello);
       hechas += 1;
 
-      const total = panel.cuantosGeneros(primera.id);
+      const total = panel.cuantasFichas(primera.id);
       const conGenero = averiguados.filter((uno) => uno.genero !== '').length;
       console.log(
-        `[generos] ${nombre} (${via}): ${conGenero} de ${averiguados.length} preguntadas, ${total.conGenero} en total`,
+        `[fichas] ${nombre} (${via}): ${conGenero} de ${averiguados.length} preguntadas, ${total.conGenero} en total`,
       );
     } catch (fallo) {
-      console.error(`[generos] ${nombre} (${sinCredenciales(url)}) falló:`, fallo);
+      console.error(`[fichas] ${nombre} (${sinCredenciales(url)}) falló:`, fallo);
     }
   }
 
@@ -250,8 +250,8 @@ export function vigilarPortadas(panel: Panel): () => void {
   const revisar = (): void => {
     void prepararLoQueToque(panel).catch((fallo) => console.error('[portadas] fallo revisando:', fallo));
     void traerParrillasQueToquen(panel).catch((fallo) => console.error('[parrilla] fallo revisando:', fallo));
-    void rellenarGenerosQueToquen(panel, new Date(), { forzar: primera }).catch((fallo) =>
-      console.error('[generos] fallo revisando:', fallo),
+    void rellenarFichasQueToquen(panel, new Date(), { forzar: primera }).catch((fallo) =>
+      console.error('[fichas] fallo revisando:', fallo),
     );
     primera = false;
   };

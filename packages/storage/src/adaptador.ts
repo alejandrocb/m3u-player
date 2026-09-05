@@ -181,7 +181,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       return null;
     },
 
-    async guardarGeneros(): Promise<void> {
+    async guardarFichas(): Promise<void> {
       // El escritorio no habla con el servidor de la casa todavía.
     },
 

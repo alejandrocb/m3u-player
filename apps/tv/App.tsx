@@ -269,9 +269,10 @@ function Raiz() {
         (avance) => setFase({ tipo: 'conectando', nombre: elegida.nombre, avance }),
         // La parrilla del directo la prepara el servidor de la casa; si no
         // hay, la programación se le pide al panel canal a canal.
-        // Y los géneros de las películas, que el servidor va averiguando poco a
-        // poco: el catálogo del panel no los trae.
-        { forzar, parrilla: () => sync.current.epg(), generos: (desde) => sync.current.generos(desde) },
+        // Y las fichas largas —género, sinopsis, reparto, fondo y tráiler—,
+        // que el servidor va averiguando poco a poco: el catálogo del panel no
+        // trae nada de eso.
+        { forzar, parrilla: () => sync.current.epg(), fichas: (desde) => sync.current.fichas(desde) },
       );
       biblioteca.current = datos;
       perfiles.current = almacen;
@@ -839,11 +840,15 @@ function BibliotecaVista({
     instancia.usarPortadas(preparado.portadas);
     presentador.current = instancia;
     void (async () => {
-      // Los géneros que el servidor haya averiguado se anotan en la base, y
-      // desde ahí salen con cada ficha: en la carátula, en la rejilla y en lo
-      // que se busque. Antes de cargar, para que la primera pantalla ya los
-      // lleve.
-      await biblioteca.guardarGeneros(preparado.generos);
+      /*
+        Los géneros que trae la portada del servidor se anotan también aquí.
+        La recogida grande —el catálogo entero— se hace al conectar con la
+        lista; esto son las cuarenta que presiden el inicio, y llegan por otro
+        camino porque la portada se pide antes de elegir lista.
+      */
+      await biblioteca.guardarFichas(
+        preparado.generos.map((uno) => ({ id: uno.id, clase: 'pelicula' as const, genero: uno.genero })),
+      );
       setEstado(await instancia.cargar());
     })();
     // `ajustes.orden` no está entre las dependencias a propósito: cambiarlo se

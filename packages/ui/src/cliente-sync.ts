@@ -142,9 +142,28 @@ export interface Preparado {
   generos: GeneroRemoto[];
 }
 
+/**
+ * La ficha larga que prepara el servidor, para el catálogo entero.
+ *
+ * Es lo mismo que da `get_vod_info` del panel, pero averiguado una vez por
+ * casa y no una vez por aparato y arranque: género, sinopsis, reparto, la
+ * imagen apaisada y el identificador del tráiler de YouTube.
+ *
+ * Todo puede faltar. Lo que llegue vacío no pisa lo que el aparato ya tuviera.
+ */
+export interface FichaRemota {
+  id: string;
+  clase: 'pelicula' | 'serie';
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  fondo?: string;
+  trailer?: string;
+}
+
 /** Lo que el servidor lleva averiguado desde la última vez que se preguntó. */
-export interface GenerosNuevos {
-  generos: GeneroRemoto[];
+export interface FichasNuevas {
+  fichas: FichaRemota[];
   /** Hasta dónde se ha leído. Se guarda y se manda en la siguiente. */
   hasta: number;
 }
@@ -333,31 +352,32 @@ export class ClienteSync {
   }
 
   /**
-   * Los géneros que el servidor ha ido averiguando, desde una marca de agua.
+   * Las fichas que el servidor ha ido averiguando, desde una marca de agua.
    *
-   * El catálogo del panel no trae el género de las películas y preguntarlo es
-   * una petición por título: el servidor va rellenando quinientas al día y
-   * aquí se recogen. Por eso se pide "lo posterior a esto" y no todo: la
-   * primera vez llega lo que haya, y a partir de ahí son unos cientos.
+   * El catálogo del panel no trae ni el género ni la sinopsis, y preguntarlo
+   * es una petición por título: el servidor lo va rellenando y aquí se recoge.
+   * Por eso se pide "lo posterior a esto" y no todo, y por eso quien llama
+   * vuelve a pedir mientras las respuestas lleguen llenas: con la sinopsis
+   * dentro, las 24.000 no caben en una.
    *
    * Como el resto de lo que prepara el servidor, esto acelera y no sostiene:
-   * sin respuesta, las películas salen sin género y ya está.
+   * sin respuesta, las fichas salen con lo que traiga el catálogo y ya está.
    */
-  async generos(desde: number): Promise<GenerosNuevos> {
-    const vacio: GenerosNuevos = { generos: [], hasta: desde };
+  async fichas(desde: number): Promise<FichasNuevas> {
+    const vacio: FichasNuevas = { fichas: [], hasta: desde };
     const estado = await this.#almacen.leer();
     if (!estado) return vacio;
 
     try {
-      const respuesta = await this.#buscar(`${estado.servidor}/api/generos?desde=${desde}`, {
+      const respuesta = await this.#buscar(`${estado.servidor}/api/fichas?desde=${desde}`, {
         method: 'GET',
         headers: { authorization: `Bearer ${estado.token}` },
       });
       if (!respuesta.ok) return vacio;
 
-      const datos = (await respuesta.json()) as Partial<GenerosNuevos>;
+      const datos = (await respuesta.json()) as Partial<FichasNuevas>;
       return {
-        generos: Array.isArray(datos.generos) ? datos.generos : [],
+        fichas: Array.isArray(datos.fichas) ? datos.fichas : [],
         hasta: Number(datos.hasta) || desde,
       };
     } catch {

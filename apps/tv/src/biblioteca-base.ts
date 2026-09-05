@@ -23,6 +23,7 @@ import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  FichaDelServidor,
   FichaLarga,
   EpisodioDeSerieFicha,
   EpisodioFicha,
@@ -537,20 +538,47 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       return fichaLarga('movie', id, () => panelIdsDePelicula(db, id), opciones.traerDetalle);
     },
 
-    async guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void> {
-      if (pares.length === 0) return;
+    async guardarFichas(fichas: FichaDelServidor[]): Promise<void> {
+      if (fichas.length === 0) return;
 
       db.executeSync('BEGIN IMMEDIATE');
       try {
-        for (const { id, genero } of pares) {
-          // Solo lo que falte: si esta película ya se preguntó por su cuenta
-          // —presidió el inicio—, lo suyo es más completo que esto.
-          db.executeSync("UPDATE movie SET genre = ? WHERE id = ? AND (genre IS NULL OR genre = '')", [genero, id]);
+        for (const ficha of fichas) {
+          const tabla = ficha.clase === 'serie' ? 'series' : 'movie';
+          /*
+            **Solo lo que falte.** Si esta ficha ya se preguntó por su cuenta
+            —presidió el inicio—, lo suyo salió del propio panel y es más de
+            fiar que esto. `NULLIF` está por las cadenas vacías: una sinopsis
+            en blanco no es una sinopsis, y sin él taparía la buena.
+
+            Y `detalle_pedido` solo se marca si viene la sinopsis: es la marca
+            de "ya se preguntó", y ponerla con un género suelto dejaría la
+            pantalla de información vacía para siempre.
+          */
+          db.executeSync(
+            `UPDATE ${tabla} SET
+               genre    = COALESCE(NULLIF(genre, ''),    NULLIF(?, '')),
+               plot     = COALESCE(NULLIF(plot, ''),     NULLIF(?, '')),
+               actors   = COALESCE(NULLIF(actors, ''),   NULLIF(?, '')),
+               backdrop = COALESCE(NULLIF(backdrop, ''), NULLIF(?, '')),
+               trailer  = COALESCE(NULLIF(trailer, ''),  NULLIF(?, '')),
+               detalle_pedido = COALESCE(detalle_pedido, ?)
+             WHERE id = ?`,
+            [
+              ficha.genero,
+              ficha.sinopsis ?? '',
+              ficha.reparto ?? '',
+              ficha.fondo ?? '',
+              ficha.trailer ?? '',
+              ficha.sinopsis ? new Date().toISOString() : null,
+              ficha.id,
+            ],
+          );
         }
         db.executeSync('COMMIT');
       } catch (error) {
         db.executeSync('ROLLBACK');
-        console.warn('[base] no se pudieron guardar los géneros', error);
+        console.warn('[base] no se pudieron guardar las fichas', error);
       }
     },
 
