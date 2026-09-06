@@ -39,6 +39,7 @@ function comoDescarga(fila: Fila): Descarga {
     bytes: Number(fila.bytes) || 0,
     total: fila.total === null || fila.total === undefined ? null : Number(fila.total),
     creada: fila.created as string,
+    intentos: Number(fila.tries) || 0,
     error: (fila.error as string | null) ?? null,
   };
 }
@@ -52,11 +53,11 @@ export function descargasEnBase(db: DB): AlmacenDescargas {
 
     async guardar(descarga: Descarga): Promise<void> {
       db.executeSync(
-        `INSERT INTO download (id, kind, item_id, title, series_id, url, file, state, bytes, total, created, error)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO download (id, kind, item_id, title, series_id, url, file, state, bytes, total, created, tries, error)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            state = excluded.state, bytes = excluded.bytes, total = excluded.total,
-           url = excluded.url, error = excluded.error`,
+           url = excluded.url, tries = excluded.tries, error = excluded.error`,
         [
           descarga.id,
           descarga.clase,
@@ -69,6 +70,7 @@ export function descargasEnBase(db: DB): AlmacenDescargas {
           descarga.bytes,
           descarga.total,
           descarga.creada,
+          descarga.intentos,
           descarga.error,
         ],
       );
@@ -98,12 +100,24 @@ export function descargasEnBase(db: DB): AlmacenDescargas {
  *   que la cola quiere reanudar quedaría marcado como roto.
  */
 export function transferenciaDeAndroid(): Transferencia {
-  // La carpeta, una vez. Se espera a que exista antes de la primera descarga:
-  // pedirla en paralelo con el fetch es una carrera que a veces se pierde.
+  /*
+    La carpeta, una vez. Se espera a que exista antes de la primera descarga:
+    pedirla en paralelo con el fetch es una carrera que a veces se pierde.
+
+    Y si no se puede crear hay que **decirlo**: sin carpeta, el fichero no se
+    puede abrir y lo único que se ve por fuera es "Download interrupted", que
+    parece un problema de red y no lo es.
+  */
   const carpetaLista = ReactNativeBlobUtil.fs
     .isDir(CARPETA)
-    .then((hay) => (hay ? null : ReactNativeBlobUtil.fs.mkdir(CARPETA)))
-    .catch(() => null);
+    .then(async (hay) => {
+      if (!hay) await ReactNativeBlobUtil.fs.mkdir(CARPETA);
+      return true;
+    })
+    .catch((fallo: unknown) => {
+      console.warn('[descarga] no se pudo crear la carpeta', CARPETA, fallo);
+      return false;
+    });
 
   return {
     empezar({ descarga, desde, alAvanzar, alTerminar, alFallar }) {
@@ -111,8 +125,14 @@ export function transferenciaDeAndroid(): Transferencia {
       let tarea: ReturnType<ReturnType<typeof ReactNativeBlobUtil.config>['fetch']> | null = null;
       const ruta = `${CARPETA}/${descarga.fichero}`;
 
-      void carpetaLista.then(() => {
+      void carpetaLista.then((hayCarpeta) => {
         if (cancelada) return;
+        if (!hayCarpeta) {
+          alFallar('no se pudo crear la carpeta de descargas');
+          return;
+        }
+
+        console.log(`[descarga] empieza ${descarga.fichero} desde ${desde}`);
 
         tarea = ReactNativeBlobUtil.config({
           path: ruta,
@@ -125,10 +145,17 @@ export function transferenciaDeAndroid(): Transferencia {
           timeout: 60_000,
         }).fetch('GET', descarga.url, desde > 0 ? { Range: `bytes=${desde}-` } : {});
 
+        let ultimoAviso = 0;
         tarea.progress({ interval: 500 }, (recibidos, total) => {
           if (cancelada) return;
           const hechos = Number(recibidos) || 0;
           const cuanto = Number(total) || 0;
+          // Una línea cada diez megas: suficiente para ver si avanza y para
+          // saber por dónde iba cuando se corte.
+          if (hechos - ultimoAviso >= 10_000_000) {
+            ultimoAviso = hechos;
+            console.log(`[descarga] ${descarga.fichero}: ${Math.round(hechos / 1_000_000)} MB de ${Math.round(cuanto / 1_000_000)}`);
+          }
           alAvanzar(desde + hechos, cuanto > 0 ? desde + cuanto : null);
         });
 
@@ -153,6 +180,7 @@ export function transferenciaDeAndroid(): Transferencia {
               alFallar(`el panel contestó ${estado}`);
               return;
             }
+            console.log(`[descarga] termina ${descarga.fichero}, estado ${estado}`);
 
             // El tamaño de verdad sale del disco, no de lo que dijera nadie.
             const medida = await ReactNativeBlobUtil.fs.stat(ruta).catch(() => null);
@@ -160,11 +188,19 @@ export function transferenciaDeAndroid(): Transferencia {
             alAvanzar(bytes, bytes);
             alTerminar();
           })
-          .catch((fallo: unknown) => {
+          .catch(async (fallo: unknown) => {
             // Cancelar aborta la petición y eso llega aquí como error de red:
             // no es un fallo, es que alguien ha puesto una película.
             if (cancelada) return;
-            alFallar(fallo instanceof Error ? fallo.message : 'no se pudo bajar');
+
+            // Cuánto quedó en el disco: es lo que distingue "no ha empezado"
+            // de "se cortó a la mitad", y no se sabe de otra forma.
+            const medida = await ReactNativeBlobUtil.fs.stat(ruta).catch(() => null);
+            const bytes = medida ? Number(medida.size) || 0 : 0;
+            if (bytes > desde) alAvanzar(bytes, null);
+            console.warn(`[descarga] se cortó ${descarga.fichero} con ${bytes} bytes:`, fallo);
+
+            alFallar(fallo instanceof Error ? fallo.message : String(fallo));
           });
       });
 

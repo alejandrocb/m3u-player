@@ -145,13 +145,32 @@ test('la conexión la reparte el árbitro: sin ranura no arranca', async () => {
   assert.equal(transporte.ordenes.length, 0, 'no se cuela delante de la película');
   assert.equal(cola.de('pelicula:espera')?.estado, 'en cola');
 
-  // Al cerrar el reproductor y avisar, la descarga entra... cuando enfríe.
+  // Al cerrar el reproductor, la ranura queda enfriándose y sigue sin entrar.
   arbitro.soltar('reproductor', 1_000);
   await cola.reintentar();
   assert.equal(transporte.ordenes.length, 0, 'la ranura recién soltada aún enfría');
+});
 
-  await cola.reintentar();
+test('sin ranura, la cola vuelve a preguntar sola', async () => {
+  /*
+    Esto es lo que dejaba una descarga clavada en 0 % para siempre: el árbitro
+    decía que no —la ranura que ella misma acababa de soltar estaba
+    enfriándose— y **nadie volvía a intentarlo nunca**. Por fuera se veía un
+    "en cola" que no se movía y ningún error que mirar.
+  */
+  const { cola, arbitro, transporte, pasarElEnfriamiento } = montar();
+  arbitro.pedir('reproductor', 'reproducir', 1_000);
+
+  await cola.anadir(pelicula('la-paciente'));
   assert.equal(transporte.ordenes.length, 0);
+
+  // Se cierra el reproductor. Nadie le dice nada a la cola: tiene que
+  // enterarse ella sola cuando le toque.
+  arbitro.soltar('reproductor', 1_000);
+  await pasarElEnfriamiento();
+
+  assert.equal(transporte.ordenes.length, 1, 'ha vuelto a preguntar por su cuenta');
+  assert.equal(cola.de('pelicula:la-paciente')?.estado, 'bajando');
 });
 
 test('expulsada por el árbitro no es fallida: vuelve a la cola', async () => {

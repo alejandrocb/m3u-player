@@ -134,6 +134,8 @@ export class ColaDeDescargas {
   #bajando: string | null = null;
   #ultimoApunte = 0;
   #esperar: (hacer: () => void, ms: number) => void;
+  /** Hay una vuelta ya programada: no se apilan dos. */
+  #programada = false;
 
   constructor(opciones: OpcionesCola) {
     this.#arbitro = opciones.arbitro;
@@ -286,7 +288,19 @@ export class ColaDeDescargas {
     if (!siguiente) return;
 
     const respuesta = this.#arbitro.pedir(siguiente.id, 'descargar', this.#ahora());
-    if (!respuesta.concedido) return;
+    if (!respuesta.concedido) {
+      /*
+        **Sin ranura hay que volver a preguntar solo.** Esto es lo que dejaba
+        una descarga en "en cola" para siempre: el árbitro decía que no —la
+        ranura que la propia descarga acababa de soltar está enfriándose
+        treinta segundos— y nadie volvía a intentarlo nunca. Por fuera se veía
+        un 0 % que no se movía y ningún error que mirar.
+
+        El árbitro dice cuánto conviene esperar; se le hace caso.
+      */
+      this.#volverATiempo(respuesta.esperar);
+      return;
+    }
 
     // Descargar es la prioridad más baja, así que no debería expulsar a nadie;
     // si algún día lo hiciera, quien lo lea aquí sabrá que pasa por el árbitro.
@@ -343,10 +357,25 @@ export class ColaDeDescargas {
 
         // Un momento antes de volver: si el corte es de la red, insistir en el
         // acto es gastar batería para nada.
-        if (siguiente.estado === 'en cola') this.#esperar(() => void this.#seguir(), TRAS_UN_CORTE_MS);
+        if (siguiente.estado === 'en cola') this.#volverATiempo(TRAS_UN_CORTE_MS);
         else void this.#seguir();
       },
     });
+  }
+
+  /**
+   * Vuelve a mirar la cola dentro de un rato.
+   *
+   * Con guarda para no apilar esperas: cada ficha que se añade mientras no hay
+   * ranura llamaría aquí, y acabarían diez relojes despertando a la vez.
+   */
+  #volverATiempo(ms: number): void {
+    if (this.#programada) return;
+    this.#programada = true;
+    this.#esperar(() => {
+      this.#programada = false;
+      void this.#seguir();
+    }, Math.max(1_000, ms));
   }
 
   async #apuntar(descarga: Descarga): Promise<void> {

@@ -131,6 +131,9 @@ CREATE TABLE IF NOT EXISTS download (
   bytes    INTEGER NOT NULL DEFAULT 0,
   total    INTEGER,
   created  TEXT NOT NULL,
+  -- Cortes seguidos sin avanzar un byte. Un corte suelto no cuenta: en una
+  -- película de dos gigas por un wifi flojo los hay a montones.
+  tries    INTEGER NOT NULL DEFAULT 0,
   error    TEXT
 ) WITHOUT ROWID;
 
