@@ -185,6 +185,32 @@ Se cae de todas las filas —no solo de "seguir viendo"— sembrando la misma
 lista que evita las repeticiones. Solo las películas: en una serie, terminar un
 capítulo no es terminar la serie, y para eso está el relevo al siguiente.
 
+**Lo visto se pregunta aparte, no sale del historial.** El historial son los
+cuarenta avances **más recientes**, y una película vista hace dos meses no está
+ahí: seguía saliendo en "Novedades" como si fuera nueva. `AlmacenPerfiles.vistas`
+no lleva límite porque solo trae identificadores. Lo mismo vale para
+`seriesEmpezadas`, por el mismo motivo.
+
+### "Nuevos capítulos": series que estaban al día y han sacado más
+
+El aparato **no sabe de los capítulos nuevos** hasta que se abre la serie: los
+episodios se piden uno a uno con `get_series_info` y hay 6.598. Lo que sí llega
+con el catálogo es el `last_modified` de cada serie, que **sube cuando le
+añaden episodios** y se guarda en `series.added`.
+
+De ahí la regla, que no cuesta ni una petición: una serie sale en esa fila si
+este perfil la tenía **al día** —el último capítulo que vio no tiene
+siguiente— y el proveedor la ha tocado **después** de aquello. Con capítulos
+por ver ya está en "seguir viendo", y repetirla sobra.
+
+La contrapartida es que se entera cuando se refresca el catálogo, que es cada
+tres días. Para "han sacado temporada nueva" es de sobra. Y **no hay
+notificaciones del sistema** a propósito: una notificación solo sirve si algo
+comprueba con la aplicación cerrada, y aquí no hay nada corriendo entonces.
+
+Lo que está en "seguir viendo" se siembra también en la lista de lo que no se
+repite: esa fila se añade a mano y no pasa por `anadir`.
+
 **Las filas por tema van con el orden `destacada`, no con `recomendada`.**
 Aquel exige una nota del proveedor entre 7 y 10, y con eso "Ciencia ficción"
 enseñaba **cuatro** películas de las cuatrocientas que dice su rótulo: contar

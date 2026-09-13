@@ -50,6 +50,15 @@ export interface SerieFicha {
   logo: string | null;
   /** Este sí viene con el catálogo: `get_series` trae el género. */
   genero: string | null;
+  /**
+   * Cuándo tocó el proveedor esta serie por última vez, en segundos de época.
+   *
+   * Es el `last_modified` de `get_series`, y **sube cuando le añaden
+   * episodios**: comparándolo con la última vez que alguien vio un capítulo
+   * se sabe si han sacado más, sin preguntarle nada al panel. De las películas
+   * el equivalente es `added`, que no se mueve.
+   */
+  tocada?: number | null;
 }
 
 /**

@@ -146,7 +146,19 @@ function bibliotecaFalsa(peliculas = 3, temas: GrupoFicha[] = [], conTmdb = fals
     },
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return ids.includes('dw')
-        ? [{ id: 'dw', titulo: 'Doctor Who', anio: 2005, valoracion: 8, logo: null, genero: 'Ciencia ficción' }]
+        ? [
+            {
+              id: 'dw',
+              titulo: 'Doctor Who',
+              anio: 2005,
+              valoracion: 8,
+              logo: null,
+              genero: 'Ciencia ficción',
+              // Tocada por el proveedor hace poco: es lo que delata que han
+              // añadido capítulos.
+              tocada: Math.round(Date.parse('2026-09-01T00:00:00.000Z') / 1000),
+            },
+          ]
         : [];
     },
     async episodioSiguiente(clave: string) {
@@ -445,6 +457,57 @@ test('una película ya vista no vuelve a salir en el inicio', async () => {
     [],
     'vista, no sale en ninguna fila',
   );
+});
+
+test('una serie al día que ha sacado más capítulos sale en "Nuevos capítulos"', async () => {
+  /*
+    El aparato no sabe de los capítulos nuevos hasta que se abre la serie —son
+    6.598 y cada una es una petición—, pero sí sabe **cuándo tocó el proveedor
+    la serie**, que es un dato del catálogo y sube al añadirle episodios. Si
+    eso es posterior a la última vez que se vio un capítulo y no quedaba
+    ninguno por ver, es que han sacado más.
+  */
+  const presentador = new Presentador(bibliotecaFalsa(60), {
+    seriesEmpezadas: async () => [
+      // El capítulo 3 es el último de la serie de prueba: estaba al día.
+      { serieId: 'dw', ultimaClave: 'dw:s1e3', cuando: '2026-08-01T00:00:00.000Z' },
+    ],
+  });
+
+  const titulos = (estado: EstadoPantalla): string[] =>
+    (estado.inicio?.filas ?? [])
+      .filter((fila) => fila.tipo === 'carrusel')
+      .map((fila) => fila.titulo);
+
+  assert.ok(titulos(await presentador.cargar()).includes('Nuevos capítulos'));
+});
+
+test('una serie con capítulos por ver no sale en "Nuevos capítulos"', async () => {
+  // Eso ya está en "seguir viendo": repetirlo abajo sobra.
+  const presentador = new Presentador(bibliotecaFalsa(60), {
+    seriesEmpezadas: async () => [
+      { serieId: 'dw', ultimaClave: 'dw:s1e1', cuando: '2026-08-01T00:00:00.000Z' },
+    ],
+  });
+
+  const salen = (await presentador.cargar()).inicio?.filas
+    .filter((fila) => fila.tipo === 'carrusel')
+    .map((fila) => fila.titulo);
+  assert.ok(!salen?.includes('Nuevos capítulos'));
+});
+
+test('una serie que nadie ha tocado desde que se vio no sale', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(60), {
+    seriesEmpezadas: async () => [
+      // Vista después de la última vez que el proveedor la tocó.
+      { serieId: 'dw', ultimaClave: 'dw:s1e3', cuando: '2026-09-10T00:00:00.000Z' },
+    ],
+  });
+
+  const salen = (await presentador.cargar()).inicio?.filas
+    .filter((fila) => fila.tipo === 'carrusel')
+    .map((fila) => fila.titulo);
+  assert.ok(!salen?.includes('Nuevos capítulos'));
 });
 
 test('cambiar de pestaña devuelve el foco arriba', async () => {
@@ -960,9 +1023,15 @@ test('en los bordes el foco no se sale', async () => {
 });
 
 test('al cambiar de fila la columna se recorta a lo que quepa', async () => {
-  // "Seguir viendo" tiene dos fichas y los carruseles tres: bajar desde la
-  // tercera no puede dejar el foco apuntando a un hueco.
-  const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
+  /*
+    "Seguir viendo" tiene dos fichas y el carrusel de abajo tres: bajar desde
+    la tercera no puede dejar el foco apuntando a un hueco.
+
+    Con cuatro películas en el catálogo, porque lo que está en "seguir
+    viendo" ya no se repite abajo: con tres justas, "recién llegadas" se
+    quedaba en una.
+  */
+  const presentador = new Presentador(bibliotecaFalsa(4), { seguirViendo: async () => aMedias() });
   const estado = await presentador.cargar();
   const novedades = indiceDe(estado, 'Películas recién llegadas');
 

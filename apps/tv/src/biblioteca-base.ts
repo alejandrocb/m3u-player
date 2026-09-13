@@ -447,13 +447,16 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'series', `id, title, year, ${notaSQL()} AS rating, logo, genre`, ids).map((fila) => ({
+        porId(db, 'series', `id, title, year, ${notaSQL()} AS rating, logo, genre, added`, ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
           valoracion: (fila.rating as number) ?? null,
           logo: (fila.logo as string) ?? null,
           genero: (fila.genre as string) ?? null,
+          // De una serie, `added` es el `last_modified` del panel: sube cuando
+          // le añaden episodios.
+          tocada: (fila.added as number) ?? null,
         })),
       );
     },

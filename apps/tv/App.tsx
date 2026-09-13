@@ -846,6 +846,7 @@ function BibliotecaVista({
       // que pedir doce justas dejaría la fila a medias.
       seguirViendo: () => perfiles.seguirViendo(perfil.id, 40),
       vistas: () => perfiles.vistas(perfil.id),
+      seriesEmpezadas: () => perfiles.seriesEmpezadas(perfil.id),
       /*
         Y de aquí sale si un canal sigue teniendo sitio en "seguir viendo":
         mientras no termine el programa que se estaba viendo. Solo de lo

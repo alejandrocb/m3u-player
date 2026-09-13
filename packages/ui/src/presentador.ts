@@ -15,9 +15,9 @@ import type { Direccion } from './foco.ts';
 import { Navegador } from './navegacion.ts';
 import type { Pantalla, ResultadoAtras } from './navegacion.ts';
 import type { PortadaRemota } from './cliente-sync.ts';
-import type { Biblioteca, CanalFicha, FichaLarga, GrupoFicha, Orden, Resultado } from './puerto.ts';
+import type { Biblioteca, CanalFicha, FichaLarga, GrupoFicha, Orden, Resultado, SerieFicha } from './puerto.ts';
 import { claveDeMedio, estaTerminado, proporcionVista } from './perfiles.ts';
-import type { Avance, ClaseMedio } from './perfiles.ts';
+import type { Avance, ClaseMedio, SerieEmpezada } from './perfiles.ts';
 import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
@@ -493,6 +493,8 @@ export interface OpcionesPresentador {
    * apareciendo en "Novedades" como si fuera nueva.
    */
   vistas?: () => Promise<string[]>;
+  /** Por dónde va el perfil en cada serie que haya empezado, sin límite. */
+  seriesEmpezadas?: () => Promise<SerieEmpezada[]>;
   /** Cómo ordenar películas y series. Por título si no se dice otra cosa. */
   orden?: Orden;
   /**
@@ -568,6 +570,7 @@ export class Presentador {
   #avances: OpcionesPresentador['avances'];
   #seguirViendo: OpcionesPresentador['seguirViendo'];
   #vistas: OpcionesPresentador['vistas'];
+  #seriesEmpezadas: OpcionesPresentador['seriesEmpezadas'];
   #parrilla: OpcionesPresentador['parrilla'];
   #favoritos: PuertoFavoritos | undefined;
   #afinidad: OpcionesPresentador['afinidad'];
@@ -589,6 +592,7 @@ export class Presentador {
     this.#avances = opciones.avances;
     this.#seguirViendo = opciones.seguirViendo;
     this.#vistas = opciones.vistas;
+    this.#seriesEmpezadas = opciones.seriesEmpezadas;
     this.#parrilla = opciones.parrilla;
     this.#favoritos = opciones.favoritos;
     this.#afinidad = opciones.afinidad;
@@ -726,6 +730,62 @@ export class Presentador {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * "Nuevos capítulos": series que estaban al día y han sacado más.
+   *
+   * El aparato **no sabe de los capítulos nuevos** hasta que se abre la serie:
+   * los episodios se piden uno a uno con `get_series_info` y hay 6.598, así
+   * que no hay forma de comprobarlos todos. Lo que sí llega con el catálogo es
+   * el `last_modified` de cada serie, que **sube cuando le añaden episodios**.
+   *
+   * De ahí la regla, que no cuesta ni una petición: una serie sale aquí si
+   * este perfil la tenía **al día** —el último capítulo que vio no tiene
+   * siguiente— y el proveedor la ha tocado **después** de aquello.
+   *
+   * La contrapartida es que se entera cuando se refresca el catálogo, que es
+   * cada tres días. Para "han sacado temporada nueva" es de sobra.
+   */
+  async #filaNuevosCapitulos(puestas: Set<string>): Promise<FilaInicio | null> {
+    if (!this.#seriesEmpezadas) return null;
+
+    let empezadas: SerieEmpezada[];
+    try {
+      empezadas = await this.#seriesEmpezadas();
+    } catch {
+      return null;
+    }
+    if (empezadas.length === 0) return null;
+
+    const fichas = await this.#biblioteca.seriesPorId(empezadas.map((una) => una.serieId)).catch(() => []);
+    const porId = new Map(fichas.map((ficha) => [ficha.id, ficha]));
+
+    const conNovedad: SerieFicha[] = [];
+    for (const empezada of empezadas) {
+      const ficha = porId.get(empezada.serieId);
+      if (!ficha?.tocada || puestas.has(ficha.id)) continue;
+
+      // `tocada` viene en segundos de época y el avance en ISO.
+      if (ficha.tocada * 1000 <= Date.parse(empezada.cuando)) continue;
+
+      // Y solo si estaba al día: con capítulos por ver, esto ya está en
+      // "seguir viendo" y repetirlo sobra.
+      const siguiente = await this.#biblioteca.episodioSiguiente(empezada.ultimaClave).catch(() => null);
+      if (siguiente) continue;
+
+      conNovedad.push(ficha);
+      if (conNovedad.length >= CARRUSEL) break;
+    }
+
+    if (conNovedad.length === 0) return null;
+
+    for (const ficha of conNovedad) puestas.add(ficha.id);
+    return {
+      tipo: 'carrusel',
+      titulo: 'Nuevos capítulos',
+      elementos: await this.#aCarrusel(conNovedad, 'serie'),
+    };
   }
 
   /** La fila de "seguir viendo", a partir del historial del perfil. */
@@ -1310,6 +1370,27 @@ export class Presentador {
       serie, y para eso ya está el relevo de "seguir viendo".
     */
     for (const id of vistas) puestas.add(id);
+
+    /*
+      Lo que ya está en "seguir viendo" tampoco se repite abajo. Esa fila se
+      añade a mano —no pasa por `anadir`—, así que hay que sembrarla aquí.
+    */
+    if (continuar) {
+      for (const elemento of continuar.elementos) {
+        const medio = medioDeElemento(elemento);
+        if (medio) puestas.add(medio.id);
+      }
+    }
+
+    /*
+      "Nuevos capítulos" va justo detrás de "seguir viendo" porque es lo mismo
+      con otro nombre: series que estabas viendo y que tienen algo esperando.
+      Se monta después de sembrar la lista para no repetir las que ya salen
+      arriba.
+    */
+    // En la pestaña de películas no pinta nada una serie.
+    const nuevos = conSeries ? await this.#filaNuevosCapitulos(puestas) : null;
+    if (nuevos) filas.push(nuevos);
 
     const anadir = async (
       titulo: string,

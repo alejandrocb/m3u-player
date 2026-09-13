@@ -149,6 +149,14 @@ export interface AlmacenPerfiles {
    * serie, y para eso está el relevo al siguiente.
    */
   vistas(perfilId: string): Promise<string[]>;
+  /**
+   * Por dónde va este perfil en cada serie que haya empezado, sin límite.
+   *
+   * Una por serie y la más reciente de cada una. Sin límite por lo mismo que
+   * `vistas`: una serie que se terminó hace medio año no está entre los
+   * últimos avances, y es justo de la que interesa saber si han sacado más.
+   */
+  seriesEmpezadas(perfilId: string): Promise<SerieEmpezada[]>;
   /** Por dónde iba una cosa concreta, si es que se empezó. */
   avanceDe(perfilId: string, clase: ClaseMedio, itemId: string): Promise<Avance | null>;
   /**
@@ -227,6 +235,15 @@ export interface AlmacenPerfiles {
  * Va por perfil y no por aparato: en la misma tablet, a uno le caben seis
  * carátulas por fila y otro las quiere grandes.
  */
+/** Por dónde va un perfil en una serie. */
+export interface SerieEmpezada {
+  serieId: string;
+  /** La clave del último capítulo tocado, para saber si queda alguno después. */
+  ultimaClave: string;
+  /** Cuándo fue, en ISO. Se compara con lo que diga el catálogo de la serie. */
+  cuando: string;
+}
+
 export interface Ajustes {
   /** Carátulas por fila en Películas y Series. */
   columnas: number;

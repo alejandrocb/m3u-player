@@ -24,6 +24,7 @@ import type {
   Favorito,
   Perfil,
   Reproduccion,
+  SerieEmpezada,
 } from '@m3u/ui';
 import {
   CLAVE_REPRODUCCION,
@@ -333,6 +334,34 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
             AND duration > 0 AND seconds >= duration * ${FIN_PELICULA}`,
         [perfilId],
       ).map((fila) => fila.item_id as string);
+    },
+
+    async seriesEmpezadas(perfilId: string): Promise<SerieEmpezada[]> {
+      /*
+        La clave de un capítulo es `serie:sXeY`, y el identificador de una
+        serie nunca lleva dos puntos —sale de `slug`—, así que el primero
+        separa una cosa de la otra.
+
+        Se agrupa aquí y no en SQL: vienen de lo más reciente a lo más viejo,
+        así que la primera de cada serie es la buena, y son unos cientos de
+        filas como mucho.
+      */
+      const porSerie = new Map<string, SerieEmpezada>();
+
+      for (const fila of filas(
+        db,
+        `SELECT item_id, updated FROM progress
+          WHERE profile_id = ? AND kind = 'episodio' AND deleted = 0
+          ORDER BY updated DESC`,
+        [perfilId],
+      )) {
+        const clave = fila.item_id as string;
+        const serieId = leerClaveDeEpisodio(clave)?.serieId;
+        if (!serieId || porSerie.has(serieId)) continue;
+        porSerie.set(serieId, { serieId, ultimaClave: clave, cuando: fila.updated as string });
+      }
+
+      return [...porSerie.values()];
     },
 
     async avanceDe(perfilId: string, clase: ClaseMedio, itemId: string): Promise<Avance | null> {
