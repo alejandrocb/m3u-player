@@ -103,6 +103,21 @@ export class Arbitro {
     return [...this.#concedidas].map(([id, concedida]) => ({ id, uso: concedida.uso }));
   }
 
+  /**
+   * Cuántas ranuras hay ocupadas, para poder enseñarlo.
+   *
+   * **Es lo que tiene este aparato**, no la casa entera: eso no hay forma de
+   * saberlo —`active_cons` del panel no vale de semáforo, está medido— y un
+   * número que dijera "2 de 3" incluyendo a la tele sería inventado.
+   *
+   * Las que se están enfriando cuentan como ocupadas porque lo están: el panel
+   * tarda medio minuto en darlas por libres, y pedirlas antes es un 403.
+   */
+  resumen(ahora = Date.now()): { usadas: number; enfriando: number; ranuras: number } {
+    const enfriando = this.#enfriandoAhora(ahora);
+    return { usadas: this.#concedidas.size + enfriando, enfriando, ranuras: this.#ranuras };
+  }
+
   /** Cuántas ranuras siguen enfriándose, y por tanto no se pueden usar. */
   #enfriandoAhora(ahora: number): number {
     this.#enfriando = this.#enfriando.filter((cuando) => ahora - cuando < ENFRIAMIENTO_MS);

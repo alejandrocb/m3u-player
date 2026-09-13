@@ -140,3 +140,26 @@ tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
         }
     ).withPropertyName("fuentesDelMonorepo").withPathSensitivity(PathSensitivity.RELATIVE)
 }
+
+/**
+ * El sello de compilación, antes de empaquetar el JavaScript.
+ *
+ * Lo enseña la pantalla de perfiles para saber, desde el sofá, si un aparato
+ * tiene lo último. Se genera aquí y no a mano porque un sello que hay que
+ * acordarse de actualizar acaba mintiendo justo sobre lo que se quiere
+ * comprobar.
+ *
+ * `outputs.upToDateWhen { false }` es a propósito: la gracia es que la fecha
+ * sea la de esta compilación, no la de la primera.
+ */
+tasks.register("selloDeCompilacion", Exec) {
+    workingDir = file("${rootDir}/../../..")
+    commandLine = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? ["cmd", "/c", "node", "tools/sello.mjs"]
+            : ["node", "tools/sello.mjs"]
+    outputs.upToDateWhen { false }
+}
+
+tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
+    dependsOn("selloDeCompilacion")
+}

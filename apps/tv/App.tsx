@@ -449,6 +449,9 @@ function Raiz() {
     return (
       <PantallaPerfiles
         almacen={perfiles.current}
+        // Lo que este aparato tiene abierto contra el panel, que es lo único
+        // que se puede saber: lo de la casa entera no lo dice nadie.
+        conexiones={arbitro.current.resumen()}
         onElegir={(perfil) => setFase({ tipo: 'biblioteca', cuenta: fase.cuenta, medicion: fase.medicion, perfil })}
         onVolver={
           fase.perfil

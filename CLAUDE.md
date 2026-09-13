@@ -1220,6 +1220,22 @@ que sea y se ve lo que se está eligiendo. **El borrado avisa**: se lleva por
 delante el historial y la Mi Lista de esa persona, y lo hace en todos los
 aparatos de la casa.
 
+Al pie van **la versión y las conexiones**, y solo aquí: es información de
+mantenimiento, que al entrar se mira un momento y dentro de la biblioteca sería
+ruido sobre las carátulas.
+
+El sello lo genera `tools/sello.mjs`, que lanza Gradle antes de empaquetar el
+JavaScript. Lleva **fecha y commit** porque la versión de `package.json` no
+distingue dos compilaciones del mismo día, que es exactamente lo que hay que
+distinguir: media tarde se ha ido más de una vez en perseguir un fallo que era
+un aparato con el APK de ayer. Un sello que hubiera que actualizar a mano
+acabaría mintiendo justo sobre eso, así que no se toca a mano.
+
+De las conexiones se enseña **lo que tiene este aparato**, no la casa: eso no
+hay forma de saberlo —`active_cons` no vale de semáforo, está medido— y un
+"2 de 3" que incluyera a la tele sería inventado. Las que se están enfriando
+cuentan como ocupadas, porque lo están.
+
 **Con un solo perfil no se pregunta.** La pantalla de "¿quién está viendo?"
 con un único círculo no elige nada: era una pulsación de más en cada arranque.
 Se sigue llegando a ella desde el menú, con el botón "Perfiles".

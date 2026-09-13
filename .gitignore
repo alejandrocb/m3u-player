@@ -7,3 +7,8 @@ out/
 playlists/
 downloads/
 apps/tv/servidor.local.js
+
+# El sello de compilación, que genera tools/sello.mjs: cambia en cada
+# compilación, así que en el repositorio solo sería ruido. Lo crean el
+# postinstall y Gradle, así que siempre está.
+apps/tv/src/version.ts

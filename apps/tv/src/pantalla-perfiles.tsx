@@ -23,6 +23,7 @@ import { COLORES_PERFIL } from '@m3u/ui';
 import { Retrato } from './retrato';
 import { RETRATOS } from './retratos';
 import { FONDO, ROJO, TINTA, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
+import { COMMIT, COMPILADA, VERSION } from './version';
 
 const LOGOTIPO = require('./marca/logotipo.png');
 
@@ -36,6 +37,14 @@ interface Props {
   almacen: AlmacenPerfiles;
   onElegir: (perfil: Perfil) => void;
   /**
+   * Las conexiones del panel que tiene este aparato, y cuántas caben.
+   *
+   * Se enseña aquí y en ningún otro sitio porque es información de
+   * mantenimiento: al entrar se mira un momento y ya está. Dentro de la
+   * biblioteca solo sería ruido sobre las carátulas.
+   */
+  conexiones?: { usadas: number; ranuras: number };
+  /**
    * Volver sin elegir.
    *
    * Solo lo hay cuando se llega desde el menú de la biblioteca: al arrancar no
@@ -47,7 +56,7 @@ interface Props {
 /** A quién se está editando: uno de la casa, o el que se está creando. */
 type Edicion = { perfil: Perfil | null; nombre: string; color: string; avatar: string };
 
-export function PantallaPerfiles({ almacen, onElegir, onVolver }: Props) {
+export function PantallaPerfiles({ almacen, onElegir, onVolver, conexiones }: Props) {
   const [perfiles, setPerfiles] = useState<Perfil[] | null>(null);
   const [administrando, setAdministrando] = useState(false);
   const [edicion, setEdicion] = useState<Edicion | null>(null);
@@ -219,6 +228,19 @@ export function PantallaPerfiles({ almacen, onElegir, onVolver }: Props) {
             />
             {onVolver ? <Boton texto="Volver" onPress={onVolver} /> : null}
           </View>
+
+          {/*
+            El pie: en qué versión va este aparato y cuántas conexiones tiene
+            abiertas. Lo primero es lo que evita la tarde que se pierde cuando
+            dos aparatos llevan compilaciones distintas y parece que el fallo
+            está en el código; lo segundo, saber de un vistazo por qué algo
+            está esperando.
+          */}
+          <Text style={estilos.pie}>
+            {conexiones ? `Conexiones de este aparato ${conexiones.usadas}/${conexiones.ranuras} · ` : ''}
+            v{VERSION} · {COMPILADA}
+            {COMMIT ? ` · ${COMMIT}` : ''}
+          </Text>
         </>
       )}
     </ScrollView>
@@ -402,6 +424,11 @@ const estilos = StyleSheet.create({
     color: TINTA,
     fontSize: 34,
     fontWeight: '700',
+  },
+  pie: {
+    color: TINTA_TENUE,
+    fontSize: 12,
+    marginTop: 24,
   },
   fila: {
     alignItems: 'center',
