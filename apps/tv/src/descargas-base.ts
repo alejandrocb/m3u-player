@@ -24,6 +24,32 @@ export function rutaDe(descarga: Descarga): string {
   return `${CARPETA}/${descarga.fichero}`;
 }
 
+/** Borra el fichero de una descarga. Que no exista no es un fallo. */
+export async function borrarFichero(descarga: Descarga): Promise<void> {
+  await ReactNativeBlobUtil.fs.unlink(rutaDe(descarga)).catch(() => undefined);
+}
+
+/**
+ * Cuánto ocupan las descargas y cuánto queda libre en el disco.
+ *
+ * Lo ocupado se mide sumando los ficheros de verdad y no lo que diga la base:
+ * una descarga a medias ocupa lo que lleve bajado, y un fichero que alguien
+ * borró por fuera no ocupa nada aunque su fila siga ahí.
+ */
+export async function espacio(): Promise<{ ocupado: number; libre: number }> {
+  const ocupado = await ReactNativeBlobUtil.fs
+    .lstat(CARPETA)
+    .then((ficheros) => ficheros.reduce((suma, uno) => suma + (Number(uno.size) || 0), 0))
+    .catch(() => 0);
+
+  const libre = await ReactNativeBlobUtil.fs
+    .df()
+    .then((disco) => Number(disco.internal_free ?? disco.free ?? 0) || 0)
+    .catch(() => 0);
+
+  return { ocupado, libre };
+}
+
 type Fila = Record<string, unknown>;
 
 function comoDescarga(fila: Fila): Descarga {

@@ -485,6 +485,14 @@ export interface OpcionesPresentador {
    * funciona igual, solo que sin la fila.
    */
   seguirViendo?: () => Promise<Avance[]>;
+  /**
+   * Las películas ya vistas enteras, para que no vuelvan a salir.
+   *
+   * Aparte del historial porque aquel es **lo más reciente y poco**: una
+   * película vista hace dos meses no entra en esos cuarenta avances y seguía
+   * apareciendo en "Novedades" como si fuera nueva.
+   */
+  vistas?: () => Promise<string[]>;
   /** Cómo ordenar películas y series. Por título si no se dice otra cosa. */
   orden?: Orden;
   /**
@@ -559,6 +567,7 @@ export class Presentador {
   #filtroLista: FiltroLista = 'todo';
   #avances: OpcionesPresentador['avances'];
   #seguirViendo: OpcionesPresentador['seguirViendo'];
+  #vistas: OpcionesPresentador['vistas'];
   #parrilla: OpcionesPresentador['parrilla'];
   #favoritos: PuertoFavoritos | undefined;
   #afinidad: OpcionesPresentador['afinidad'];
@@ -579,6 +588,7 @@ export class Presentador {
     this.#tamanoPagina = opciones.tamanoPagina ?? 60;
     this.#avances = opciones.avances;
     this.#seguirViendo = opciones.seguirViendo;
+    this.#vistas = opciones.vistas;
     this.#parrilla = opciones.parrilla;
     this.#favoritos = opciones.favoritos;
     this.#afinidad = opciones.afinidad;
@@ -1179,9 +1189,11 @@ export class Presentador {
       orden recomendado empieza por lo más reciente—. Pidiendo veinte justas,
       esa fila se quedaba vacía.
     */
-    // El historial, una sola vez: lo usan la fila de "seguir viendo" y la
-    // lista de lo ya visto, que se cae del resto del inicio.
+    // El historial, una sola vez: lo usa la fila de "seguir viendo".
     const historial = await this.#historialDelPerfil();
+    // Y lo ya visto, que no sale de ahí: el historial son los últimos
+    // cuarenta avances y lo visto puede ser de hace meses.
+    const vistas = await (this.#vistas?.() ?? Promise.resolve([])).catch(() => [] as string[]);
 
     const cuantas = CARRUSEL * DE_SOBRA;
     /*
@@ -1297,9 +1309,7 @@ export class Presentador {
       Solo las películas: en una serie, terminar un capítulo no es terminar la
       serie, y para eso ya está el relevo de "seguir viendo".
     */
-    for (const avance of historial) {
-      if (avance.clase === 'pelicula' && estaTerminado(avance)) puestas.add(avance.itemId);
-    }
+    for (const id of vistas) puestas.add(id);
 
     const anadir = async (
       titulo: string,

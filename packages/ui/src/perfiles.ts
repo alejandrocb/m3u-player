@@ -137,6 +137,18 @@ export interface AlmacenPerfiles {
   anotarAvance(perfilId: string, avance: Avance): Promise<void>;
   /** Lo empezado y sin terminar, de lo más reciente a lo más viejo. */
   seguirViendo(perfilId: string, limite?: number): Promise<Avance[]>;
+  /**
+   * Las películas que este perfil ya se ha visto enteras.
+   *
+   * Va aparte de `seguirViendo` porque aquello devuelve **lo más reciente** y
+   * poco: una película vista hace dos meses no entra en esos cuarenta avances,
+   * y seguía saliendo en "Novedades" como si fuera nueva. Aquí no hay límite,
+   * pero tampoco hace falta traerse nada gordo: son identificadores.
+   *
+   * Solo películas. En una serie, terminar un capítulo no es terminar la
+   * serie, y para eso está el relevo al siguiente.
+   */
+  vistas(perfilId: string): Promise<string[]>;
   /** Por dónde iba una cosa concreta, si es que se empezó. */
   avanceDe(perfilId: string, clase: ClaseMedio, itemId: string): Promise<Avance | null>;
   /**

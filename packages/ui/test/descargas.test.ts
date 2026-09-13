@@ -63,12 +63,16 @@ function montar(inicial: Descarga[] = []) {
   const arbitro = new Arbitro(1);
   let reloj = 1_000;
   const esperas: Array<() => void> = [];
+  const borrados: string[] = [];
   const cola = new ColaDeDescargas({
     arbitro,
     transferencia: transporte.transferencia,
     almacen,
     ahora: () => reloj,
     esperar: (hacer) => esperas.push(hacer),
+    borrarFichero: async (descarga) => {
+      borrados.push(descarga.fichero);
+    },
   });
 
   /*
@@ -86,7 +90,11 @@ function montar(inicial: Descarga[] = []) {
     await cola.reintentar();
   };
 
-  return { cola, arbitro, transporte, filas, pasarElEnfriamiento };
+  const avanzarReloj = (ms: number): void => {
+    reloj += ms;
+  };
+
+  return { cola, arbitro, transporte, filas, pasarElEnfriamiento, avanzarReloj, borrados };
 }
 
 test('lo añadido arranca solo y se apunta en la base', async () => {
@@ -262,8 +270,8 @@ test('cortarse una y otra vez sin avanzar sí es un fallo', async () => {
   assert.equal(cola.de('pelicula:la-imposible')?.error, null);
 });
 
-test('quitar una borra su fila y deja paso a la siguiente', async () => {
-  const { cola, transporte, filas, pasarElEnfriamiento } = montar();
+test('quitar una borra su fila, su fichero y deja paso a la siguiente', async () => {
+  const { cola, transporte, filas, pasarElEnfriamiento, borrados } = montar();
   await cola.anadir(pelicula('fuera'));
   await cola.anadir(pelicula('detras'));
 
@@ -274,6 +282,38 @@ test('quitar una borra su fila y deja paso a la siguiente', async () => {
   assert.ok(!filas.has('pelicula:fuera'));
   assert.equal(cola.de('pelicula:detras')?.estado, 'bajando');
   assert.deepEqual(transporte.cancelaciones, ['pelicula:fuera']);
+  /*
+    Y el fichero se va con ella: si no, la lista enseña cero descargas y el
+    disco tiene dos gigas ocupados que nadie sabe de dónde salen.
+  */
+  assert.deepEqual(borrados, ['pelicula-fuera.mkv']);
+});
+
+test('la velocidad se mide sobre unos segundos, no sobre el último aviso', async () => {
+  /*
+    El aviso de avance llega dos veces por segundo. Calculando la velocidad
+    entre dos avisos seguidos, el número baila tanto que no se puede leer y el
+    "faltan X minutos" salta de dos a veinte. Se mide sobre una ventana.
+  */
+  const { cola, transporte, avanzarReloj } = montar();
+  await cola.anadir(pelicula('la-que-corre'));
+
+  transporte.ultima().alAvanzar(1_000_000, 100_000_000);
+  assert.equal(cola.marcha().bytesPorSegundo, null, 'sin ventana cumplida no hay número');
+
+  // Diez segundos desde que arrancó, diez megas en el disco: 1 MB/s.
+  avanzarReloj(10_000);
+  transporte.ultima().alAvanzar(10_000_000, 100_000_000);
+
+  const marcha = cola.marcha();
+  assert.equal(Math.round(marcha.bytesPorSegundo ?? 0), 1_000_000);
+  // Faltan 90 MB a un mega por segundo: noventa segundos.
+  assert.equal(Math.round(marcha.quedan ?? 0), 90);
+});
+
+test('sin nada bajando no hay velocidad que enseñar', async () => {
+  const { cola } = montar();
+  assert.deepEqual(cola.marcha(), { bytesPorSegundo: null, quedan: null });
 });
 
 test('el nombre del fichero no lleva la extensión de la URL', () => {

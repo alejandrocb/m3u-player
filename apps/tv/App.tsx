@@ -43,6 +43,7 @@ import type {
   Elemento,
   EstadoPantalla,
   Ficha as FichaDetalle,
+  Marcha,
   FilaInicio,
   Formato,
   FormatoFila,
@@ -74,7 +75,7 @@ import {
 } from '@m3u/ui';
 
 import { almacenDeCuentas } from './src/almacen';
-import { rutaDe, transferenciaDeAndroid } from './src/descargas-base';
+import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -297,6 +298,8 @@ function Raiz() {
         transferencia: transferenciaDeAndroid(),
         almacen: descargasDeLaBase,
         alCambiar: setDescargas,
+        // Quitar una descarga tiene que dejar el disco como estaba.
+        borrarFichero,
       });
       // Lo que quedó a medias anoche sigue por donde iba.
       void cola.current.cargar();
@@ -614,6 +617,10 @@ function BibliotecaVista({
   const [verAjustes, setVerAjustes] = useState(false);
   /** La lista de descargas, que cuelga del menú del perfil. */
   const [verDescargas, setVerDescargas] = useState(false);
+  /** Cuánto ocupan y cuánto queda libre. Se mide al abrir, no en cada pintado. */
+  const [disco, setDisco] = useState<{ ocupado: number; libre: number } | null>(null);
+  /** A qué velocidad va lo que se está bajando, para el tiempo estimado. */
+  const [marcha, setMarcha] = useState<Marcha>({ bytesPorSegundo: null, quedan: null });
   /**
    * El capítulo que va después del que se está viendo.
    *
@@ -838,6 +845,7 @@ function BibliotecaVista({
       // De más a propósito: el presentador deja una sola fila por serie, así
       // que pedir doce justas dejaría la fila a medias.
       seguirViendo: () => perfiles.seguirViendo(perfil.id, 40),
+      vistas: () => perfiles.vistas(perfil.id),
       /*
         Y de aquí sale si un canal sigue teniendo sitio en "seguir viendo":
         mientras no termine el programa que se estaba viendo. Solo de lo
@@ -1046,6 +1054,28 @@ function BibliotecaVista({
     pintado lo volvería a disparar.
   */
   const pararDescarga = useCallback((id: string) => cola?.expulsar(id), [cola]);
+
+  /*
+    Mientras el panel de descargas está abierto se mira el disco y la
+    velocidad una vez por segundo.
+
+    Va con reloj y no con el aviso de la cola porque son dos cosas que no
+    cambian al mismo ritmo: el avance llega dos veces por segundo y medir el
+    disco es recorrer una carpeta, que no hay por qué hacer tan a menudo.
+    Cerrado el panel, no se mide nada.
+  */
+  useEffect(() => {
+    if (!verDescargas) return;
+
+    const mirar = (): void => {
+      setMarcha(cola?.marcha() ?? { bytesPorSegundo: null, quedan: null });
+      void espacio().then(setDisco).catch(() => setDisco(null));
+    };
+
+    mirar();
+    const reloj = setInterval(mirar, 1_000);
+    return () => clearInterval(reloj);
+  }, [verDescargas, cola]);
 
   const meterEnCola = useCallback(
     async (medio: { clase: string; id: string; titulo: string }) => {
@@ -1905,33 +1935,90 @@ function BibliotecaVista({
         se quita algo si estorba y se sale. Con el mando se recorre con arriba
         y abajo, como el resto de menús.
       */}
+      {/*
+        Las descargas: lo bajado, lo que está bajando y cuánto ocupa todo.
+
+        Va como panel y no como pantalla porque no se navega por ella. Cada
+        descarga trae **dos acciones**, y no una: la de la izquierda cambia
+        según el estado —reproducir lo bajado, pausar lo que corre, reanudar lo
+        parado— y la de la derecha siempre borra. Tenerlo todo en un solo toque
+        obligaba a quitar una descarga para pausarla.
+      */}
       {verDescargas ? (
         <View style={estilos.panelDescargas}>
-          <Text style={estilos.menuNombre}>Descargas</Text>
-          {descargas.map((una) => (
-            <Pressable
-              key={una.id}
-              focusable={false}
-              style={estilos.menuOpcion}
-              onPress={() => void cola?.quitar(una.id)}
-            >
-              <Text style={estilos.menuOpcionTexto} numberOfLines={1}>
-                {una.titulo}
+          <View style={estilos.descargaCabecera}>
+            <Text style={estilos.menuNombre}>Descargas</Text>
+            <Text style={estilos.descargaAyuda}>
+              {cantidad(descargas.filter((una) => una.estado === 'hecha').length, 'bajada', 'bajadas')}
+              {disco ? ` · ${megas(disco.ocupado)} ocupados · ${megas(disco.libre)} libres` : ''}
+            </Text>
+          </View>
+
+          <ScrollView style={estilos.descargaLista}>
+            {descargas.length === 0 ? (
+              <Text style={estilos.descargaAyuda}>
+                Todavía no has descargado nada. Mantén pulsada una película y elige Descargar.
               </Text>
-              <Text style={estilos.descargaEstado}>{comoVaLaDescarga(una)}</Text>
-              {una.total ? (
-                <View style={estilos.descargaBarra}>
-                  <View
-                    style={[
-                      estilos.descargaBarraHecha,
-                      { width: `${Math.min(100, Math.round((una.bytes / una.total) * 100))}%` },
-                    ]}
-                  />
+            ) : null}
+
+            {descargas.map((una) => (
+              <View key={una.id} style={estilos.descargaFila}>
+                <Text style={estilos.menuOpcionTexto} numberOfLines={1}>
+                  {una.titulo}
+                </Text>
+                <Text style={estilos.descargaEstado}>
+                  {comoVaLaDescarga(una, una.estado === 'bajando' ? marcha : null)}
+                </Text>
+
+                {una.total && una.estado !== 'hecha' ? (
+                  <View style={estilos.descargaBarra}>
+                    <View
+                      style={[
+                        estilos.descargaBarraHecha,
+                        { width: `${Math.min(100, Math.round((una.bytes / una.total) * 100))}%` },
+                      ]}
+                    />
+                  </View>
+                ) : null}
+
+                <View style={estilos.descargaBotones}>
+                  <Pressable
+                    focusable={false}
+                    style={estilos.descargaBoton}
+                    onPress={() => {
+                      if (una.estado === 'hecha') {
+                        setVerDescargas(false);
+                        setReproduciendo({ clase: una.clase, id: una.itemId, titulo: una.titulo });
+                        setAPantallaCompleta(true);
+                        return;
+                      }
+                      if (una.estado === 'pausada' || una.estado === 'fallida') {
+                        void cola?.anadir(una);
+                        return;
+                      }
+                      void cola?.pausar(una.id);
+                    }}
+                  >
+                    <Text style={estilos.descargaBotonTexto}>
+                      {una.estado === 'hecha'
+                        ? 'Reproducir'
+                        : una.estado === 'pausada' || una.estado === 'fallida'
+                          ? 'Reanudar'
+                          : 'Pausar'}
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    focusable={false}
+                    style={estilos.descargaBoton}
+                    onPress={() => void cola?.quitar(una.id)}
+                  >
+                    <Text style={estilos.descargaBotonTexto}>Eliminar</Text>
+                  </Pressable>
                 </View>
-              ) : null}
-            </Pressable>
-          ))}
-          <Text style={estilos.descargaAyuda}>Toca una para quitarla de la lista</Text>
+              </View>
+            ))}
+          </ScrollView>
         </View>
       ) : null}
 
@@ -2738,16 +2825,52 @@ const Destacado = memo(function Destacado({
  * siempre manda `Content-Length`, y un porcentaje inventado es peor que un
  * número que crece.
  */
-function comoVaLaDescarga(descarga: Descarga): string {
-  const megas = (bytes: number): string => `${Math.round(bytes / 1_000_000)} MB`;
+function megas(bytes: number): string {
+  return bytes >= 1_000_000_000
+    ? `${(bytes / 1_000_000_000).toFixed(1).replace('.', ',')} GB`
+    : `${Math.round(bytes / 1_000_000)} MB`;
+}
 
+/**
+ * Lo que falta, en palabras.
+ *
+ * En minutos redondos a partir de uno: "faltan 94 segundos" no lo lee nadie, y
+ * sobre una descarga de hora y media la precisión del segundo es mentira.
+ */
+function loQueFalta(segundos: number): string {
+  if (segundos < 60) return 'menos de un minuto';
+  const minutos = Math.round(segundos / 60);
+  if (minutos < 60) return `${minutos} min`;
+  const horas = Math.floor(minutos / 60);
+  return `${horas} h ${minutos % 60} min`;
+}
+
+/**
+ * Cómo va una descarga, en una línea.
+ *
+ * En megas y no en porcentaje mientras no se sepa el tamaño: el panel no
+ * siempre manda `Content-Length`, y un porcentaje inventado es peor que un
+ * número que crece.
+ */
+function comoVaLaDescarga(descarga: Descarga, marcha: Marcha | null): string {
   if (descarga.estado === 'hecha') return `Bajada · ${megas(descarga.bytes)}`;
   if (descarga.estado === 'fallida') return `Falló · ${descarga.error ?? 'sin motivo'}`;
   if (descarga.estado === 'pausada') return `En pausa · ${megas(descarga.bytes)}`;
   if (descarga.estado === 'en cola') return 'Esperando turno';
-  return descarga.total
+
+  const cuanto = descarga.total
     ? `${Math.round((descarga.bytes / descarga.total) * 100)} % · ${megas(descarga.bytes)} de ${megas(descarga.total)}`
     : `Bajando · ${megas(descarga.bytes)}`;
+
+  // La velocidad y el tiempo solo cuando hay con qué calcularlos: durante los
+  // primeros segundos no hay ventana que medir, y un número inventado ahí es
+  // el que luego nadie se cree.
+  const aCuanto = marcha?.bytesPorSegundo
+    ? ` · ${(marcha.bytesPorSegundo / 1_000_000).toFixed(1).replace('.', ',')} MB/s`
+    : '';
+  const falta = marcha?.quedan ? ` · faltan ${loQueFalta(marcha.quedan)}` : '';
+
+  return `${cuanto}${aCuanto}${falta}`;
 }
 
 /**
@@ -3474,6 +3597,34 @@ const estilos = StyleSheet.create({
     color: TINTA_SUAVE,
     fontSize: 24,
     lineHeight: 26,
+  },
+  descargaCabecera: {
+    gap: 4,
+    marginBottom: 4,
+  },
+  descargaLista: {
+    maxHeight: 420,
+  },
+  descargaFila: {
+    borderTopColor: '#1d3a4d',
+    borderTopWidth: 1,
+    gap: 4,
+    paddingVertical: 10,
+  },
+  descargaBotones: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  descargaBoton: {
+    backgroundColor: '#16324a',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  descargaBotonTexto: {
+    color: TINTA,
+    fontSize: 14,
   },
   panelDescargas: {
     backgroundColor: '#0d2231',

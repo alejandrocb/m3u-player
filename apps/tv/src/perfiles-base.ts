@@ -27,6 +27,7 @@ import type {
 } from '@m3u/ui';
 import {
   CLAVE_REPRODUCCION,
+  FIN_PELICULA,
   ajustesDesde,
   claveDeMedio,
   colorLibre,
@@ -316,6 +317,22 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
           ORDER BY updated DESC LIMIT ?`,
         [perfilId, limite],
       ).map(aAvance);
+    },
+
+    async vistas(perfilId: string): Promise<string[]> {
+      /*
+        El umbral se interpola porque es un número nuestro, no algo que venga
+        de fuera, y así el criterio vive en un solo sitio: `FIN_PELICULA`.
+        Sin `duration > 0` entrarían los directos y lo que se anotó sin saber
+        cuánto duraba, que compararía contra cero y saldría todo "visto".
+      */
+      return filas(
+        db,
+        `SELECT item_id FROM progress
+          WHERE profile_id = ? AND kind = 'pelicula' AND deleted = 0
+            AND duration > 0 AND seconds >= duration * ${FIN_PELICULA}`,
+        [perfilId],
+      ).map((fila) => fila.item_id as string);
     },
 
     async avanceDe(perfilId: string, clase: ClaseMedio, itemId: string): Promise<Avance | null> {

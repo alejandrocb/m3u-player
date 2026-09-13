@@ -420,17 +420,13 @@ test('una película ya vista no vuelve a salir en el inicio', async () => {
     Solo las películas: en una serie, terminar un capítulo no es terminar la
     serie, y para eso ya está el relevo al siguiente.
   */
+  /*
+    Lo visto llega por su propia puerta y no del historial: aquel son los
+    últimos cuarenta avances, y una película vista hace dos meses no está ahí
+    —seguía saliendo en "Novedades" como si fuera nueva—.
+  */
   const presentador = new Presentador(bibliotecaFalsa(60), {
-    seguirViendo: async () => [
-      {
-        clase: 'pelicula',
-        itemId: 'p0',
-        titulo: 'Película 0',
-        segundos: 6000,
-        duracion: 6100,
-        visto: new Date().toISOString(),
-      },
-    ],
+    vistas: async () => ['p0'],
   });
 
   const enFilas = (estado: EstadoPantalla): string[] =>

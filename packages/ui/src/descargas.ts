@@ -91,6 +91,14 @@ export interface OpcionesCola {
   almacen: AlmacenDescargas;
   /** Se avisa a la vista cada vez que la cola cambia. */
   alCambiar?: (descargas: Descarga[]) => void;
+  /**
+   * Borra el fichero de una descarga que se quita.
+   *
+   * Va aquí y no en el transporte porque quitar algo de la lista tiene que
+   * dejar el disco como estaba: si no, lo que se ve son cero descargas y dos
+   * gigas ocupados que nadie sabe de dónde salen.
+   */
+  borrarFichero?: (descarga: Descarga) => Promise<void>;
   /** Para poder probar sin esperar. */
   ahora?: () => number;
   /** Ídem: en los tests se dispara a mano en vez de esperar de verdad. */
@@ -121,11 +129,22 @@ const CORTES_SEGUIDOS = 5;
 /** Cuánto se espera antes de volver a intentarlo tras un corte. */
 const TRAS_UN_CORTE_MS = 5_000;
 
+/**
+ * Sobre cuánto rato se mide la velocidad.
+ *
+ * Ni el instante ni la media de toda la descarga: lo primero da un número que
+ * baila diez veces por segundo y no se puede leer, y lo segundo tarda minutos
+ * en enterarse de que el wifi ha mejorado. Diez segundos es lo que hace que el
+ * "faltan 12 minutos" signifique algo.
+ */
+const VENTANA_MS = 10_000;
+
 export class ColaDeDescargas {
   #arbitro: Arbitro;
   #transferencia: Transferencia;
   #almacen: AlmacenDescargas;
   #alCambiar: OpcionesCola['alCambiar'];
+  #borrarFichero: OpcionesCola['borrarFichero'];
   #ahora: () => number;
 
   #cola: Descarga[] = [];
@@ -136,12 +155,16 @@ export class ColaDeDescargas {
   #esperar: (hacer: () => void, ms: number) => void;
   /** Hay una vuelta ya programada: no se apilan dos. */
   #programada = false;
+  /** Por dónde iba hace un rato, para poder medir la velocidad. */
+  #hace: { cuando: number; bytes: number } | null = null;
+  #marcha: Marcha = { bytesPorSegundo: null, quedan: null };
 
   constructor(opciones: OpcionesCola) {
     this.#arbitro = opciones.arbitro;
     this.#transferencia = opciones.transferencia;
     this.#almacen = opciones.almacen;
     this.#alCambiar = opciones.alCambiar;
+    this.#borrarFichero = opciones.borrarFichero;
     this.#ahora = opciones.ahora ?? (() => Date.now());
     this.#esperar = opciones.esperar ?? ((hacer, ms) => setTimeout(hacer, ms));
   }
@@ -168,6 +191,16 @@ export class ColaDeDescargas {
 
   de(id: string): Descarga | undefined {
     return this.#cola.find((descarga) => descarga.id === id);
+  }
+
+  /**
+   * A qué velocidad va lo que se está bajando y cuánto le falta.
+   *
+   * Solo hay una a la vez, así que no hace falta decir de cuál: es la que
+   * esté en "bajando".
+   */
+  marcha(): Marcha {
+    return this.#bajando ? this.#marcha : { bytesPorSegundo: null, quedan: null };
   }
 
   /**
@@ -204,11 +237,17 @@ export class ColaDeDescargas {
     await this.#seguir();
   }
 
-  /** La quita de la cola. Si estaba bajando, se corta primero. */
+  /** La quita de la cola y borra lo que hubiera bajado. */
   async quitar(id: string): Promise<void> {
     if (this.#bajando === id) this.#parar();
-    this.#cola = this.#cola.filter((descarga) => descarga.id !== id);
+
+    const descarga = this.de(id);
+    this.#cola = this.#cola.filter((una) => una.id !== id);
     await this.#almacen.borrar(id);
+    // Después de sacarla de la lista: si el borrado falla, la fila ya no está
+    // y no queda una descarga fantasma apuntando a un fichero a medias.
+    if (descarga) await this.#borrarFichero?.(descarga).catch(() => undefined);
+
     this.#avisar();
     await this.#seguir();
   }
@@ -313,6 +352,8 @@ export class ColaDeDescargas {
     // Por dónde iba al empezar: es lo que dice, si esto se corta, si ha
     // avanzado algo o se ha quedado clavada.
     const arrancoEn = siguiente.bytes;
+    this.#hace = { cuando: this.#ahora(), bytes: siguiente.bytes };
+    this.#marcha = { bytesPorSegundo: null, quedan: null };
 
     this.#cancelar = this.#transferencia.empezar({
       descarga: siguiente,
@@ -321,11 +362,31 @@ export class ColaDeDescargas {
         siguiente.bytes = bytes;
         if (total !== null) siguiente.total = total;
 
+        /*
+          La velocidad, sobre una ventana de unos segundos. La referencia se
+          mueve solo cuando la ventana se cumple: comparando contra el aviso
+          anterior —que llega dos veces por segundo— el número baila tanto que
+          no se puede leer.
+        */
+        const ahora = this.#ahora();
+        const desdeHace = this.#hace;
+        if (desdeHace && ahora - desdeHace.cuando >= VENTANA_MS) {
+          const segundos = (ahora - desdeHace.cuando) / 1000;
+          const porSegundo = Math.max(0, (bytes - desdeHace.bytes) / segundos);
+          this.#marcha = {
+            bytesPorSegundo: porSegundo,
+            quedan:
+              porSegundo > 0 && siguiente.total !== null
+                ? Math.max(0, (siguiente.total - bytes) / porSegundo)
+                : null,
+          };
+          this.#hace = { cuando: ahora, bytes };
+        }
+
         // A la vista se le avisa siempre —es una barra que se mueve— y a la
         // base cada pocos segundos, que es un dato que solo hace falta al
         // reanudar.
         this.#avisar();
-        const ahora = this.#ahora();
         if (ahora - this.#ultimoApunte >= APUNTAR_CADA_MS) {
           this.#ultimoApunte = ahora;
           void this.#apuntar(siguiente);
@@ -390,6 +451,19 @@ export class ColaDeDescargas {
   #avisar(): void {
     this.#alCambiar?.(this.todas());
   }
+}
+
+/**
+ * A qué velocidad va y cuánto le falta.
+ *
+ * Se calcula aquí y no al pintar porque hace falta recordar por dónde iba hace
+ * unos segundos, y la vista se vuelve a pintar entera cada vez.
+ */
+export interface Marcha {
+  /** Bytes por segundo. `null` mientras no haya con qué compararlo. */
+  bytesPorSegundo: number | null;
+  /** Segundos que faltan, si se sabe el tamaño total. */
+  quedan: number | null;
 }
 
 /** La clave con la que se identifica una descarga. */
