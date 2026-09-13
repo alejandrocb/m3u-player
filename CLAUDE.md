@@ -911,6 +911,25 @@ Tres decisiones sostienen lo demás:
 - **Lo bajado se reproduce del disco**, sin tocar el panel: ni petición ni
   ranura. Ver algo que ya tienes no le quita la conexión a nadie de la casa.
 
+**En la mano se baja más pequeño que en el salón.** El proveedor manda la misma
+película en varias calidades y la mejor son cinco gigas: en una pantalla de
+diez pulgadas 720p no se distingue y ocupa menos de la mitad, mientras que en
+el televisor sí se nota y allí el disco no es el problema. Lo decide
+`varianteParaDescargar` con `TOPE_DE_MANO`, y el tope depende del aparato
+(`Platform.isTV`), no del gusto de nadie.
+
+Dos casos que no son obvios: si **todas** pasan del tope —hay títulos que solo
+están en 1080p— se coge la menos pesada, que es mejor que no ofrecer nada; y
+una calidad que no se reconoce **no cuenta como la más pequeña**, porque su
+rango vale cero y ganaría siempre esa comparación sin que nadie sepa lo que es.
+
+Y para entender los tamaños: nuestros ficheros son ripeos en H.264 con dos o
+tres pistas de audio, y Netflix sirve H.265, VP9 o AV1 codificando plano a
+plano. *Friends* pesa lo que pesa porque su remasterización viene del negativo
+de 35 mm y **el grano es lo más caro de comprimir**; AV1 lo quita antes de
+codificar y lo vuelve a sintetizar al reproducir. Recodificar en el aparato no
+es una opción: horas de CPU por película para un resultado peor.
+
 El fichero va en la **carpeta privada de la aplicación**: sin permisos de
 almacenamiento que pedir, sin mezclarse con las fotos, y se va al desinstalar.
 No se puede sacar por USB, que no es lo que se busca.

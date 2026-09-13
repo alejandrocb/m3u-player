@@ -466,6 +466,48 @@ export interface Marcha {
   quedan: number | null;
 }
 
+/**
+ * Hasta qué calidad se baja en un aparato de mano.
+ *
+ * Una película de 5,3 GB es 1080p con grano y tres pistas de audio. En una
+ * pantalla de diez pulgadas, 720p no se distingue y ocupa menos de la mitad;
+ * en el televisor del salón sí se nota, y allí además el disco no es el
+ * problema. De ahí que el tope dependa del aparato y no del gusto de nadie.
+ */
+export const TOPE_DE_MANO = 720;
+
+/**
+ * Qué variante bajar, de las que manda el proveedor.
+ *
+ * Vienen ordenadas de mejor a peor. Con `tope`, se coge **la mejor que no lo
+ * pase**; si todas lo pasan —hay títulos que solo están en 1080p— se coge la
+ * menos pesada, que es preferible a no ofrecer nada o a bajarse cinco gigas
+ * en un teléfono.
+ */
+export function varianteParaDescargar<T extends { calidad: string | null }>(
+  variantes: T[],
+  tope: number | null,
+  rango: (calidad: string | null) => number,
+): T | undefined {
+  if (variantes.length === 0) return undefined;
+  if (tope === null) return variantes[0];
+
+  /*
+    Una calidad desconocida vale 0 en el rango, y eso la haría "la más
+    pequeña" cuando en realidad no se sabe lo que es. Se deja para el final:
+    entre algo medido y algo por saber, manda lo medido.
+  */
+  const conocidas = variantes.filter((una) => rango(una.calidad) > 0);
+  if (conocidas.length === 0) return variantes[0];
+
+  const cabe = conocidas.filter((una) => rango(una.calidad) <= tope);
+  if (cabe.length > 0) {
+    return cabe.reduce((mejor, una) => (rango(una.calidad) > rango(mejor.calidad) ? una : mejor));
+  }
+
+  return conocidas.reduce((menor, una) => (rango(una.calidad) < rango(menor.calidad) ? una : menor));
+}
+
 /** La clave con la que se identifica una descarga. */
 export function claveDeDescarga(clase: 'pelicula' | 'episodio', itemId: string): string {
   return `${clase}:${itemId}`;

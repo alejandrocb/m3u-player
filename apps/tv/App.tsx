@@ -31,7 +31,7 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { avanceDePrograma, leerClaveDeEpisodio, programaActual } from '@m3u/core';
+import { avanceDePrograma, leerClaveDeEpisodio, programaActual, qualityRank } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 import type {
   Ajustes,
@@ -62,8 +62,10 @@ import {
   Arbitro,
   ColaDeDescargas,
   MODOS_INICIO,
+  TOPE_DE_MANO,
   claveDeDescarga,
   ficheroDe,
+  varianteParaDescargar,
   canalDeElemento,
   medioDeElemento,
   elementosDeFila,
@@ -1091,7 +1093,14 @@ function BibliotecaVista({
       const clase = medio.clase;
 
       const variantes = await biblioteca.variantes(clase, medio.id).catch(() => []);
-      const mejor = variantes[0];
+      /*
+        **En la mano se baja más pequeño que en el salón.** El proveedor manda
+        la misma película en varias calidades y la mejor son cinco gigas: en
+        una pantalla de diez pulgadas 720p no se distingue y ocupa menos de la
+        mitad. En el televisor manda la mejor, que ahí sí se nota y el disco no
+        es el problema.
+      */
+      const mejor = varianteParaDescargar(variantes, Platform.isTV ? null : TOPE_DE_MANO, qualityRank);
       if (!mejor) {
         setAviso('Esta ficha no tiene ninguna URL asociada');
         return;
@@ -1108,7 +1117,7 @@ function BibliotecaVista({
         url: mejor.url,
         fichero: ficheroDe(clave, extension),
       });
-      setAviso(`${medio.titulo} · a la cola de descargas`);
+      setAviso(`${medio.titulo} · a la cola de descargas${mejor.calidad ? ` (${mejor.calidad})` : ''}`);
     },
     [biblioteca, cola],
   );

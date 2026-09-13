@@ -11,7 +11,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { Arbitro, ENFRIAMIENTO_MS } from '../src/arbitro.ts';
-import { ColaDeDescargas, claveDeDescarga, ficheroDe } from '../src/descargas.ts';
+import { qualityRank } from '@m3u/core';
+
+import {
+  ColaDeDescargas,
+  TOPE_DE_MANO,
+  claveDeDescarga,
+  ficheroDe,
+  varianteParaDescargar,
+} from '../src/descargas.ts';
 import type { AlmacenDescargas, Descarga, Transferencia } from '../src/descargas.ts';
 
 /** Un transporte que no toca ficheros: guarda las órdenes para dispararlas a mano. */
@@ -314,6 +322,48 @@ test('la velocidad se mide sobre unos segundos, no sobre el último aviso', asyn
 test('sin nada bajando no hay velocidad que enseñar', async () => {
   const { cola } = montar();
   assert.deepEqual(cola.marcha(), { bytesPorSegundo: null, quedan: null });
+});
+
+test('en un aparato de mano se baja la mejor que no pase de 720p', () => {
+  /*
+    Una película de 5,3 GB es 1080p con grano y tres pistas de audio. En diez
+    pulgadas 720p no se distingue y ocupa menos de la mitad; en el televisor
+    sí se nota, y allí el disco no es el problema.
+  */
+  const variantes = [
+    { calidad: '1080p', url: 'a' },
+    { calidad: '720p', url: 'b' },
+    { calidad: 'SD', url: 'c' },
+  ];
+
+  assert.equal(varianteParaDescargar(variantes, TOPE_DE_MANO, qualityRank)?.url, 'b');
+  // Sin tope —el televisor— manda la mejor, que es como vienen ordenadas.
+  assert.equal(varianteParaDescargar(variantes, null, qualityRank)?.url, 'a');
+});
+
+test('si todas pasan del tope se coge la menos pesada', () => {
+  // Hay títulos que el proveedor solo manda en 1080p: mejor esa que nada.
+  const variantes = [
+    { calidad: '4K', url: 'a' },
+    { calidad: '1080p', url: 'b' },
+  ];
+
+  assert.equal(varianteParaDescargar(variantes, TOPE_DE_MANO, qualityRank)?.url, 'b');
+});
+
+test('una calidad que no se reconoce no se toma por la más pequeña', () => {
+  /*
+    Sin calidad, el rango vale cero, y eso la haría ganar siempre en la
+    comparación de "la menos pesada" cuando en realidad no se sabe lo que es.
+    Entre algo medido y algo por saber, manda lo medido.
+  */
+  const variantes = [
+    { calidad: null, url: 'a' },
+    { calidad: '720p', url: 'b' },
+  ];
+
+  assert.equal(varianteParaDescargar(variantes, TOPE_DE_MANO, qualityRank)?.url, 'b');
+  assert.equal(varianteParaDescargar([{ calidad: null, url: 'a' }], TOPE_DE_MANO, qualityRank)?.url, 'a');
 });
 
 test('el nombre del fichero no lleva la extensión de la URL', () => {
