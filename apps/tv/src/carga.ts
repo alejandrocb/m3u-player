@@ -191,7 +191,9 @@ export async function cargarCatalogo(
     : null;
 
   const guardado = estadoGuardado(db, cuenta.id);
-  if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) {
+
+  /** Abrir con lo que ya hay en la base, sin preguntarle nada al panel. */
+  const conLoGuardado = async (tiene: NonNullable<typeof guardado>): Promise<Cargada> => {
     if (opciones.fichas) await recogerFichas(db, biblioteca, opciones.fichas);
     const totales = await biblioteca.totales();
     return {
@@ -202,8 +204,8 @@ export async function cargarCatalogo(
       medicion: {
         total: Date.now() - arranque,
         via: 'guardada',
-        importada: guardado.importada,
-        dias: guardado.dias,
+        importada: tiene.importada,
+        dias: tiene.dias,
         canales: totales.canales,
         peliculas: totales.peliculas,
         series: totales.series,
@@ -211,13 +213,42 @@ export async function cargarCatalogo(
         conexiones,
       },
     };
-  }
+  };
 
-  const library = cliente
-    ? await construirCatalogo(cliente, {
-        avance: (hecho, total, seccion) => avisar({ seccion, hecho, total }),
-      })
-    : await descargarM3U(cuenta.url, avisar);
+  if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) return conLoGuardado(guardado);
+
+  /*
+    **Si el refresco falla y hay catálogo guardado, se entra con el guardado.**
+
+    Un catálogo de cuatro días es perfectamente usable: le faltan los estrenos
+    de esta semana y nada más. Quedarse fuera de la aplicación entera porque el
+    panel ha tardado más de la cuenta en una de las sesenta y seis peticiones
+    es mucho peor, y es lo que pasaba: la pantalla de listas con un "Aborted"
+    en rojo y ninguna forma de seguir.
+
+    Sin nada guardado no hay nada que enseñar, así que ahí el fallo sí sale.
+  */
+  // Por dónde iba cuando se rompa: con sesenta y seis peticiones seguidas, un
+  // fallo sin esto no dice nada de dónde ha ocurrido.
+  let ultima = 'el saludo inicial';
+
+  console.log(`[catalogo] refrescando${guardado ? ` (lo guardado tiene ${guardado.dias} días)` : ' por primera vez'}`);
+
+  let library: Library;
+  try {
+    library = cliente
+      ? await construirCatalogo(cliente, {
+          avance: (hecho, total, seccion) => {
+            ultima = seccion;
+            avisar({ seccion, hecho, total });
+          },
+        })
+      : await descargarM3U(cuenta.url, avisar);
+  } catch (fallo) {
+    if (!guardado) throw fallo;
+    console.warn(`[catalogo] no se pudo refrescar en "${ultima}"; se sigue con lo guardado`, fallo);
+    return conLoGuardado(guardado);
+  }
 
   avisar({ seccion: 'Guardando', hecho: 1, total: 1 });
   guardarCatalogo(db, library, cuenta.id, conBusquedaRapida);

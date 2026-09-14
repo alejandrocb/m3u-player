@@ -345,6 +345,9 @@ function Raiz() {
       if (suyos.length === 1) setFase({ tipo: 'biblioteca', cuenta: elegida, medicion, perfil: suyos[0]! });
       else setFase({ tipo: 'perfiles', cuenta: elegida, medicion });
     } catch (fallo) {
+      // Sin esto, el fallo solo existía en la pantalla: un rótulo rojo que no
+      // se puede copiar, sin nada que mirar después desde fuera.
+      console.warn('[conectar] no se pudo abrir la lista', fallo);
       biblioteca.current = null;
       setFase({ tipo: 'listas', error: fallo instanceof Error ? fallo.message : String(fallo) });
     }

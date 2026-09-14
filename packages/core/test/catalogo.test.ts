@@ -197,3 +197,30 @@ test('la decoración de las categorías se limpia, como en el M3U', () => {
   assert.equal(cleanGroup('== NOTICIAS'), 'NOTICIAS');
   assert.equal(cleanGroup('▶ DEPORTES |'), 'DEPORTES');
 });
+
+/**
+ * Un plazo agotado tiene que decir de qué petición.
+ *
+ * Abortar deja un `AbortError` cuyo mensaje es "Aborted" a secas, y eso
+ * acababa en la pantalla del aparato: una palabra en inglés que no dice ni qué
+ * se estaba pidiendo, ni a quién, ni cuánto se esperó.
+ */
+test('cuando se agota el plazo, el error dice a qué petición', async () => {
+  const cliente = new XtreamClient(
+    { base: 'http://panel:8080', username: 'u', password: 'p' },
+    {
+      timeoutMs: 20,
+      // Nunca contesta; solo se rinde si lo abortan.
+      fetch: (_url, opciones) =>
+        new Promise((_listo, fallar) => {
+          const señal = (opciones as { signal?: AbortSignal } | undefined)?.signal;
+          señal?.addEventListener('abort', () => fallar(new Error('Aborted')));
+        }) as ReturnType<typeof globalThis.fetch>,
+    },
+  );
+
+  const fallo = await cliente.vodStreams('10').catch((error: unknown) => error);
+  assert.ok(fallo instanceof Error);
+  assert.match(fallo.message, /no contestó en 0 s a get_vod_streams/);
+  assert.doesNotMatch(fallo.message, /Aborted/);
+});

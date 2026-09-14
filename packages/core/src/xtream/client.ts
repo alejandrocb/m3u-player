@@ -88,7 +88,18 @@ export class XtreamClient {
 
   private async request<T>(action?: string, params: Record<string, string | number> = {}): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    /*
+      **Que se agote el plazo tiene que decir de qué petición.** Abortar deja
+      un `AbortError` cuyo mensaje es "Aborted" a secas, y eso es lo que
+      acababa en pantalla: una palabra en inglés que no dice ni qué se estaba
+      pidiendo, ni a quién, ni cuánto se esperó. Con esta marca, el error que
+      sale de aquí se puede leer.
+    */
+    let seAgoto = false;
+    const timer = setTimeout(() => {
+      seAgoto = true;
+      controller.abort();
+    }, this.timeoutMs);
     try {
       const response = await this.fetchImpl(this.apiUrl(action, params), {
         signal: controller.signal,
@@ -105,6 +116,13 @@ export class XtreamClient {
       } catch {
         throw new XtreamError(`respuesta no JSON en ${action ?? 'handshake'}: ${text.slice(0, 80)}`);
       }
+    } catch (fallo) {
+      if (seAgoto) {
+        throw new XtreamError(
+          `el panel no contestó en ${Math.round(this.timeoutMs / 1000)} s a ${action ?? 'el saludo inicial'}`,
+        );
+      }
+      throw fallo;
     } finally {
       clearTimeout(timer);
     }
