@@ -80,6 +80,14 @@ export interface FichaTmdb {
   nota?: number;
   votos?: number;
   popularidad?: number;
+  /**
+   * Cuánto dura, en segundos.
+   *
+   * TMDb lo da en minutos y solo en la ficha, no en la búsqueda; de las series
+   * da la duración **de un episodio**, que es lo que sirve para sumar horas.
+   * Es lo que permite decir cuántas horas de vídeo hay bajadas en el disco.
+   */
+  duracion?: number;
 }
 
 export type ClaseTmdb = 'pelicula' | 'serie';
@@ -221,7 +229,10 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
    * Va en una sola petición con `append_to_response`: pedir los créditos y los
    * vídeos por separado serían tres viajes por película en vez de dos.
    */
-  async function elResto(id: number, clase: ClaseTmdb): Promise<{ reparto?: string; trailer?: string }> {
+  async function elResto(
+    id: number,
+    clase: ClaseTmdb,
+  ): Promise<{ reparto?: string; trailer?: string; duracion?: number }> {
     const donde = clase === 'serie' ? 'tv' : 'movie';
     const creditos = clase === 'serie' ? 'aggregate_credits' : 'credits';
     const datos = await pedir(`/${donde}/${id}?language=${IDIOMA}&append_to_response=videos,${creditos}`);
@@ -245,9 +256,19 @@ export function crearTmdb(token: string, opciones: { fetch?: typeof globalThis.f
       (video) => video.site === 'YouTube' && (video.type === 'Trailer' || video.type === 'Teaser'),
     )?.key;
 
+    /*
+      En minutos, y en las series como una lista —hay series con episodios de
+      duración distinta—: se coge la primera, que para sumar horas basta.
+    */
+    const minutos =
+      clase === 'serie'
+        ? (datos.episode_run_time as number[] | undefined)?.[0]
+        : (datos.runtime as number | undefined);
+
     return {
       reparto: reparto || undefined,
       trailer: typeof trailer === 'string' ? trailer : undefined,
+      duracion: minutos && minutos > 0 ? minutos * 60 : undefined,
     };
   }
 

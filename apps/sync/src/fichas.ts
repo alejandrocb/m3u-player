@@ -61,6 +61,8 @@ export interface FichaAveriguada {
   nota?: number;
   votos?: number;
   popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
 }
 
 export interface OpcionesFichas {
@@ -145,11 +147,21 @@ interface Candidata {
 async function delPanel(
   cliente: XtreamClient,
   panelId: number,
-): Promise<{ genero: string; sinopsis?: string; reparto?: string; fondo?: string; trailer?: string }> {
+): Promise<{
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  fondo?: string;
+  trailer?: string;
+  duracion?: number;
+}> {
   const info = (await cliente.vodInfo(panelId)).info;
   const trailer = info?.youtube_trailer?.trim();
+  // El panel la da en segundos, pero llega a 0 en bastantes fichas.
+  const segundos = Number(info?.duration_secs) || 0;
 
   return {
+    duracion: segundos > 0 ? segundos : undefined,
     genero: info?.genre?.trim() ?? '',
     sinopsis: info?.plot?.trim() || undefined,
     reparto: info?.cast?.trim() || undefined,

@@ -223,6 +223,8 @@ export interface FichaGuardada {
   nota?: number;
   votos?: number;
   popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
 }
 
 export interface ProgramaGuardado {
@@ -302,6 +304,7 @@ export class Panel {
       { columna: 'nota', tipo: 'REAL' },
       { columna: 'votos', tipo: 'INTEGER' },
       { columna: 'popularidad', tipo: 'REAL' },
+      { columna: 'duracion', tipo: 'INTEGER' },
     ].filter(({ columna }) => !existentes.has(columna));
 
     if (nuevas.length === 0) return;
@@ -699,8 +702,8 @@ export class Panel {
         this.#ejecutar(
           `INSERT INTO ficha
                 (lista_id, item_id, clase, genero, sinopsis, reparto, fondo, trailer,
-                 nota, votos, popularidad, completa, sello)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                 nota, votos, popularidad, duracion, completa, sello)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
            ON CONFLICT(lista_id, item_id) DO UPDATE SET
              clase    = excluded.clase,
              genero   = CASE WHEN excluded.genero <> '' THEN excluded.genero ELSE ficha.genero END,
@@ -711,6 +714,7 @@ export class Panel {
              nota     = COALESCE(excluded.nota, ficha.nota),
              votos    = COALESCE(excluded.votos, ficha.votos),
              popularidad = COALESCE(excluded.popularidad, ficha.popularidad),
+             duracion = COALESCE(excluded.duracion, ficha.duracion),
              completa = 1,
              sello    = excluded.sello`,
           [
@@ -725,6 +729,7 @@ export class Panel {
             ficha.nota ?? null,
             ficha.votos ?? null,
             ficha.popularidad ?? null,
+            ficha.duracion ?? null,
             /*
               **Un sello por fila, no uno por pasada.** El aparato pide "lo
               posterior a este sello" y se lleva mil de una vez: con el sello
@@ -776,11 +781,12 @@ export class Panel {
    */
   fichasDesde(listaId: string, desde: number, limite: number): { fichas: FichaGuardada[]; hasta: number } {
     const filas = this.#filas(
-      `SELECT item_id, clase, genero, sinopsis, reparto, fondo, trailer, nota, votos, popularidad, sello
+      `SELECT item_id, clase, genero, sinopsis, reparto, fondo, trailer, nota, votos, popularidad,
+              duracion, sello
          FROM ficha
         WHERE lista_id = ? AND sello > ?
           AND (genero <> '' OR sinopsis IS NOT NULL OR fondo IS NOT NULL OR trailer IS NOT NULL
-               OR nota IS NOT NULL)
+               OR nota IS NOT NULL OR duracion IS NOT NULL)
         ORDER BY sello, item_id LIMIT ?`,
       [listaId, desde, limite],
     );
@@ -797,6 +803,7 @@ export class Panel {
         nota: (fila.nota as number | null) ?? undefined,
         votos: (fila.votos as number | null) ?? undefined,
         popularidad: (fila.popularidad as number | null) ?? undefined,
+        duracion: (fila.duracion as number | null) ?? undefined,
       })),
       hasta: filas.reduce((alto, fila) => Math.max(alto, Number(fila.sello)), desde),
     };

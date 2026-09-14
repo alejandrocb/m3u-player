@@ -1083,6 +1083,27 @@ function BibliotecaVista({
     return () => clearInterval(reloj);
   }, [verDescargas, cola]);
 
+  /**
+   * Lo que dura una película, si se sabe de algún sitio.
+   *
+   * El catálogo no lo trae —`get_vod_streams` da título, cartel, nota y año— y
+   * el servidor todavía no lo manda. Lo único que hay es lo que apuntó el
+   * reproductor si alguien la empezó, que para "cuántas horas llevo bajadas"
+   * vale: lo que falte se cuenta como desconocido y se dice.
+   */
+  const duracionDePelicula = useCallback(
+    async (id: string): Promise<number | null> => {
+      // Primero la del catálogo, que la pone el servidor con la ficha larga.
+      const ficha = await biblioteca.detalleDePelicula(id).catch(() => null);
+      if (ficha?.duracion && ficha.duracion > 0) return Math.round(ficha.duracion);
+
+      // Y si no, lo que apuntó el reproductor si alguien la empezó.
+      const avance = await perfiles.avanceDe(perfil.id, 'pelicula', id).catch(() => null);
+      return avance?.duracion && avance.duracion > 0 ? Math.round(avance.duracion) : null;
+    },
+    [biblioteca, perfiles, perfil.id],
+  );
+
   const meterEnCola = useCallback(
     async (medio: { clase: string; id: string; titulo: string }) => {
       if (!cola) {
@@ -1106,16 +1127,40 @@ function BibliotecaVista({
         return;
       }
 
+      /*
+        De un episodio, el título que se guarda lleva **la serie, la temporada
+        y el número**: en la lista de descargas, "El de George" a secas no dice
+        de qué serie es ni por dónde va, y con media temporada bajada son diez
+        títulos que no se distinguen.
+
+        De paso sale la duración, que es lo que permite sumar cuántas horas de
+        vídeo hay en el disco.
+      */
+      const episodio =
+        clase === 'episodio' ? (await biblioteca.episodiosPorClave([medio.id]).catch(() => []))[0] : undefined;
+
+      const titulo = episodio
+        ? `${episodio.serieTitulo} · T${episodio.temporada} E${episodio.numero}${
+            episodio.titulo ? ` · ${episodio.titulo}` : ''
+          }`
+        : medio.titulo;
+
       const clave = claveDeDescarga(clase, medio.id);
       const extension = mejor.url.split('.').pop()?.slice(0, 4) || 'mkv';
       await cola.anadir({
         id: clave,
         clase,
         itemId: medio.id,
-        titulo: medio.titulo,
-        serieId: clase === 'episodio' ? (leerClaveDeEpisodio(medio.id)?.serieId ?? null) : null,
+        titulo,
+        serieId: episodio?.serieId ?? null,
         url: mejor.url,
         fichero: ficheroDe(clave, extension),
+        /*
+          De una película todavía no hay duración en la base: el catálogo no la
+          trae y el servidor no la manda. Lo que sí hay, si alguien la empezó,
+          es lo que apuntó el reproductor.
+        */
+        duracion: episodio?.segundos ?? (await duracionDePelicula(medio.id)),
       });
       setAviso(`${medio.titulo} · a la cola de descargas${mejor.calidad ? ` (${mejor.calidad})` : ''}`);
     },
@@ -1965,6 +2010,9 @@ function BibliotecaVista({
               {cantidad(descargas.filter((una) => una.estado === 'hecha').length, 'bajada', 'bajadas')}
               {disco ? ` · ${megas(disco.ocupado)} ocupados · ${megas(disco.libre)} libres` : ''}
             </Text>
+            {tiempoBajado(descargas) ? (
+              <Text style={estilos.descargaAyuda}>{tiempoBajado(descargas)}</Text>
+            ) : null}
           </View>
 
           <ScrollView style={estilos.descargaLista}>
@@ -2842,6 +2890,29 @@ function megas(bytes: number): string {
   return bytes >= 1_000_000_000
     ? `${(bytes / 1_000_000_000).toFixed(1).replace('.', ',')} GB`
     : `${Math.round(bytes / 1_000_000)} MB`;
+}
+
+/**
+ * Cuánto vídeo hay bajado, en palabras.
+ *
+ * Es la pregunta de antes de un vuelo: no cuántos ficheros hay, sino cuántas
+ * horas se pueden ver sin red. Lo que no tiene duración conocida **se dice**
+ * en vez de contarlo como cero: una película sin duración haría que el total
+ * se quedara corto y nadie sabría por qué.
+ */
+function tiempoBajado(descargas: Descarga[]): string {
+  const hechas = descargas.filter((una) => una.estado === 'hecha');
+  if (hechas.length === 0) return '';
+
+  const segundos = hechas.reduce((suma, una) => suma + (una.duracion ?? 0), 0);
+  const sinSaber = hechas.filter((una) => !una.duracion).length;
+
+  const horas = Math.floor(segundos / 3600);
+  const minutos = Math.round((segundos % 3600) / 60);
+  const cuanto = segundos === 0 ? '' : horas > 0 ? `${horas} h ${minutos} min` : `${minutos} min`;
+
+  if (sinSaber === hechas.length) return '';
+  return `${cuanto} para ver${sinSaber > 0 ? ` (y ${sinSaber} sin medir)` : ''}`;
 }
 
 /**

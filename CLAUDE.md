@@ -911,6 +911,19 @@ Tres decisiones sostienen lo demás:
 - **Lo bajado se reproduce del disco**, sin tocar el panel: ni petición ni
   ranura. Ver algo que ya tienes no le quita la conexión a nadie de la casa.
 
+**De un episodio, el título que se guarda lleva la serie, la temporada y el
+número.** "El de George" a secas no dice de qué serie es ni por dónde va, y con
+media temporada bajada son diez títulos que no se distinguen.
+
+**Y se suma cuánto vídeo hay bajado**, que es la pregunta de antes de un vuelo:
+no cuántos ficheros, sino cuántas horas se pueden ver sin red. La duración de
+un episodio viene con el catálogo; la de una película **no** —`get_vod_streams`
+da título, cartel, nota y año— y la pone el servidor con el resto de la ficha:
+de TMDb sale en minutos y del panel en `duration_secs`, que llega a cero en
+bastantes. Lo que no tenga duración conocida **se dice** ("y 3 sin medir") en
+vez de contarlo como cero, que dejaría el total corto sin que nadie sepa por
+qué.
+
 **En la mano se baja más pequeño que en el salón.** El proveedor manda la misma
 película en varias calidades y la mejor son cinco gigas: en una pantalla de
 diez pulgadas 720p no se distingue y ocupa menos de la mitad, mientras que en

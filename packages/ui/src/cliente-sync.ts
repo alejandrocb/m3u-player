@@ -163,6 +163,8 @@ export interface FichaRemota {
   nota?: number;
   votos?: number;
   popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
 }
 
 /** Lo que el servidor lleva averiguado desde la última vez que se preguntó. */

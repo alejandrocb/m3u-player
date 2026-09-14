@@ -41,6 +41,7 @@ function tmdbFalso(porConsulta: Record<string, Peli[]>, pedidas: string[] = []):
     // La ficha, que es la segunda petición: reparto y tráiler.
     if (/^\/3\/(movie|tv)\/\d+$/.test(url.pathname)) {
       return responder({
+        runtime: 92,
         credits: { cast: [{ name: 'Actriz Primera' }, { name: 'Actor Segundo' }] },
         aggregate_credits: { cast: [{ name: 'Actriz Primera' }] },
         videos: {
@@ -104,6 +105,8 @@ test('la ficha entera: género, sinopsis, fondo, reparto y tráiler', async () =
     reparto: 'Actriz Primera, Actor Segundo',
     // Ni el de Vimeo ni el "detrás de las cámaras": el tráiler de YouTube.
     trailer: 'dQw4w9WgXcQ',
+    // TMDb la da en minutos; aquí se guarda en segundos, que es como se suma.
+    duracion: 92 * 60,
   });
 });
 

@@ -131,6 +131,10 @@ CREATE TABLE IF NOT EXISTS download (
   bytes    INTEGER NOT NULL DEFAULT 0,
   total    INTEGER,
   created  TEXT NOT NULL,
+  -- Cuánto dura, en segundos, si se sabe. Es lo que permite decir cuántas
+  -- horas de vídeo hay en el disco, que es lo que uno quiere saber antes de un
+  -- vuelo. De un episodio viene con el catálogo; de una película, del servidor.
+  seconds  INTEGER,
   -- Cortes seguidos sin avanzar un byte. Un corte suelto no cuenta: en una
   -- película de dos gigas por un wifi flojo los hay a montones.
   tries    INTEGER NOT NULL DEFAULT 0,
@@ -355,6 +359,12 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
     cuestan ni una petición de más, y con los votos delante ya se puede
     distinguir un 8 de mil personas de un 10 de dos.
   */
+  /*
+    Cuánto dura, en segundos. No viene con el catálogo —`get_vod_streams` da
+    título, cartel, nota y año— y la pone el servidor con la ficha larga. De
+    los episodios sí viene, y por eso `episode` ya la tenía.
+  */
+  { tabla: 'movie', columna: 'seconds', tipo: 'INTEGER' },
   { tabla: 'movie', columna: 'nota_tmdb', tipo: 'REAL' },
   { tabla: 'movie', columna: 'votos_tmdb', tipo: 'INTEGER' },
   { tabla: 'movie', columna: 'popularidad', tipo: 'REAL' },
@@ -370,6 +380,7 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'series', columna: 'genre', tipo: 'TEXT' },
   { tabla: 'series', columna: 'trailer', tipo: 'TEXT' },
   { tabla: 'series', columna: 'detalle_pedido', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'seconds', tipo: 'INTEGER' },
   { tabla: 'series', columna: 'nota_tmdb', tipo: 'REAL' },
   { tabla: 'series', columna: 'votos_tmdb', tipo: 'INTEGER' },
   { tabla: 'series', columna: 'popularidad', tipo: 'REAL' },

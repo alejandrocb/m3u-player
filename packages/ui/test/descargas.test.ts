@@ -62,6 +62,7 @@ function pelicula(id: string, titulo = 'Una película') {
     serieId: null,
     url: `http://panel/movie/u/p/${id}.mkv`,
     fichero: ficheroDe(claveDeDescarga('pelicula', id), 'mkv'),
+    duracion: 5_400,
   };
 }
 

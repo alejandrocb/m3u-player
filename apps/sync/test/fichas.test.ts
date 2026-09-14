@@ -105,7 +105,16 @@ test('lo que el panel no sabe también se apunta, con el género vacío', async 
     sabe contestar.
   */
   assert.deepEqual(averiguados, [
-    { id: 'la-muda-2020', clase: 'pelicula', genero: '', sinopsis: undefined, reparto: undefined, fondo: undefined, trailer: undefined },
+    {
+      id: 'la-muda-2020',
+      clase: 'pelicula',
+      genero: '',
+      duracion: undefined,
+      sinopsis: undefined,
+      reparto: undefined,
+      fondo: undefined,
+      trailer: undefined,
+    },
   ]);
 });
 
@@ -142,6 +151,7 @@ test('lo que TMDb no reconoce se le acaba preguntando al panel', async () => {
       id: 'la-nueva-2024',
       clase: 'pelicula',
       genero: 'Género 2',
+      duracion: undefined,
       sinopsis: 'La sinopsis de 2.',
       reparto: undefined,
       fondo: undefined,

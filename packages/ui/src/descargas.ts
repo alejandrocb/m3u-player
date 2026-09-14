@@ -40,6 +40,8 @@ export interface Descarga {
   url: string;
   /** El nombre del fichero en la carpeta de la aplicación. */
   fichero: string;
+  /** Cuánto dura, en segundos, si se sabe. Para sumar horas en el disco. */
+  duracion: number | null;
   estado: EstadoDescarga;
   /** Bytes ya guardados. Es por donde se reanuda. */
   bytes: number;

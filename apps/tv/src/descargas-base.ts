@@ -65,6 +65,7 @@ function comoDescarga(fila: Fila): Descarga {
     bytes: Number(fila.bytes) || 0,
     total: fila.total === null || fila.total === undefined ? null : Number(fila.total),
     creada: fila.created as string,
+    duracion: fila.seconds === null || fila.seconds === undefined ? null : Number(fila.seconds),
     intentos: Number(fila.tries) || 0,
     error: (fila.error as string | null) ?? null,
   };
@@ -79,8 +80,9 @@ export function descargasEnBase(db: DB): AlmacenDescargas {
 
     async guardar(descarga: Descarga): Promise<void> {
       db.executeSync(
-        `INSERT INTO download (id, kind, item_id, title, series_id, url, file, state, bytes, total, created, tries, error)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO download
+              (id, kind, item_id, title, series_id, url, file, state, bytes, total, created, seconds, tries, error)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            state = excluded.state, bytes = excluded.bytes, total = excluded.total,
            url = excluded.url, tries = excluded.tries, error = excluded.error`,
@@ -96,6 +98,7 @@ export function descargasEnBase(db: DB): AlmacenDescargas {
           descarga.bytes,
           descarga.total,
           descarga.creada,
+          descarga.duracion,
           descarga.intentos,
           descarga.error,
         ],

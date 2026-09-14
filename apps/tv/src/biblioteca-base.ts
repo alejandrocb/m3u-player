@@ -197,7 +197,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
   ): Promise<FichaLarga | null> => {
     const guardado = filas(
       db,
-      `SELECT plot, actors, backdrop, genre, trailer, detalle_pedido FROM ${tabla} WHERE id = ?`,
+      `SELECT plot, actors, backdrop, genre, trailer, seconds, detalle_pedido FROM ${tabla} WHERE id = ?`,
       [id],
     )[0];
     if (!guardado) return null;
@@ -208,6 +208,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       fondo: (guardado.backdrop as string) || null,
       genero: (guardado.genre as string) || null,
       trailer: (guardado.trailer as string) || null,
+      duracion: (guardado.seconds as number) || null,
     });
 
     // Ya se preguntó una vez: se devuelve lo que hubiera, aunque fuera nada.
@@ -500,7 +501,8 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
       const encontrados = filas(
         db,
-        `SELECT e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+        `SELECT e.series_id, e.season, e.episode, e.title, e.seconds,
+                s.title AS serie, s.logo AS serie_logo
            FROM episode e JOIN series s ON s.id = e.series_id
           WHERE ${condicion}`,
         params,
@@ -512,6 +514,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         temporada: Number(fila.season),
         numero: Number(fila.episode),
         titulo: (fila.title as string) ?? null,
+        segundos: (fila.seconds as number) ?? null,
       }));
 
       // En el orden en que se pidieron, que es el del historial.
@@ -597,6 +600,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
                detalle_pedido = COALESCE(detalle_pedido, ?),
                -- Estas tres sí se pisan: no hay otra fuente que las ponga, y
                -- si TMDb corrige una nota lo suyo es quedarse con la nueva.
+               seconds     = COALESCE(seconds, ?),
                nota_tmdb   = COALESCE(?, nota_tmdb),
                votos_tmdb  = COALESCE(?, votos_tmdb),
                popularidad = COALESCE(?, popularidad)
@@ -608,6 +612,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
               ficha.fondo ?? '',
               ficha.trailer ?? '',
               ficha.sinopsis ? new Date().toISOString() : null,
+              ficha.duracion ?? null,
               ficha.nota ?? null,
               ficha.votos ?? null,
               ficha.popularidad ?? null,

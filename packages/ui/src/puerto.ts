@@ -93,10 +93,14 @@ export interface FichaDelServidor {
   nota?: number;
   votos?: number;
   popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
 }
 
 export interface FichaLarga {
   sinopsis: string | null;
+  /** Cuánto dura, en segundos. La pone el servidor con el resto de la ficha. */
+  duracion?: number | null;
   /** Reparto tal y como lo da el panel: nombres separados por comas. */
   reparto: string | null;
   /** Imagen apaisada. La de la carátula es vertical y no sirve de fondo. */
@@ -135,6 +139,13 @@ export interface EpisodioDeSerieFicha {
   temporada: number;
   numero: number;
   titulo: string | null;
+  /**
+   * Duración en segundos, o `null`.
+   *
+   * La usa la descarga para poder decir cuántas horas de vídeo hay en el
+   * disco, que es lo que uno quiere saber antes de un vuelo.
+   */
+  segundos?: number | null;
 }
 
 /**
