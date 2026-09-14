@@ -510,6 +510,30 @@ export function varianteParaDescargar<T extends { calidad: string | null }>(
   return conocidas.reduce((menor, una) => (rango(una.calidad) < rango(menor.calidad) ? una : menor));
 }
 
+/**
+ * La URL sin las credenciales, para poder escribirla en el registro.
+ *
+ * Una URL de panel es `http://servidor:8080/movie/<usuario>/<clave>/123.mkv`:
+ * **lleva la cuenta entera dentro**. Lo que hace falta para depurar es el
+ * servidor y el identificador del fichero, así que lo de en medio se tapa.
+ *
+ * Vive aquí y no en el lado de Android justamente por esto: equivocarse
+ * escribe la contraseña del panel en el registro del sistema, y eso tiene que
+ * estar probado.
+ */
+export function urlSinCredenciales(url: string): string {
+  // A mano y no con `URL`: aquí solo hay que tapar unos trozos del camino, y
+  // el `URL` de React Native es un remiendo al que le faltan cosas.
+  const corte = url.indexOf('://');
+  if (corte < 0) return '(url ilegible)';
+
+  const trozos = url.slice(corte + 3).split('/');
+  const visibles = trozos.map((trozo, puesto) =>
+    puesto === 0 || puesto === 1 || puesto === trozos.length - 1 ? trozo : '***',
+  );
+  return `${url.slice(0, corte)}://${visibles.join('/')}`;
+}
+
 /** La clave con la que se identifica una descarga. */
 export function claveDeDescarga(clase: 'pelicula' | 'episodio', itemId: string): string {
   return `${clase}:${itemId}`;

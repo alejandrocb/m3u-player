@@ -14,25 +14,8 @@
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type { DB } from '@op-engineering/op-sqlite';
 
+import { urlSinCredenciales } from '@m3u/ui';
 import type { AlmacenDescargas, Descarga, EstadoDescarga, Transferencia } from '@m3u/ui';
-
-/**
- * La URL sin las credenciales, para poder escribirla en el registro.
- *
- * Una URL de panel es `http://servidor:8080/movie/<usuario>/<clave>/123.mkv`:
- * lleva la cuenta entera dentro. Lo que hace falta para depurar es el servidor
- * y el identificador del fichero, así que lo de en medio se tapa.
- */
-export function urlSinCredenciales(url: string): string {
-  try {
-    const u = new URL(url);
-    const trozos = u.pathname.split('/').filter(Boolean);
-    const visibles = trozos.map((trozo, puesto) => (puesto >= trozos.length - 1 || puesto === 0 ? trozo : '***'));
-    return `${u.protocol}//${u.host}/${visibles.join('/')}`;
-  } catch {
-    return '(url ilegible)';
-  }
-}
 
 /** Dónde viven los ficheros bajados, dentro de lo privado de la aplicación. */
 export const CARPETA = `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/descargas`;
@@ -172,6 +155,27 @@ export function transferenciaDeAndroid(): Transferencia {
       let tarea: ReturnType<ReturnType<typeof ReactNativeBlobUtil.config>['fetch']> | null = null;
       const ruta = `${CARPETA}/${descarga.fichero}`;
 
+      /*
+        El vigía del atasco: si no entra un byte en `SIN_UN_BYTE_MS`, se corta
+        y se suelta la ranura. Se rearma con cada byte que llega, así que una
+        descarga lenta no lo despierta nunca.
+      */
+      let vigia: ReturnType<typeof setTimeout> | null = null;
+      const rearmar = (): void => {
+        if (vigia) clearTimeout(vigia);
+        vigia = setTimeout(() => {
+          if (cancelada) return;
+          cancelada = true;
+          tarea?.cancel();
+          console.warn(`[descarga] ${descarga.fichero}: el panel no mandó nada en ${SIN_UN_BYTE_MS / 1000} s`);
+          alFallar(`el panel no mandó nada en ${SIN_UN_BYTE_MS / 1000} s`);
+        }, SIN_UN_BYTE_MS);
+      };
+      const guardarVigia = (): void => {
+        if (vigia) clearTimeout(vigia);
+        vigia = null;
+      };
+
       void carpetaLista.then((hayCarpeta) => {
         if (cancelada) return;
         if (!hayCarpeta) {
@@ -204,6 +208,8 @@ export function transferenciaDeAndroid(): Transferencia {
           ...(desde > 0 ? { Range: `bytes=${desde}-` } : {}),
         });
 
+        rearmar();
+
         let ultimoAviso = 0;
         tarea.progress({ interval: 500 }, (recibidos, total) => {
           if (cancelada) return;
@@ -215,11 +221,14 @@ export function transferenciaDeAndroid(): Transferencia {
             ultimoAviso = hechos;
             console.log(`[descarga] ${descarga.fichero}: ${Math.round(hechos / 1_000_000)} MB de ${Math.round(cuanto / 1_000_000)}`);
           }
+          // Ha entrado algo: el vigía vuelve a empezar la cuenta.
+          if (hechos > 0) rearmar();
           alAvanzar(desde + hechos, cuanto > 0 ? desde + cuanto : null);
         });
 
         tarea
           .then(async (respuesta) => {
+            guardarVigia();
             if (cancelada) return;
 
             const estado = respuesta.info().status;
@@ -248,6 +257,7 @@ export function transferenciaDeAndroid(): Transferencia {
             alTerminar();
           })
           .catch(async (fallo: unknown) => {
+            guardarVigia();
             // Cancelar aborta la petición y eso llega aquí como error de red:
             // no es un fallo, es que alguien ha puesto una película.
             if (cancelada) return;
@@ -265,6 +275,7 @@ export function transferenciaDeAndroid(): Transferencia {
 
       return () => {
         cancelada = true;
+        guardarVigia();
         tarea?.cancel();
       };
     },

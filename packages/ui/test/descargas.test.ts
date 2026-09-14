@@ -18,6 +18,7 @@ import {
   TOPE_DE_MANO,
   claveDeDescarga,
   ficheroDe,
+  urlSinCredenciales,
   varianteParaDescargar,
 } from '../src/descargas.ts';
 import type { AlmacenDescargas, Descarga, Transferencia } from '../src/descargas.ts';
@@ -372,4 +373,28 @@ test('el nombre del fichero no lleva la extensión de la URL', () => {
   // quien haya mirado los primeros bytes.
   assert.equal(ficheroDe('pelicula:el-aviso-2018', 'mp4'), 'pelicula-el-aviso-2018.mp4');
   assert.equal(ficheroDe('episodio:doctor-who-2005:s1e7', '.mkv'), 'episodio-doctor-who-2005-s1e7.mkv');
+});
+
+/**
+ * La redacción de la URL, que se escribe en el registro del sistema.
+ *
+ * Equivocarse aquí deja la contraseña del panel en `adb logcat`, que es
+ * exactamente lo que no puede pasar.
+ */
+test('la URL del registro no lleva usuario ni contraseña', () => {
+  const tapada = urlSinCredenciales('http://panel.ejemplo.com:8080/movie/pepe/s3cr3t0/12345.mkv');
+
+  assert.equal(tapada, 'http://panel.ejemplo.com:8080/movie/***/***/12345.mkv');
+  assert.doesNotMatch(tapada, /pepe|s3cr3t0/);
+});
+
+test('la de un episodio tampoco, que lleva un tramo más', () => {
+  const tapada = urlSinCredenciales('http://panel.ejemplo.com:8080/series/pepe/s3cr3t0/987.mkv');
+
+  assert.doesNotMatch(tapada, /pepe|s3cr3t0/);
+  assert.match(tapada, /987\.mkv$/);
+});
+
+test('una dirección que no se entiende no se enseña a medias', () => {
+  assert.equal(urlSinCredenciales('esto no es una url'), '(url ilegible)');
 });
