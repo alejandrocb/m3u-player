@@ -979,6 +979,54 @@ Y lo que se guarda son **bytes, no porcentaje**: el porcentaje es para pintar,
 lo que hace falta para reanudar es el byte. Al arrancar, lo que quedó como
 "bajando" vuelve a la cola: al cerrar la aplicación no estaba bajando nada.
 
+#### Y sigue con la aplicación al fondo, que es cuando de verdad hace falta
+
+Nadie se queda mirando cómo bajan dos gigas. Uno le da a descargar, bloquea la
+tablet y se va, y hasta ahora eso era exactamente lo que cortaba la descarga.
+
+Android le quita **tres cosas** a una aplicación que no se ve, y hay que
+comprarlas las tres o no sirve de nada comprar una:
+
+1. **Que no maten el proceso.** Un servicio en primer plano es la única forma
+   de decir "esto sigue aunque no se vea". Su precio es el aviso permanente de
+   la barra: no es decoración, **es el permiso**. Ya que está, lleva el título
+   de lo que se baja y por dónde va.
+2. **Que el reloj de JavaScript siga andando.** Esta es la que no se ve venir.
+   React Native **para los temporizadores** al perder el foco
+   (`JavaTimerManager.onHostPause`), y los reanuda solo si hay una **tarea sin
+   interfaz** abierta. La cola los usa justo para lo que pasa de verdad en una
+   tablet vieja: reintentar tras un corte y volver a pedir la ranura cuando el
+   árbitro la ha denegado. Con el proceso vivo y el reloj parado, la descarga
+   se corta una vez y se queda ahí para siempre —y por fuera parece que "va
+   lenta"—.
+3. **Que el aparato no se suspenda.** Con la pantalla apagada el sistema
+   duerme, y dormido tampoco baja nada. El `PARTIAL_WAKE_LOCK` lo coge
+   `HeadlessJsTaskService` por su cuenta.
+
+Por eso el servicio **es** un `HeadlessJsTaskService` en vez de un servicio
+pelado: las tres salen de la misma pieza. La tarea de JavaScript no hace nada
+—**existir es su trabajo**— y se cierra cuando la cola se queda vacía; al
+cerrarse, el servicio se para solo y el aviso desaparece.
+
+Cuatro detalles que no son opcionales:
+
+- **El aviso, lo primero de `onStartCommand` y siempre.** Android da cinco
+  segundos desde que se pide el servicio hasta que aparece, y pasados los cinco
+  mata la aplicación.
+- **Una tarea, no una por cada cambio de texto.** El aviso se refresca llamando
+  otra vez al servicio, y sin un interruptor cada llamada abriría otra tarea.
+- **`START_NOT_STICKY`.** Si el sistema mata el proceso, resucitar el servicio
+  solo no sirve de nada: sin la aplicación no hay cola, ni árbitro, ni nadie
+  que sepa por qué byte iba. Se reanuda al abrir, que es lo que ya hace la cola.
+- **El tipo es `dataSync`, y en Android 15 tiene un tope de seis horas al día.**
+  Al pasarse, el sistema avisa por `onTimeout` y hay que pararse; lo bajado
+  sigue en el disco y se reanuda con `Range`. Ignorarlo acaba con el sistema
+  matando la aplicación.
+
+El permiso de notificaciones (Android 13+) se pide la primera vez que se baja
+algo, y **se sigue sin él**: si se deniega, la descarga funciona igual y lo
+único que se pierde es ver por dónde va.
+
 ## Trampas conocidas
 
 - **El EPG del panel viene en UTC y en base64.** Los títulos y las sinopsis van
@@ -990,6 +1038,13 @@ lo que hace falta para reanudar es el byte. Al arrancar, lo que quedó como
 - **`now_playing` no sirve para saber qué se está emitiendo.** Lo calcula el
   servidor al responder, así que envejece en cuanto la pantalla lleva un rato
   abierta. El programa en curso se decide comparando con la hora del aparato.
+- **React Native para los temporizadores cuando la aplicación no se ve.**
+  `setTimeout` y `setInterval` dejan de dispararse al perder el foco
+  (`JavaTimerManager.onHostPause`) y se reanudan al volver. No hay error, no
+  hay aviso: lo que dependa de un temporizador simplemente se queda quieto y
+  arranca de golpe cuando uno vuelve a abrir la aplicación. La única forma de
+  mantenerlos vivos es una tarea sin interfaz (`HeadlessJsTaskConfig`), que es
+  la mitad no evidente del servicio de descargas.
 - **Hermes no trae `TextDecoder`.** Descodificar base64 con `atob` +
   `TextDecoder` funciona en Node y falla en la tablet, y encima en silencio: la
   parrilla salía escrita en base64 mientras los tests pasaban en el portátil.

@@ -78,6 +78,7 @@ import {
 
 import { almacenDeCuentas } from './src/almacen';
 import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
+import { avisarDeLasDescargas } from './src/aviso-descarga';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -403,6 +404,17 @@ function Raiz() {
     });
     return () => suscripcion.remove();
   }, [sincronizar]);
+
+  /*
+    El aviso de la barra mientras quede algo por bajar.
+
+    Va aquí, en la raíz, y no en el panel de descargas: la gracia es justo que
+    siga con la pantalla apagada y la aplicación al fondo, que es cuando no hay
+    ninguna pantalla montada que pueda encargarse.
+  */
+  useEffect(() => {
+    avisarDeLasDescargas(descargas);
+  }, [descargas]);
 
   const cerrarSesion = useCallback(async () => {
     await gestor.current?.cerrarSesion();
@@ -1164,7 +1176,9 @@ function BibliotecaVista({
       });
       setAviso(`${medio.titulo} · a la cola de descargas${mejor.calidad ? ` (${mejor.calidad})` : ''}`);
     },
-    [biblioteca, cola],
+    // `duracionDePelicula` mira el avance de **este** perfil: sin la
+    // dependencia, cambiar de persona dejaría aquí la de la anterior.
+    [biblioteca, cola, duracionDePelicula],
   );
 
   const atras = useCallback((): boolean => {

@@ -14,8 +14,10 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          // El autoenlazado es para las dependencias de npm; esto es nuestro y
+          // se registra a mano. Es el aviso de la barra que deja seguir
+          // bajando con la aplicación en segundo plano.
+          add(PaqueteDeDescargas())
         },
     )
   }
