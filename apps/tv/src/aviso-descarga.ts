@@ -87,6 +87,7 @@ export function avisarDeLasDescargas(descargas: Descarga[]): void {
       ultimo = '';
       // Cerrar la tarea es lo que para el servicio y quita el aviso; lo otro
       // es el cinturón, por si la tarea nunca llegó a arrancar.
+      console.log('[descarga] no queda nada: se quita el aviso');
       cerrarTarea?.();
       cerrarTarea = null;
       nativo.callar();
@@ -109,6 +110,9 @@ export function avisarDeLasDescargas(descargas: Descarga[]): void {
 
   const linea = `${titulo}|${detalle}|${avance}`;
   if (linea === ultimo) return;
+  // Solo al encender: el texto cambia con cada porcentaje y eso llenaría el
+  // registro de líneas iguales justo cuando hace falta leerlo.
+  if (ultimo === '') console.log(`[descarga] aviso puesto: ${titulo}`);
   ultimo = linea;
 
   pedirPermiso();
@@ -126,7 +130,11 @@ export function avisarDeLasDescargas(descargas: Descarga[]): void {
 export function tareaDeDescargas(): Promise<void> {
   // Puede llegar tarde: entre pedir el servicio y que arranque la tarea, la
   // cola ha podido vaciarse. Entonces no hay nada que mantener vivo.
-  if (!hayFaena) return Promise.resolve();
+  if (!hayFaena) {
+    console.log('[descarga] la tarea llegó tarde: ya no queda nada');
+    return Promise.resolve();
+  }
+  console.log('[descarga] tarea en marcha: el reloj sigue andando');
   return new Promise<void>((listo) => {
     cerrarTarea = listo;
   });
