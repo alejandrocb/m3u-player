@@ -16,6 +16,24 @@ import type { DB } from '@op-engineering/op-sqlite';
 
 import type { AlmacenDescargas, Descarga, EstadoDescarga, Transferencia } from '@m3u/ui';
 
+/**
+ * La URL sin las credenciales, para poder escribirla en el registro.
+ *
+ * Una URL de panel es `http://servidor:8080/movie/<usuario>/<clave>/123.mkv`:
+ * lleva la cuenta entera dentro. Lo que hace falta para depurar es el servidor
+ * y el identificador del fichero, así que lo de en medio se tapa.
+ */
+export function urlSinCredenciales(url: string): string {
+  try {
+    const u = new URL(url);
+    const trozos = u.pathname.split('/').filter(Boolean);
+    const visibles = trozos.map((trozo, puesto) => (puesto >= trozos.length - 1 || puesto === 0 ? trozo : '***'));
+    return `${u.protocol}//${u.host}/${visibles.join('/')}`;
+  } catch {
+    return '(url ilegible)';
+  }
+}
+
 /** Dónde viven los ficheros bajados, dentro de lo privado de la aplicación. */
 export const CARPETA = `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/descargas`;
 
@@ -161,7 +179,7 @@ export function transferenciaDeAndroid(): Transferencia {
           return;
         }
 
-        console.log(`[descarga] empieza ${descarga.fichero} desde ${desde}`);
+        console.log(`[descarga] empieza ${descarga.fichero} desde ${desde} · ${urlSinCredenciales(descarga.url)}`);
 
         tarea = ReactNativeBlobUtil.config({
           path: ruta,
@@ -172,7 +190,19 @@ export function transferenciaDeAndroid(): Transferencia {
           overwrite: desde === 0,
           // El panel es HTTP y a veces tarda en contestar la primera cabecera.
           timeout: 60_000,
-        }).fetch('GET', descarga.url, desde > 0 ? { Range: `bytes=${desde}-` } : {});
+        }).fetch('GET', descarga.url, {
+          /*
+            **El mismo User-Agent que usa el cliente del panel.** Hay paneles
+            que rechazan —o peor, dejan colgada— una petición que no venga de
+            algo que parezca un reproductor, y sin esto aquí iba el `okhttp`
+            que pone la librería por su cuenta. El reproductor de vídeo sí
+            manda uno, así que la misma película se servía por un camino y no
+            por el otro.
+          */
+          'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+          Accept: '*/*',
+          ...(desde > 0 ? { Range: `bytes=${desde}-` } : {}),
+        });
 
         let ultimoAviso = 0;
         tarea.progress({ interval: 500 }, (recibidos, total) => {

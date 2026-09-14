@@ -1137,6 +1137,15 @@ function BibliotecaVista({
         es el problema.
       */
       const mejor = varianteParaDescargar(variantes, Platform.isTV ? null : TOPE_DE_MANO, qualityRank);
+      /*
+        Qué variante se ha elegido de las que hay. En la mano se coge una más
+        pequeña que en el televisor, así que si una baja y la otra no, esta
+        línea es la que lo dice.
+      */
+      console.log(
+        `[descarga] ${medio.titulo}: ${mejor?.calidad ?? 'sin calidad'} de ${variantes.length} variantes` +
+          ` (${variantes.map((una) => una.calidad ?? '?').join(', ')})`,
+      );
       if (!mejor) {
         setAviso('Esta ficha no tiene ninguna URL asociada');
         return;
