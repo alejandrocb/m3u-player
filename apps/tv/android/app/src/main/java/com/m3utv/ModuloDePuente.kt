@@ -21,7 +21,10 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 import java.util.UUID
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * El puente de "Ver en la tele": la tele le pide el vídeo al teléfono, y el
@@ -53,10 +56,33 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
   /** Qué hay detrás de cada dirección que se ha dado. Una cosa cada vez. */
   private val destinos = ConcurrentHashMap<String, Destino>()
 
+  /** Cuánto se guarda del principio del fichero: con esto sobra para el tanteo. */
+  private val PRINCIPIO = 1024 * 1024
+
   private var candadoWifi: WifiManager.WifiLock? = null
   private var candadoCpu: PowerManager.WakeLock? = null
 
-  private data class Destino(val url: String, val tipo: String, val parches: List<Parche>)
+  private class Destino(val url: String, val tipo: String, val parches: List<Parche>) {
+    /**
+     * El primer mega del fichero y lo que ocupa entero.
+     *
+     * Antes de empezar, la tele hace **cuatro `HEAD` y media docena de `GET`
+     * de tanteo**: mira el principio, mira el final y vuelve al principio. Con
+     * una conexión al panel por cada uno, empezar una película le pedía seis
+     * conexiones a una cuenta que tiene tres, y el panel se atragantaba —y
+     * cuanto más insistía uno, peor—.
+     *
+     * Casi todo ese tanteo es de los primeros kilobytes, así que se guardan
+     * una vez y se contesta desde aquí. El tamaño total se aprende de la misma
+     * petición, y con él los `HEAD` se contestan sin tocar el panel.
+     */
+    @Volatile var cache: ByteArray? = null
+
+    @Volatile var total: Long = 0
+
+    /** Se abre cuando el principio está listo, o cuando se ha renunciado. */
+    val listo = CountDownLatch(1)
+  }
 
   /**
    * Un trozo del fichero cambiado por otro **del mismo tamaño**.
@@ -96,7 +122,9 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
 
       val clave = UUID.randomUUID().toString().replace("-", "")
       destinos.clear()
-      destinos[clave] = Destino(url, tipo, aCambiar)
+      val destino = Destino(url, tipo, aCambiar)
+      destinos[clave] = destino
+      adelantarElPrincipio(destino)
       if (aCambiar.isNotEmpty()) Log.i("Puente", "cambiando ${aCambiar.size} pistas al pasar")
 
       val extension = url.substringBefore('?').substringAfterLast('.', "mkv").take(4)
@@ -147,6 +175,52 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
     }
   }
 
+  /**
+   * Se trae el primer mega del fichero y su tamaño, una sola vez.
+   *
+   * En un hilo aparte para no hacer esperar a quien manda el vídeo: mientras
+   * llega, quien pida algo espera unos segundos en `listo`, que es mucho menos
+   * de lo que costaría otra conexión al panel.
+   */
+  private fun adelantarElPrincipio(destino: Destino) {
+    Thread {
+      try {
+        val panel = (URL(destino.url).openConnection() as HttpURLConnection).apply {
+          instanceFollowRedirects = true
+          connectTimeout = 15_000
+          readTimeout = 30_000
+          setRequestProperty("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
+          setRequestProperty("Accept", "*/*")
+          setRequestProperty("Range", "bytes=0-${PRINCIPIO - 1}")
+        }
+        try {
+          val rango = panel.getHeaderField("Content-Range")
+          destino.total = rango?.substringAfterLast('/')?.toLongOrNull()
+            ?: panel.contentLengthLong.takeIf { it >= 0 } ?: 0
+
+          val recogido = ByteArrayOutputStream()
+          val trozo = ByteArray(64 * 1024)
+          panel.inputStream.use { origen ->
+            while (recogido.size() < PRINCIPIO) {
+              val leidos = origen.read(trozo)
+              if (leidos < 0) break
+              recogido.write(trozo, 0, leidos)
+            }
+          }
+          destino.cache = recogido.toByteArray()
+          Log.i("Puente", "principio guardado: ${recogido.size()} bytes de ${destino.total}")
+        } finally {
+          panel.disconnect()
+        }
+      } catch (fallo: Exception) {
+        // Sin adelanto se sigue como siempre, pidiéndoselo todo al panel.
+        Log.w("Puente", "no se pudo adelantar el principio: ${fallo.message}")
+      } finally {
+        destino.listo.countDown()
+      }
+    }.start()
+  }
+
   private fun atender(socket: ServerSocket) {
     Thread {
       while (!socket.isClosed) {
@@ -189,6 +263,55 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
         return
       }
 
+      // Lo que se pide, en bytes. Sin cabecera `Range` es desde el principio.
+      val pedidoDesde = cabeceras["range"]?.substringAfter("bytes=")?.substringBefore('-')?.trim()?.toLongOrNull() ?: 0L
+
+      // Un momento por si el principio aún viene de camino.
+      destino.listo.await(8, TimeUnit.SECONDS)
+      // Sin nulos: vacío quiere decir que no hay nada guardado todavía.
+      val guardado = destino.cache ?: ByteArray(0)
+
+      /*
+        Un `HEAD` solo pregunta el tamaño, y el tamaño ya se sabe: se contesta
+        aquí mismo. Cada uno de estos era una conexión al panel para nada.
+      */
+      if (metodo == "HEAD" && destino.total > 0) {
+        Log.i("Puente", "  de memoria (HEAD, ${destino.total} bytes)")
+        escribirCabecera(
+          salida,
+          "200 OK",
+          cabecerasDlna(destino.tipo) + mapOf("Content-Length" to destino.total.toString()),
+        )
+        return
+      }
+
+      /*
+        Y el tanteo del principio, también: la tele pide unos kilobytes, los
+        mira y cierra. Si se pone a leer de verdad, al acabarse lo guardado se
+        sigue por el panel desde ese punto, con una sola conexión.
+      */
+      if (metodo == "GET" && destino.total > 0 && pedidoDesde < guardado.size) {
+        Log.i("Puente", "  de memoria, byte $pedidoDesde")
+        val conRango = cabeceras["range"] != null
+        val cabecera = cabecerasDlna(destino.tipo).toMutableMap()
+        cabecera["Content-Length"] = (destino.total - pedidoDesde).toString()
+        if (conRango) cabecera["Content-Range"] = "bytes $pedidoDesde-${destino.total - 1}/${destino.total}"
+        escribirCabecera(salida, if (conRango) "206 Partial Content" else "200 OK", cabecera)
+
+        val trozo = guardado.copyOfRange(pedidoDesde.toInt(), guardado.size)
+        cambiarLoQueToque(trozo, trozo.size, pedidoDesde, destino.parches)
+        try {
+          salida.write(trozo)
+          salida.flush()
+        } catch (corte: Exception) {
+          // La tele ya tenía bastante: ni se ha tocado el panel.
+          Log.i("Puente", "  le bastó con el principio")
+          return
+        }
+        seguirPorElPanel(destino, guardado.size.toLong(), salida)
+        return
+      }
+
       val panel = (URL(destino.url).openConnection() as HttpURLConnection).apply {
         instanceFollowRedirects = true
         connectTimeout = 15_000
@@ -208,15 +331,7 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
           ?: panel.contentLengthLong.takeIf { it >= 0 && estado == 200 }
         Log.i("Puente", "  panel ← $estado · ${rangoPanel ?: "sin rango"} · total ${total ?: "?"}")
 
-        // Lo que una tele DLNA espera oír: que se puede saltar por bytes y
-        // que esto es un vídeo que se reproduce mientras llega.
-        val comunes = mapOf(
-          "Content-Type" to destino.tipo,
-          "Accept-Ranges" to "bytes",
-          "Connection" to "close",
-          "contentFeatures.dlna.org" to "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000",
-          "transferMode.dlna.org" to "Streaming",
-        )
+        val comunes = cabecerasDlna(destino.tipo)
 
         if (estado >= 400) {
           escribirCabecera(salida, "$estado Error", mapOf("Content-Length" to "0", "Connection" to "close"))
@@ -249,6 +364,42 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
       } finally {
         panel.disconnect()
       }
+    }
+  }
+
+  /** Lo que una tele DLNA espera oír: que se puede saltar y que es vídeo. */
+  private fun cabecerasDlna(tipo: String): Map<String, String> = mapOf(
+    "Content-Type" to tipo,
+    "Accept-Ranges" to "bytes",
+    "Connection" to "close",
+    "contentFeatures.dlna.org" to "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+    "transferMode.dlna.org" to "Streaming",
+  )
+
+  /**
+   * Sigue mandando desde donde se acabó lo guardado, ya con el panel.
+   *
+   * La cabecera ya se mandó con el tamaño de todo, así que aquí solo van
+   * bytes: para la tele es la misma respuesta, y no se entera de que la
+   * primera parte salió de la memoria.
+   */
+  private fun seguirPorElPanel(destino: Destino, desde: Long, salida: OutputStream) {
+    val panel = (URL(destino.url).openConnection() as HttpURLConnection).apply {
+      instanceFollowRedirects = true
+      connectTimeout = 15_000
+      readTimeout = 30_000
+      setRequestProperty("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
+      setRequestProperty("Accept", "*/*")
+      setRequestProperty("Range", "bytes=$desde-")
+    }
+    try {
+      Log.i("Puente", "  sigue por el panel desde $desde (${panel.responseCode})")
+      val pasados = panel.inputStream.use { origen -> copiar(origen, salida, desde, destino.parches) }
+      Log.i("Puente", "  terminado, ${pasados / 1_000_000} MB")
+    } catch (fallo: Exception) {
+      Log.i("Puente", "  cortado: ${fallo.message}")
+    } finally {
+      panel.disconnect()
     }
   }
 
