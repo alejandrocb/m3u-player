@@ -501,7 +501,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
       const encontrados = filas(
         db,
-        `SELECT e.series_id, e.season, e.episode, e.title, e.seconds,
+        `SELECT e.series_id, e.season, e.episode, e.title, e.seconds, e.logo,
                 s.title AS serie, s.logo AS serie_logo
            FROM episode e JOIN series s ON s.id = e.series_id
           WHERE ${condicion}`,
@@ -515,6 +515,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
         numero: Number(fila.episode),
         titulo: (fila.title as string) ?? null,
         segundos: (fila.seconds as number) ?? null,
+        imagen: (fila.logo as string) || null,
       }));
 
       // En el orden en que se pidieron, que es el del historial.

@@ -86,3 +86,27 @@ export async function mirarElFichero(url: string): Promise<{ estado: number; red
   const final = respuesta.url && respuesta.url !== url ? urlSinCredenciales(respuesta.url) : null;
   return { estado: respuesta.status, redirige: final, codecs: codecsDeMatroska(texto) };
 }
+
+interface NativoPuente {
+  abrir(url: string, tipo: string): Promise<string>;
+  cerrar(): void;
+}
+
+const puente = (NativeModules as { Puente?: NativoPuente }).Puente;
+
+/**
+ * La dirección que hay que darle a la tele: la del puente del teléfono, que
+ * le pide el vídeo al panel como un reproductor cualquiera (`ModuloDePuente`).
+ *
+ * Si el puente no está —un APK anterior— se le da la del panel tal cual,
+ * que con algunas teles funciona y con la Samsung de casa no.
+ */
+export async function direccionParaLaTele(url: string, tipo: string): Promise<string> {
+  if (!puente) return url;
+  return puente.abrir(url, tipo);
+}
+
+/** Cierra el puente al dejar de ver en la tele: suelta la wifi y la CPU. */
+export function cerrarPuente(): void {
+  puente?.cerrar();
+}

@@ -34,6 +34,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import {
   MandoDeTele,
   avanceDePrograma,
+  tipoDeVideo,
   leerClaveDeEpisodio,
   loQueUnaTeleNoSabe,
   nombreDeCodec,
@@ -88,7 +89,7 @@ import {
 import { almacenDeCuentas } from './src/almacen';
 import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
 import { avisarDeLasDescargas } from './src/aviso-descarga';
-import { buscarTeles, mirarElFichero, pedirALaTele } from './src/teles';
+import { buscarTeles, cerrarPuente, direccionParaLaTele, mirarElFichero, pedirALaTele } from './src/teles';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -103,6 +104,7 @@ import {
   VERDE,
 } from './src/tema';
 import { almacenDeSync } from './src/almacen-sync';
+import { IconoPausa, IconoPlay, IconoSalto } from './src/iconos';
 import { cargarCatalogo } from './src/carga';
 import type { Avance, Medicion } from './src/carga';
 import { PantallaEmparejar } from './src/pantalla-emparejar';
@@ -1229,6 +1231,7 @@ function BibliotecaVista({
       mandoTele.current = null;
       teleEnCurso.current = null;
       saltoPendiente.current = null;
+      cerrarPuente();
       arbitro.soltar(RANURA_TELE, Date.now());
       setEnLaTele(null);
       setVerMando(false);
@@ -1249,25 +1252,20 @@ function BibliotecaVista({
    * cuando la tele reproduce bien no hace ninguna falta. Para entonces la de
    * la tele ya se ha soltado.
    */
-  const explicarFalloDeTele = useCallback(async (url: string) => {
-    setAviso('La tele no ha conseguido abrir el vídeo; miro por qué…');
-    const visto = await mirarElFichero(url).catch(() => null);
-    if (!visto) {
-      setAviso('La tele no ha conseguido abrir el vídeo');
-      return;
-    }
-    console.log(
-      `[tele] el fichero: ${visto.estado}${visto.redirige ? ` · redirige a ${visto.redirige}` : ''}` +
-        ` · ${visto.codecs.join(', ') || 'sin pistas reconocibles'}`,
-    );
-
-    const problemas = loQueUnaTeleNoSabe(visto.codecs);
-    const pistas = visto.codecs.filter((codec) => !codec.startsWith('S_')).map(nombreDeCodec);
-    if (problemas.length > 0) setAviso(`La tele no puede con este fichero: ${problemas.join('; ')}`);
-    else if (visto.estado >= 400) setAviso(`La tele no ha podido abrirlo: el panel contesta ${visto.estado}`);
-    else if (pistas.length > 0) setAviso(`La tele no ha conseguido abrirlo (trae ${pistas.join(', ')})`);
-    else setAviso('La tele no ha conseguido abrir el vídeo');
-  }, []);
+  const fallarTele = useCallback(
+    (actual: EnLaTele, texto: string) => {
+      // Se suelta todo lo que gasta —ranura, puente, wifi—, pero la pantalla
+      // se queda: es donde se lee qué ha pasado y desde donde se reintenta.
+      mandoTele.current = null;
+      saltoPendiente.current = null;
+      cerrarPuente();
+      arbitro.soltar(RANURA_TELE, Date.now());
+      actual.fallo = texto;
+      setEnLaTele({ ...actual });
+      setVerMando(true);
+    },
+    [arbitro],
+  );
 
   /**
    * Manda una ficha a una tele concreta y se queda de mando.
@@ -1301,9 +1299,13 @@ function BibliotecaVista({
         // Lo que estuviera sonando, fuera: hay teles que no aceptan un vídeo
         // nuevo encima de otro. Que no hubiera nada no es un fallo.
         await mando.parar().catch(() => undefined);
-        await mando.poner(mejor.url, medio.titulo);
+        // Lo que se le da a la tele es el puente del teléfono, no el panel:
+        // la Samsung no se entiende con el panel directamente.
+        const direccion = await direccionParaLaTele(mejor.url, tipoDeVideo(mejor.url));
+        await mando.poner(direccion, medio.titulo);
         await mando.reproducir();
       } catch (fallo) {
+        cerrarPuente();
         arbitro.soltar(RANURA_TELE, Date.now());
         console.warn('[tele] no se pudo mandar', fallo);
         setAviso(fallo instanceof Error ? `No se pudo: ${fallo.message}` : 'No se pudo mandar a la tele');
@@ -1323,7 +1325,16 @@ function BibliotecaVista({
           : null;
 
       mandoTele.current = mando;
-      teleEnCurso.current = { tele, medio, url: mejor.url, situacion: null, empezada: false, desde: Date.now() };
+      teleEnCurso.current = {
+        tele,
+        medio,
+        url: mejor.url,
+        ...(await caraDeLoQueSuena(biblioteca, medio)),
+        fallo: null,
+        situacion: null,
+        empezada: false,
+        desde: Date.now(),
+      };
       setEnLaTele({ ...teleEnCurso.current });
       setVerMando(true);
     },
@@ -1386,7 +1397,7 @@ function BibliotecaVista({
     [perfiles, perfil.id],
   );
 
-  const enLaTeleActiva = enLaTele !== null;
+  const enLaTeleActiva = enLaTele !== null && enLaTele.fallo === null;
 
   /*
     Mientras hay algo en la tele, se le pregunta cada dos segundos en qué
@@ -1415,7 +1426,13 @@ function BibliotecaVista({
 
         const suena = situacion.estado === 'PLAYING' || situacion.estado === 'PAUSED_PLAYBACK';
         actual.situacion = situacion;
-        if (suena) actual.empezada = true;
+        /*
+          Sonar de verdad es **avanzar**, no pasar por PLAYING: la Samsung se
+          pone en negro como si fuera a empezar y luego saca "Error
+          inesperado". Contarlo como empezado haría que eso pareciera un final
+          normal. Un directo no tiene posición, y ahí basta con el estado.
+        */
+        if (suena && (actual.medio.clase === 'canal' || (situacion.posicion ?? 0) >= 3)) actual.empezada = true;
 
         if (situacion.estado === 'PLAYING' && saltoPendiente.current !== null) {
           const destino = saltoPendiente.current;
@@ -1440,8 +1457,12 @@ function BibliotecaVista({
           return;
         }
         if (parada && Date.now() - actual.desde > 30_000) {
-          soltarTele(null);
-          void explicarFalloDeTele(actual.url);
+          fallarTele(actual, 'La tele no ha podido reproducirlo. Miro por qué…');
+          void porQueNoLoAbreLaTele(actual.url).then((porque) => {
+            if (teleEnCurso.current !== actual) return;
+            actual.fallo = porque;
+            setEnLaTele({ ...actual });
+          });
           return;
         }
         setEnLaTele({ ...actual });
@@ -1457,7 +1478,7 @@ function BibliotecaVista({
     void mirar();
     const reloj = setInterval(() => void mirar(), 2_000);
     return () => clearInterval(reloj);
-  }, [enLaTeleActiva, apuntarLoDeLaTele, soltarTele, explicarFalloDeTele]);
+  }, [enLaTeleActiva, apuntarLoDeLaTele, soltarTele, fallarTele]);
 
   /** Lo que hacen los botones del mando. Todo va a la tele y nada espera. */
   const ordenALaTele = useCallback(
@@ -2468,51 +2489,94 @@ function BibliotecaVista({
         mando, aquí sale en pausa.
       */}
       {enLaTele && verMando ? (
-        <View style={estilos.panelDescargas}>
-          <View style={estilos.descargaCabecera}>
-            <Text style={estilos.descargaAyuda}>En {enLaTele.tele.nombre}</Text>
-            <Text style={estilos.menuNombre} numberOfLines={2}>
-              {enLaTele.medio.titulo}
+        <View style={estilos.pantallaTele}>
+          {enLaTele.imagen ? (
+            <Image source={{ uri: enLaTele.imagen }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          ) : null}
+          <View style={estilos.pantallaTeleVelo} />
+
+          <View style={[estilos.pantallaTeleArriba, { paddingTop: insets.top + 16 }]}>
+            <Text style={estilos.pantallaTeleDonde} numberOfLines={1}>
+              En {enLaTele.tele.nombre}
             </Text>
-            <Text style={estilos.descargaEstado}>{comoVaLaTele(enLaTele)}</Text>
-            {enLaTele.situacion?.duracion && enLaTele.situacion.posicion !== null ? (
-              <View style={estilos.descargaBarra}>
-                <View
-                  style={[
-                    estilos.descargaBarraHecha,
-                    {
-                      width: `${Math.min(100, Math.round((enLaTele.situacion.posicion / enLaTele.situacion.duracion) * 100))}%`,
-                    },
-                  ]}
-                />
-              </View>
-            ) : null}
+            <Pressable focusable={false} style={estilos.pantallaTeleBoton} onPress={() => setVerMando(false)}>
+              <Text style={estilos.pantallaTeleBotonTexto}>Esconder</Text>
+            </Pressable>
           </View>
 
-          <View style={estilos.descargaBotones}>
-            {enLaTele.medio.clase !== 'canal' ? (
-              <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('atras')}>
-                <Text style={estilos.descargaBotonTexto}>−30 s</Text>
-              </Pressable>
-            ) : null}
-            <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('alternar')}>
-              <Text style={estilos.descargaBotonTexto}>
-                {enLaTele.situacion?.estado === 'PLAYING' ? 'Pausa' : 'Seguir'}
-              </Text>
-            </Pressable>
-            {enLaTele.medio.clase !== 'canal' ? (
-              <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('adelante')}>
-                <Text style={estilos.descargaBotonTexto}>+30 s</Text>
-              </Pressable>
-            ) : null}
+          <View style={estilos.pantallaTeleCentro}>
+            {enLaTele.fallo ? (
+              <Text style={estilos.pantallaTeleFallo}>{enLaTele.fallo}</Text>
+            ) : (
+              <View style={estilos.pantallaTeleControles}>
+                {enLaTele.medio.clase !== 'canal' ? (
+                  <Pressable focusable={false} style={estilos.pantallaTeleSalto} onPress={() => ordenALaTele('atras')}>
+                    <IconoSalto hacia="izquierda" tamano={22} />
+                    <Text style={estilos.pantallaTeleSaltoTexto}>30</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable focusable={false} style={estilos.pantallaTelePlay} onPress={() => ordenALaTele('alternar')}>
+                  {enLaTele.situacion?.estado === 'PLAYING' ? <IconoPausa tamano={34} /> : <IconoPlay tamano={38} />}
+                </Pressable>
+                {enLaTele.medio.clase !== 'canal' ? (
+                  <Pressable focusable={false} style={estilos.pantallaTeleSalto} onPress={() => ordenALaTele('adelante')}>
+                    <IconoSalto hacia="derecha" tamano={22} />
+                    <Text style={estilos.pantallaTeleSaltoTexto}>30</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            )}
           </View>
-          <View style={estilos.descargaBotones}>
-            <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('parar')}>
-              <Text style={estilos.descargaBotonTexto}>Parar</Text>
-            </Pressable>
-            <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => setVerMando(false)}>
-              <Text style={estilos.descargaBotonTexto}>Esconder</Text>
-            </Pressable>
+
+          <View style={[estilos.pantallaTeleAbajo, { paddingBottom: insets.bottom + 28 }]}>
+            <Text style={estilos.pantallaTeleTitulo} numberOfLines={2}>
+              {enLaTele.titulo}
+            </Text>
+            {enLaTele.subtitulo ? (
+              <Text style={estilos.pantallaTeleSubtitulo} numberOfLines={1}>
+                {enLaTele.subtitulo}
+              </Text>
+            ) : null}
+
+            {!enLaTele.fallo ? (
+              <>
+                <View style={estilos.pantallaTeleBarra}>
+                  <View
+                    style={[
+                      estilos.pantallaTeleBarraHecha,
+                      {
+                        width:
+                          enLaTele.situacion?.duracion && enLaTele.situacion.posicion !== null
+                            ? `${Math.min(100, (enLaTele.situacion.posicion / enLaTele.situacion.duracion) * 100)}%`
+                            : '0%',
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={estilos.pantallaTeleEstado}>{comoVaLaTele(enLaTele)}</Text>
+              </>
+            ) : null}
+
+            <View style={estilos.pantallaTeleBotones}>
+              {enLaTele.fallo ? (
+                <>
+                  <Pressable
+                    focusable={false}
+                    style={estilos.pantallaTeleBoton}
+                    onPress={() => void ponerEnLaTele(enLaTele.tele, enLaTele.medio)}
+                  >
+                    <Text style={estilos.pantallaTeleBotonTexto}>Reintentar</Text>
+                  </Pressable>
+                  <Pressable focusable={false} style={estilos.pantallaTeleBoton} onPress={() => soltarTele(null)}>
+                    <Text style={estilos.pantallaTeleBotonTexto}>Cerrar</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <Pressable focusable={false} style={estilos.pantallaTeleBoton} onPress={() => ordenALaTele('parar')}>
+                  <Text style={estilos.pantallaTeleBotonTexto}>Parar</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         </View>
       ) : null}
@@ -3343,6 +3407,17 @@ interface EnLaTele {
   medio: MedioParaTele;
   /** Lo que se le mandó. Hace falta para explicar un fallo, no para pintar. */
   url: string;
+  /** Lo que se pinta: la serie o la película, y debajo el capítulo. */
+  titulo: string;
+  subtitulo: string | null;
+  /** El fotograma del capítulo o el fondo de la película, quieto. */
+  imagen: string | null;
+  /**
+   * Por qué no ha podido la tele. Mientras lo hay, la pantalla se queda con
+   * el porqué a la vista en vez de cerrarse: un aviso de tres segundos abajo
+   * se pierde, que uno está mirando la tele y no el teléfono.
+   */
+  fallo: string | null;
   /** Lo último que dijo la tele. Nulo hasta la primera respuesta. */
   situacion: Situacion | null;
   /** Si llegó a sonar: es lo que distingue "ha terminado" de "no pudo abrirlo". */
@@ -3364,6 +3439,63 @@ function enReloj(segundos: number): string {
   const minutos = Math.floor((total % 3600) / 60);
   const resto = String(total % 60).padStart(2, '0');
   return horas > 0 ? `${horas}:${String(minutos).padStart(2, '0')}:${resto}` : `${minutos}:${resto}`;
+}
+
+/**
+ * Cómo se enseña lo que suena en la tele: título, capítulo e imagen.
+ *
+ * La imagen es **la del capítulo** si la hay —el fotograma, que es lo que uno
+ * reconoce—, y si no el fondo apaisado de la serie o la película. La carátula
+ * vertical va la última: estirada a pantalla completa se ve borrosa.
+ */
+async function caraDeLoQueSuena(
+  biblioteca: Biblioteca,
+  medio: MedioParaTele,
+): Promise<{ titulo: string; subtitulo: string | null; imagen: string | null }> {
+  if (medio.clase === 'episodio') {
+    const episodio = (await biblioteca.episodiosPorClave([medio.id]).catch(() => []))[0];
+    if (episodio) {
+      const fondo = episodio.imagen
+        ? null
+        : ((await biblioteca.detalleDeSerie(episodio.serieId).catch(() => null))?.fondo ?? null);
+      return {
+        titulo: episodio.serieTitulo,
+        subtitulo: `T${episodio.temporada} E${episodio.numero}${episodio.titulo ? ` · ${episodio.titulo}` : ''}`,
+        imagen: episodio.imagen || fondo || episodio.serieLogo,
+      };
+    }
+  }
+  if (medio.clase === 'pelicula') {
+    const ficha = await biblioteca.detalleDePelicula(medio.id).catch(() => null);
+    return { titulo: medio.titulo, subtitulo: null, imagen: ficha?.fondo ?? null };
+  }
+  return { titulo: medio.titulo, subtitulo: medio.clase === 'canal' ? 'En directo' : null, imagen: null };
+}
+
+/**
+ * Por qué la tele no ha podido abrir algo que el teléfono sí abre.
+ *
+ * La tele solo dice "Error inesperado". Se leen los primeros kilobytes del
+ * fichero, que en un MKV dicen en claro qué pistas trae, y se cuenta.
+ * **Solo cuando falla**: leer el fichero gasta una conexión del panel, y para
+ * entonces la de la tele ya se ha soltado.
+ */
+async function porQueNoLoAbreLaTele(url: string): Promise<string> {
+  const visto = await mirarElFichero(url).catch(() => null);
+  if (!visto) return 'La tele no ha podido reproducirlo.';
+  console.log(
+    `[tele] el fichero: ${visto.estado}${visto.redirige ? ` · redirige a ${visto.redirige}` : ''}` +
+      ` · ${visto.codecs.join(', ') || 'sin pistas reconocibles'}`,
+  );
+
+  const problemas = loQueUnaTeleNoSabe(visto.codecs);
+  const pistas = visto.codecs.filter((codec) => !codec.startsWith('S_')).map(nombreDeCodec);
+  if (problemas.length > 0) return `La tele no puede con este fichero: ${problemas.join('; ')}.`;
+  if (visto.estado >= 400) return `La tele no ha podido abrirlo: el panel contesta ${visto.estado}.`;
+  if (pistas.length > 0) {
+    return `La tele no ha podido reproducirlo, y el fichero es normal (${pistas.join(', ')}). El problema está entre la tele y el servidor.`;
+  }
+  return 'La tele no ha podido reproducirlo.';
 }
 
 /** En qué está la tele, en una línea. */
@@ -4185,6 +4317,114 @@ const estilos = StyleSheet.create({
   descargaBotonTexto: {
     color: TINTA,
     fontSize: 14,
+  },
+  /*
+    "En la tele": como el reproductor, pero con la imagen quieta. Ocupa la
+    pantalla entera y va por encima de todo menos del aviso.
+  */
+  pantallaTele: {
+    backgroundColor: FONDO,
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 30,
+  },
+  pantallaTeleVelo: {
+    ...StyleSheet.absoluteFillObject,
+    experimental_backgroundImage: `linear-gradient(to bottom, rgba(${FONDO_RGB},0.55) 0%, rgba(${FONDO_RGB},0.25) 40%, rgba(${FONDO_RGB},0.92) 100%)`,
+  },
+  pantallaTeleArriba: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+  },
+  pantallaTeleDonde: {
+    color: TINTA_SUAVE,
+    flexShrink: 1,
+    fontSize: 15,
+  },
+  pantallaTeleCentro: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  pantallaTeleControles: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 40,
+  },
+  pantallaTelePlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.35)',
+    borderRadius: 48,
+    borderWidth: 1,
+    height: 96,
+    justifyContent: 'center',
+    width: 96,
+  },
+  pantallaTeleSalto: {
+    alignItems: 'center',
+    gap: 4,
+    padding: 8,
+  },
+  pantallaTeleSaltoTexto: {
+    color: TINTA,
+    fontSize: 13,
+  },
+  pantallaTeleFallo: {
+    color: TINTA,
+    fontSize: 17,
+    lineHeight: 25,
+    textAlign: 'center',
+  },
+  pantallaTeleAbajo: {
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+  pantallaTeleTitulo: {
+    color: TINTA,
+    fontSize: 26,
+    fontWeight: '700',
+  },
+  pantallaTeleSubtitulo: {
+    color: TINTA_SUAVE,
+    fontSize: 16,
+  },
+  pantallaTeleBarra: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 2,
+    height: 4,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  pantallaTeleBarraHecha: {
+    backgroundColor: VERDE,
+    height: '100%',
+  },
+  pantallaTeleEstado: {
+    color: TINTA_SUAVE,
+    fontSize: 14,
+  },
+  pantallaTeleBotones: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 14,
+  },
+  pantallaTeleBoton: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  pantallaTeleBotonTexto: {
+    color: TINTA,
+    fontSize: 16,
   },
   panelDescargas: {
     backgroundColor: '#0d2231',

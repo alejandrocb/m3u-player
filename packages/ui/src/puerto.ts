@@ -136,6 +136,11 @@ export interface EpisodioDeSerieFicha {
   serieTitulo: string;
   /** Carátula de la serie: es la que se reconoce de un vistazo. */
   serieLogo: string | null;
+  /**
+   * El fotograma del propio capítulo, si el panel lo trae (casi siempre).
+   * Es lo que se enseña cuando el capítulo suena en la tele.
+   */
+  imagen?: string | null;
   temporada: number;
   numero: number;
   titulo: string | null;
