@@ -46,7 +46,7 @@ const CONTROLES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
  * porque la conversión fallaba en silencio y la parrilla salía escrita en
  * base64 en la tablet mientras los tests pasaban en el portátil.
  */
-function bytesDeBase64(valor: string): number[] | null {
+export function bytesDeBase64(valor: string): number[] | null {
   const sinEspacios = valor.replace(/\s/g, '');
   // La longitud múltiplo de cuatro es lo que separa el base64 de una frase que
   // por casualidad solo lleva letras: "Telediario 1" se descodificaría sin

@@ -33,7 +33,10 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 
 import {
   MandoDeTele,
+  audioPorDefecto,
   avanceDePrograma,
+  huecosParaDejarSolo,
+  nombreDeIdioma,
   tipoDeVideo,
   leerClaveDeEpisodio,
   loQueUnaTeleNoSabe,
@@ -41,7 +44,7 @@ import {
   programaActual,
   qualityRank,
 } from '@m3u/core';
-import type { Programa, Situacion, Tele } from '@m3u/core';
+import type { PistaMkv, Programa, Situacion, Tele } from '@m3u/core';
 import type {
   Ajustes,
   AlmacenPerfiles,
@@ -674,6 +677,8 @@ function BibliotecaVista({
   const [verMando, setVerMando] = useState(false);
   /** Lo que mide la barra de la pantalla de la tele, para convertir un toque en minuto. */
   const anchoBarraTele = useRef(0);
+  /** El menú de audio y subtítulos de lo que suena en la tele. */
+  const [elegirPistas, setElegirPistas] = useState(false);
   /** Con más de una tele en casa, cuál: se pregunta en vez de adivinar. */
   const [elegirTele, setElegirTele] = useState<{ teles: Tele[]; medio: MedioParaTele } | null>(null);
   /** Cuánto ocupan y cuánto queda libre. Se mide al abrir, no en cada pintado. */
@@ -1290,13 +1295,33 @@ function BibliotecaVista({
    * echa a la descarga, que es lo único que no pierde nada.
    */
   const ponerEnLaTele = useCallback(
-    async (tele: Tele, medio: MedioParaTele) => {
+    async (
+      tele: Tele,
+      medio: MedioParaTele,
+      eleccion?: { audio: number | null; subtitulo: number | null; desde?: number },
+    ) => {
       const variantes = await biblioteca.variantes(medio.clase, medio.id).catch(() => []);
       const mejor = variantes[0];
       if (!mejor) {
         setAviso('Esta ficha no tiene ninguna URL asociada');
         return;
       }
+
+      /*
+        **Relevar lo que ya está sonando es un relevo, no un final.**
+
+        Sin esto, mandar algo nuevo con la tele puesta era un desastre en tres
+        actos: el reloj de la anterior veía la parada, daba la reproducción
+        por terminada y **soltaba la ranura** —que entonces se pone a enfriar
+        treinta segundos—, cerraba el puente que la nueva acababa de abrir y
+        quitaba el aviso. Por fuera: "se ha perdido la conexión con la tele",
+        y al segundo intento "las conexiones están ocupadas, prueba en 12 s".
+
+        Se apaga primero el reloj de la anterior —el suyo comprueba que sigue
+        siendo el que manda y se calla solo— y **no se suelta nada**: la
+        ranura, el puente y el aviso son los mismos, solo cambia lo que suena.
+      */
+      teleEnCurso.current = null;
 
       const permiso = arbitro.pedir(RANURA_TELE, 'reproducir', Date.now());
       if (!permiso.concedido) {
@@ -1307,6 +1332,23 @@ function BibliotecaVista({
 
       setAviso(`Mandando a ${tele.nombre}…`);
       console.log(`[tele] ${medio.titulo} → ${tele.nombre} · ${urlSinCredenciales(mejor.url)}`);
+
+      /*
+        **Qué pistas trae y cuáles se le dejan ver.**
+
+        DLNA no sabe pedir un idioma: la tele coge lo que el fichero marca, y
+        de ahí los subtítulos en español que aparecen solos y no hay forma de
+        quitar. Así que se leen las pistas y se tapan las demás al pasar por
+        el puente. Por defecto, el audio que marque el fichero y **ningún
+        subtítulo**, que es lo que uno espera al poner una película.
+
+        Solo en MKV, que es donde se sabe hacer, y si falla se manda tal cual.
+      */
+      const cabecera = /\.mkv($|\?)/i.test(mejor.url) ? await mirarElFichero(mejor.url).catch(() => null) : null;
+      const pistas = cabecera?.pistas ?? [];
+      const audio = eleccion ? eleccion.audio : audioPorDefecto(pistas);
+      const subtitulo = eleccion ? eleccion.subtitulo : null;
+      const huecos = pistas.length > 0 ? huecosParaDejarSolo(pistas, { audio, subtitulo }) : [];
       const mando = new MandoDeTele(tele, pedirALaTele);
       try {
         // Lo que estuviera sonando, fuera: hay teles que no aceptan un vídeo
@@ -1314,7 +1356,7 @@ function BibliotecaVista({
         await mando.parar().catch(() => undefined);
         // Lo que se le da a la tele es el puente del teléfono, no el panel:
         // la Samsung no se entiende con el panel directamente.
-        const direccion = await direccionParaLaTele(mejor.url, tipoDeVideo(mejor.url));
+        const direccion = await direccionParaLaTele(mejor.url, tipoDeVideo(mejor.url), huecos);
         await mando.poner(direccion, medio.titulo);
         await mando.reproducir();
       } catch (fallo) {
@@ -1330,12 +1372,17 @@ function BibliotecaVista({
         tele no está sonando, un salto se pierde o lo rechaza. Lo hace el reloj
         que pregunta, en cuanto la vea en marcha.
       */
-      const avance =
-        medio.clase === 'canal' ? null : await perfiles.avanceDe(perfil.id, medio.clase, medio.id).catch(() => null);
-      saltoPendiente.current =
-        avance && avance.segundos > 30 && (!avance.duracion || avance.segundos < avance.duracion * 0.9)
-          ? avance.segundos
-          : null;
+      if (eleccion?.desde !== undefined) {
+        // Cambiar de idioma empieza el vídeo otra vez: se vuelve a donde iba.
+        saltoPendiente.current = eleccion.desde > 5 ? eleccion.desde : null;
+      } else {
+        const avance =
+          medio.clase === 'canal' ? null : await perfiles.avanceDe(perfil.id, medio.clase, medio.id).catch(() => null);
+        saltoPendiente.current =
+          avance && avance.segundos > 30 && (!avance.duracion || avance.segundos < avance.duracion * 0.9)
+            ? avance.segundos
+            : null;
+      }
 
       mandoTele.current = mando;
       teleEnCurso.current = {
@@ -1343,6 +1390,9 @@ function BibliotecaVista({
         medio,
         url: mejor.url,
         ...(await caraDeLoQueSuena(biblioteca, medio)),
+        pistas,
+        audio,
+        pistaDeSubtitulos: subtitulo,
         fallo: null,
         situacion: null,
         empezada: false,
@@ -1354,9 +1404,34 @@ function BibliotecaVista({
     [biblioteca, arbitro, pararDescarga, perfiles, perfil.id],
   );
 
+  /**
+   * Cambiar el audio o los subtítulos.
+   *
+   * Es volver a mandarlo con otras pistas tapadas, así que **el vídeo empieza
+   * de nuevo** y se salta a donde iba. No hay otra manera: lo que la tele ve
+   * es un fichero, y el fichero cambia.
+   */
+  const cambiarPistas = useCallback(
+    (audio: number | null, subtitulo: number | null) => {
+      const actual = teleEnCurso.current;
+      if (!actual) return;
+      setElegirPistas(false);
+      void ponerEnLaTele(actual.tele, actual.medio, { audio, subtitulo, desde: actual.situacion?.posicion ?? 0 });
+    },
+    [ponerEnLaTele],
+  );
+
   /** Busca las teles y manda, o pregunta a cuál si hay más de una. */
   const mandarALaTele = useCallback(
     async (medio: MedioParaTele) => {
+      // Ya hay algo sonando: va a la misma tele, sin buscar nada. Buscar
+      // tarda dos segundos y medio y aquí no hay nada que preguntar.
+      const puesta = teleEnCurso.current?.tele;
+      if (puesta) {
+        await ponerEnLaTele(puesta, medio);
+        return;
+      }
+
       setAviso('Buscando la tele…');
       const teles = await buscarTeles();
       if (teles.length === 0) {
@@ -1565,6 +1640,10 @@ function BibliotecaVista({
     if (!instancia) return false;
 
     // Lo que esté encima se cierra antes que nada, de más reciente a menos.
+    if (elegirPistas) {
+      setElegirPistas(false);
+      return true;
+    }
     if (elegirTele) {
       setElegirTele(null);
       return true;
@@ -1619,7 +1698,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha, verDescargas, elegirTele, verMando]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha, verDescargas, elegirTele, elegirPistas, verMando]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -2665,12 +2744,85 @@ function BibliotecaVista({
                   </Pressable>
                 </>
               ) : (
-                <Pressable focusable={false} style={estilos.pantallaTeleBoton} onPress={() => ordenALaTele('parar')}>
-                  <Text style={estilos.pantallaTeleBotonTexto}>Parar</Text>
-                </Pressable>
+                <>
+                  <Pressable focusable={false} style={estilos.pantallaTeleBoton} onPress={() => ordenALaTele('parar')}>
+                    <Text style={estilos.pantallaTeleBotonTexto}>Parar</Text>
+                  </Pressable>
+                  {enLaTele.pistas.length > 1 ? (
+                    <Pressable
+                      focusable={false}
+                      style={estilos.pantallaTeleBoton}
+                      onPress={() => setElegirPistas(true)}
+                    >
+                      <Text style={estilos.pantallaTeleBotonTexto}>Audio y subtítulos</Text>
+                    </Pressable>
+                  ) : null}
+                </>
               )}
             </View>
           </View>
+        </View>
+      ) : null}
+
+      {/*
+        Audio y subtítulos. Cambiar cualquiera de los dos vuelve a mandar el
+        vídeo —lo que la tele ve es un fichero, y el fichero cambia—, así que
+        se dice que empieza otra vez por donde iba.
+      */}
+      {enLaTele && elegirPistas ? (
+        <View style={estilos.menuPistas}>
+          <ScrollView>
+            <Text style={estilos.menuNombre}>Audio</Text>
+            {enLaTele.pistas
+              .filter((pista) => pista.clase === 'audio')
+              .map((pista) => (
+                <Pressable
+                  key={`a${pista.numero}`}
+                  focusable={false}
+                  style={estilos.menuOpcion}
+                  onPress={() => cambiarPistas(pista.numero, enLaTele.pistaDeSubtitulos)}
+                >
+                  <Text
+                    style={[estilos.menuOpcionTexto, enLaTele.audio === pista.numero && estilos.menuOpcionPuesta]}
+                  >
+                    {nombreDeIdioma(pista.idioma)}
+                    {pista.nombre ? ` · ${pista.nombre}` : ''}
+                  </Text>
+                </Pressable>
+              ))}
+
+            <Text style={estilos.menuNombre}>Subtítulos</Text>
+            <Pressable
+              focusable={false}
+              style={estilos.menuOpcion}
+              onPress={() => cambiarPistas(enLaTele.audio, null)}
+            >
+              <Text style={[estilos.menuOpcionTexto, enLaTele.pistaDeSubtitulos === null && estilos.menuOpcionPuesta]}>
+                Sin subtítulos
+              </Text>
+            </Pressable>
+            {enLaTele.pistas
+              .filter((pista) => pista.clase === 'subtitulo')
+              .map((pista) => (
+                <Pressable
+                  key={`s${pista.numero}`}
+                  focusable={false}
+                  style={estilos.menuOpcion}
+                  onPress={() => cambiarPistas(enLaTele.audio, pista.numero)}
+                >
+                  <Text
+                    style={[estilos.menuOpcionTexto, enLaTele.pistaDeSubtitulos === pista.numero && estilos.menuOpcionPuesta]}
+                  >
+                    {nombreDeIdioma(pista.idioma)}
+                    {pista.nombre ? ` · ${pista.nombre}` : ''}
+                  </Text>
+                </Pressable>
+              ))}
+
+            <Pressable focusable={false} style={estilos.menuOpcion} onPress={() => setElegirPistas(false)}>
+              <Text style={estilos.menuOpcionTexto}>Dejarlo como está</Text>
+            </Pressable>
+          </ScrollView>
         </View>
       ) : null}
 
@@ -3505,6 +3657,11 @@ interface EnLaTele {
   subtitulo: string | null;
   /** El fotograma del capítulo o el fondo de la película, quieto. */
   imagen: string | null;
+  /** Lo que trae el fichero: audios, subtítulos y en qué idioma. */
+  pistas: PistaMkv[];
+  /** Cuáles se le están dejando ver a la tele. `null` en subtítulos: ninguno. */
+  audio: number | null;
+  pistaDeSubtitulos: number | null;
   /**
    * Por qué no ha podido la tele. Mientras lo hay, la pantalla se queda con
    * el porqué a la vista en vez de cerrarse: un aviso de tres segundos abajo
@@ -3576,10 +3733,6 @@ async function caraDeLoQueSuena(
 async function porQueNoLoAbreLaTele(url: string): Promise<string> {
   const visto = await mirarElFichero(url).catch(() => null);
   if (!visto) return 'La tele no ha podido reproducirlo.';
-  console.log(
-    `[tele] el fichero: ${visto.estado}${visto.redirige ? ` · redirige a ${visto.redirige}` : ''}` +
-      ` · ${visto.codecs.join(', ') || 'sin pistas reconocibles'}`,
-  );
 
   const problemas = loQueUnaTeleNoSabe(visto.codecs);
   const pistas = visto.codecs.filter((codec) => !codec.startsWith('S_')).map(nombreDeCodec);
@@ -4498,6 +4651,21 @@ const estilos = StyleSheet.create({
     borderRadius: 3,
     height: 6,
     overflow: 'hidden',
+  },
+  menuPistas: {
+    backgroundColor: SUPERFICIE,
+    borderRadius: 14,
+    bottom: 40,
+    left: 24,
+    maxHeight: '70%',
+    padding: 18,
+    position: 'absolute',
+    right: 24,
+    // Por encima de la pantalla de la tele, que es desde donde se abre.
+    zIndex: 35,
+  },
+  menuOpcionPuesta: {
+    color: VERDE,
   },
   chivatoTele: {
     alignItems: 'center',

@@ -8,8 +8,9 @@
 
 import { DeviceEventEmitter, NativeModules } from 'react-native';
 
-import { codecsDeMatroska, leerTele, type Tele } from '@m3u/core';
-import { urlSinCredenciales } from '@m3u/ui';
+import ReactNativeBlobUtil from 'react-native-blob-util';
+
+import { bytesDeBase64, codecsDeMatroska, leerTele, pistasDeMatroska, type PistaMkv, type Tele } from '@m3u/core';
 
 interface Nativo {
   buscar(milisegundos: number): Promise<string[]>;
@@ -78,19 +79,52 @@ export async function buscarTeles(): Promise<Tele[]> {
  * Se leen como texto aunque sean binarios; los nombres de los códecs son
  * ASCII y sobreviven (ver `codecsDeMatroska`).
  */
-export async function mirarElFichero(url: string): Promise<{ estado: number; redirige: string | null; codecs: string[] }> {
-  const respuesta = await conPlazo(15_000)(url, {
-    headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', Range: 'bytes=0-262143' },
+export interface CabeceraDelFichero {
+  estado: number;
+  /** Las pistas del MKV: audio, subtítulos y en qué idioma va cada una. */
+  pistas: PistaMkv[];
+  /** Los códecs, por si la cabecera no se pudo leer entera. */
+  codecs: string[];
+}
+
+/**
+ * El principio del fichero, leído como lo leería un reproductor.
+ *
+ * Se piden **medio mega**: la lista de pistas de un MKV va al principio, y
+ * pedir más sería bajarse la película para leer una etiqueta. Va por
+ * `react-native-blob-util` y no por `fetch` porque hacen falta **los bytes**,
+ * no texto: un MKV leído como texto llega hecho trizas. Y se descodifica con
+ * el base64 de `@m3u/core`, que existe justamente porque Hermes no trae
+ * `atob` ni `TextDecoder`.
+ */
+export async function mirarElFichero(url: string): Promise<CabeceraDelFichero> {
+  const respuesta = await ReactNativeBlobUtil.config({ timeout: 15_000 }).fetch('GET', url, {
+    'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+    Accept: '*/*',
+    Range: 'bytes=0-524287',
   });
-  const texto = await respuesta.text().catch(() => '');
-  // Si la dirección final no es la pedida, el panel ha redirigido: hay teles
-  // que no saben seguir ese salto.
-  const final = respuesta.url && respuesta.url !== url ? urlSinCredenciales(respuesta.url) : null;
-  return { estado: respuesta.status, redirige: final, codecs: codecsDeMatroska(texto) };
+  const estado = respuesta.info().status;
+  const bytes = Uint8Array.from(bytesDeBase64(respuesta.base64()) ?? []);
+  const pistas = pistasDeMatroska(bytes);
+
+  // Si no se pudo leer la cabecera entera —hay ficheros que la traen más
+  // adelante—, al menos los nombres de los códecs se ven a simple vista.
+  const codecs = pistas.length > 0 ? pistas.map((pista) => pista.codec) : codecsDeMatroska(comoTexto(bytes));
+  console.log(`[tele] el fichero: ${estado} · ${pistas.length} pistas · ${codecs.join(', ') || 'sin reconocer'}`);
+  return { estado, pistas, codecs };
+}
+
+/** Los bytes como caracteres sueltos, solo para buscar cadenas ASCII. */
+function comoTexto(bytes: Uint8Array): string {
+  let texto = '';
+  for (let i = 0; i < bytes.length; i += 4096) {
+    texto += String.fromCharCode(...bytes.subarray(i, Math.min(bytes.length, i + 4096)));
+  }
+  return texto;
 }
 
 interface NativoPuente {
-  abrir(url: string, tipo: string): Promise<string>;
+  abrir(url: string, tipo: string, huecos: Array<{ desde: number; hasta: number }>): Promise<string>;
   cerrar(): void;
 }
 
@@ -103,9 +137,13 @@ const puente = (NativeModules as { Puente?: NativoPuente }).Puente;
  * Si el puente no está —un APK anterior— se le da la del panel tal cual,
  * que con algunas teles funciona y con la Samsung de casa no.
  */
-export async function direccionParaLaTele(url: string, tipo: string): Promise<string> {
+export async function direccionParaLaTele(
+  url: string,
+  tipo: string,
+  huecos: Array<{ desde: number; hasta: number }> = [],
+): Promise<string> {
   if (!puente) return url;
-  return puente.abrir(url, tipo);
+  return puente.abrir(url, tipo, huecos);
 }
 
 /** Cierra el puente al dejar de ver en la tele: suelta la wifi y la CPU. */
