@@ -25,6 +25,8 @@ interface Nativo {
   buscar(milisegundos: number): Promise<string[]>;
   avisar(titulo: string, detalle: string, sonando: boolean): void;
   callar(): void;
+  sinRestricciones(): Promise<boolean>;
+  pedirSinRestricciones(): void;
 }
 
 /*
@@ -199,6 +201,22 @@ export function tareaDeTele(): Promise<void> {
   return new Promise<void>((listo) => {
     cerrarTarea = listo;
   });
+}
+
+/**
+ * Si el sistema deja a la aplicación en paz con la pantalla apagada.
+ *
+ * El vídeo pasa por el teléfono, así que con el ahorro de batería puesto el
+ * proceso acaba congelado a los pocos minutos de bloquear: la tele se queda
+ * parada y por dentro no hay ningún error que mirar.
+ */
+export async function puedeSeguirConLaPantallaApagada(): Promise<boolean> {
+  return (await nativo?.sinRestricciones().catch(() => true)) ?? true;
+}
+
+/** Abre la pregunta del sistema. La contesta quien mira la pantalla. */
+export function pedirSeguirConLaPantallaApagada(): void {
+  nativo?.pedirSinRestricciones();
 }
 
 /** Lo que piden los botones del aviso: "alternar" o "parar". */

@@ -73,6 +73,7 @@ import {
   GestorCuentas,
   Arbitro,
   ColaDeDescargas,
+  FIN_EPISODIO,
   MODOS_INICIO,
   TOPE_DE_MANO,
   claveDeDescarga,
@@ -101,6 +102,8 @@ import {
   direccionParaLaTele,
   mirarElFichero,
   pedirALaTele,
+  pedirSeguirConLaPantallaApagada,
+  puedeSeguirConLaPantallaApagada,
 } from './src/teles';
 import {
   ESCALA_ENFOQUE,
@@ -677,6 +680,10 @@ function BibliotecaVista({
   const [verMando, setVerMando] = useState(false);
   /** Lo que mide la barra de la pantalla de la tele, para convertir un toque en minuto. */
   const anchoBarraTele = useRef(0);
+  /** El capítulo que viene después del que suena en la tele, si lo hay. */
+  const [siguienteEnLaTele, setSiguienteEnLaTele] = useState<MedioParaTele | null>(null);
+  /** Si el sistema nos deja seguir sirviendo con la pantalla apagada. */
+  const [teleSinRestricciones, setTeleSinRestricciones] = useState(true);
   /** El menú de audio y subtítulos de lo que suena en la tele. */
   const [elegirPistas, setElegirPistas] = useState(false);
   /** Con más de una tele en casa, cuál: se pregunta en vez de adivinar. */
@@ -1385,6 +1392,11 @@ function BibliotecaVista({
             : null;
       }
 
+      // Con el ahorro de batería puesto, el teléfono congela esto a los pocos
+      // minutos de bloquear y la tele se queda parada. Se mira aquí para
+      // poder avisar en la propia pantalla, que es donde se está mirando.
+      void puedeSeguirConLaPantallaApagada().then(setTeleSinRestricciones);
+
       mandoTele.current = mando;
       teleEnCurso.current = {
         tele,
@@ -1490,6 +1502,36 @@ function BibliotecaVista({
     },
     [perfiles, perfil.id],
   );
+
+  /*
+    El capítulo que viene, para poder encadenar desde el teléfono igual que se
+    encadena en el reproductor. Se pide al cambiar lo que suena y no cada dos
+    segundos: es una consulta a la base y puede acabar preguntando al panel.
+  */
+  const claseEnLaTele = enLaTele?.medio.clase ?? null;
+  const idEnLaTele = enLaTele?.medio.id ?? null;
+
+  useEffect(() => {
+    if (claseEnLaTele !== 'episodio' || !idEnLaTele) {
+      setSiguienteEnLaTele(null);
+      return;
+    }
+    let vigente = true;
+    void biblioteca
+      .episodioSiguiente(idEnLaTele)
+      .then((siguiente) => {
+        if (!vigente) return;
+        setSiguienteEnLaTele(
+          siguiente
+            ? { clase: 'episodio', id: siguiente.clave, titulo: siguiente.serieTitulo }
+            : null,
+        );
+      })
+      .catch(() => vigente && setSiguienteEnLaTele(null));
+    return () => {
+      vigente = false;
+    };
+  }, [biblioteca, claseEnLaTele, idEnLaTele]);
 
   const enLaTeleActiva = enLaTele !== null && enLaTele.fallo === null;
 
@@ -2751,6 +2793,22 @@ function BibliotecaVista({
                 </>
               ) : (
                 <>
+                  {/*
+                    Al llegar a los créditos, el capítulo siguiente: el mismo
+                    umbral con el que se da uno por visto, así que sale en los
+                    últimos minutos y nunca en mitad de una escena.
+                  */}
+                  {siguienteEnLaTele &&
+                  enLaTele.situacion?.duracion &&
+                  (enLaTele.situacion.posicion ?? 0) >= enLaTele.situacion.duracion * FIN_EPISODIO ? (
+                    <Pressable
+                      focusable={false}
+                      style={[estilos.pantallaTeleBoton, estilos.pantallaTeleBotonFuerte]}
+                      onPress={() => void ponerEnLaTele(enLaTele.tele, siguienteEnLaTele)}
+                    >
+                      <Text style={estilos.pantallaTeleBotonTexto}>Siguiente capítulo</Text>
+                    </Pressable>
+                  ) : null}
                   <Pressable focusable={false} style={estilos.pantallaTeleBoton} onPress={() => ordenALaTele('parar')}>
                     <Text style={estilos.pantallaTeleBotonTexto}>Parar</Text>
                   </Pressable>
@@ -2766,6 +2824,27 @@ function BibliotecaVista({
                 </>
               )}
             </View>
+
+            {/*
+              Y el aviso de lo que va a pasar si nadie lo toca: el vídeo pasa
+              por el teléfono, y con el ahorro de batería puesto el sistema
+              congela la aplicación a los pocos minutos de bloquear.
+            */}
+            {!teleSinRestricciones ? (
+              <Pressable
+                focusable={false}
+                style={estilos.pantallaTeleAviso}
+                onPress={() => {
+                  pedirSeguirConLaPantallaApagada();
+                  // Al volver de los ajustes se vuelve a mirar.
+                  setTimeout(() => void puedeSeguirConLaPantallaApagada().then(setTeleSinRestricciones), 1_000);
+                }}
+              >
+                <Text style={estilos.pantallaTeleAvisoTexto}>
+                  El teléfono puede cortar el vídeo al bloquearse. Toca aquí para permitir que siga.
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
       ) : null}
@@ -4743,6 +4822,24 @@ const estilos = StyleSheet.create({
   pantallaTeleBotonTexto: {
     color: TINTA,
     fontSize: 16,
+  },
+  pantallaTeleBotonFuerte: {
+    backgroundColor: 'rgba(53,208,127,0.22)',
+    borderColor: 'rgba(53,208,127,0.5)',
+    borderWidth: 1,
+  },
+  pantallaTeleAviso: {
+    backgroundColor: 'rgba(255,107,107,0.14)',
+    borderColor: 'rgba(255,107,107,0.4)',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 12,
+  },
+  pantallaTeleAvisoTexto: {
+    color: TINTA_SUAVE,
+    fontSize: 14,
+    lineHeight: 20,
   },
   panelDescargas: {
     backgroundColor: '#0d2231',

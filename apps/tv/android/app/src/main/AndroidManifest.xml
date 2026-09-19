@@ -31,6 +31,13 @@
       servicio de reproducción: lo que suena, suena en otra pantalla.
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!--
+      Para poder **preguntar** si se nos deja seguir con la pantalla apagada.
+      La ventana la enseña el sistema y la contesta quien mira: sin esto, el
+      teléfono congela la aplicación a los pocos minutos de bloquear y la tele
+      se queda parada a media película.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
  
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />

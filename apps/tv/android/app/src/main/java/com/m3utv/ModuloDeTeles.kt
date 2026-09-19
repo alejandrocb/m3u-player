@@ -5,6 +5,9 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
 import android.net.wifi.WifiManager
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -134,6 +137,51 @@ class ModuloDeTeles(contexto: ReactApplicationContext) : ReactContextBaseJavaMod
       contexto.stopService(Intent(contexto, ServicioDeTele::class.java))
     } catch (fallo: Exception) {
       Log.w("Teles", "no se pudo quitar el aviso", fallo)
+    }
+  }
+
+  /**
+   * Si el sistema deja a esta aplicación en paz con la pantalla apagada.
+   *
+   * Hace falta para "Ver en la tele": el vídeo pasa por el teléfono, y con el
+   * ahorro de batería puesto, MIUI acaba congelando el proceso a los pocos
+   * minutos de bloquear. Por dentro no se ve ningún error: simplemente deja
+   * de servir, y la tele se queda parada.
+   */
+  @ReactMethod
+  fun sinRestricciones(promesa: Promise) {
+    val energia = reactApplicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    promesa.resolve(energia?.isIgnoringBatteryOptimizations(reactApplicationContext.packageName) ?: false)
+  }
+
+  /**
+   * Se lo pide al sistema, que enseña su propia ventana.
+   *
+   * **Lo concede quien mira la pantalla, no nosotros**: aquí solo se abre la
+   * pregunta. En un Xiaomi, además, hay que darle permiso aparte en sus
+   * ajustes de batería, que eso ya no lo puede pedir ninguna aplicación.
+   */
+  @ReactMethod
+  fun pedirSinRestricciones() {
+    val contexto = reactApplicationContext
+    try {
+      contexto.startActivity(
+        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+          .setData(Uri.parse("package:" + contexto.packageName))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+      )
+    } catch (fallo: Exception) {
+      Log.w("Teles", "no se pudo pedir la excepción de batería", fallo)
+      // Si ese ajuste no existe, al menos la ficha de la aplicación.
+      try {
+        contexto.startActivity(
+          Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.parse("package:" + contexto.packageName))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+      } catch (otro: Exception) {
+        Log.w("Teles", "ni los ajustes de la aplicación", otro)
+      }
     }
   }
 }
