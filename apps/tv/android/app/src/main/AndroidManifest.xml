@@ -19,6 +19,12 @@
       apagada el aparato se suspende, y suspendido no baja nada.
     -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      Para encontrar las teles de casa ("Ver en la tele"). Muchos Android tiran
+      los paquetes multicast para ahorrar batería, y sin este permiso la
+      búsqueda vuelve vacía aunque la tele esté encendida al lado.
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
  
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />

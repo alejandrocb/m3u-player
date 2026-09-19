@@ -1027,7 +1027,73 @@ El permiso de notificaciones (Android 13+) se pide la primera vez que se baja
 algo, y **se sigue sin él**: si se deniega, la descarga funciona igual y lo
 único que se pierde es ver por dónde va.
 
+### "Ver en la tele": se manda la URL, no la imagen
+
+La tele de la cocina es una Samsung con **Tizen** (UE32N5305), y ahí la
+aplicación **no se puede instalar**: es un APK de Android. Una versión para
+Tizen sería otra aplicación entera —la pantalla en web, el reproductor de
+Samsung, otra base de datos y un certificado atado a esa tele—. Duplicar la
+pantalla del teléfono se descartó: recomprime la imagen y obliga a tener el
+móvil encendido y delante.
+
+Lo que se hace es lo de Netflix y YouTube: el teléfono le pasa a la tele **la
+dirección del vídeo** y la tele se lo pide al panel por su cuenta, en calidad
+original. El teléfono queda de mando y se puede bloquear. Va por **DLNA**, que
+traen casi todas las teles conectadas desde hace una década: un servidor HTTP
+en la tele que acepta órdenes SOAP.
+
+Medido en la Samsung antes de escribir nada: su ficha está en
+`http://<tele>:9197/dmr`, tiene **AVTransport** —el servicio de "reproduce
+esto"— y dice aceptar `video/x-mkv`, AVI, MP4 y MPEG-TS, que son los formatos
+del panel.
+
+Las piezas, repartidas como el resto:
+
+- **`packages/core/src/dlna.ts`**: leer la ficha de una tele (`leerTele`) y el
+  mando (`MandoDeTele`: poner, reproducir, pausar, parar, saltar y preguntar
+  por dónde va). Sin nada de plataforma: el `fetch` se pasa desde fuera, como
+  en `XtreamClient`, y se prueba en el portátil con una tele de mentira.
+- **`ModuloDeTeles.kt`**: encontrar las teles, que es SSDP por UDP multicast y
+  JavaScript no lo sabe hacer en Android. Coge un `MulticastLock`: sin él,
+  muchos Android tiran esos paquetes para ahorrar batería y la búsqueda vuelve
+  vacía con la tele al lado.
+- **`apps/tv/src/teles.ts`** junta las dos cosas, y el menú de mantener
+  pulsado trae **"Ver en la tele"** en teléfono y tablet (en una tele no:
+  una tele no le manda vídeo a otra).
+
+Cinco detalles que no son opcionales:
+
+- **La ficha del vídeo va escapada dos veces.** Es un XML (DIDL-Lite) que viaja
+  como texto dentro de otro XML (el sobre SOAP). Con una sola vez, el `&` de
+  una URL con parámetros rompe la orden.
+- **Hay que decirle a la tele qué le llega** (`protocolInfo`, por la extensión
+  con `tipoDeVideo`). Las Samsung rechazan la orden si no lo saben.
+- **La tele gasta una ranura del panel**, igual que si se reprodujera aquí,
+  así que se le pide al árbitro como una reproducción más (`RANURA_TELE`): si
+  una descarga la tenía, se echa a la descarga. Y se suelta al parar.
+- **No se salta a donde ibas hasta que la tele suena.** Un `Seek` antes de
+  `PLAYING` se pierde o lo rechaza; lo hace el reloj que pregunta, en cuanto
+  la ve en marcha.
+- **"Parada" quiere decir dos cosas.** Si ya había sonado, se ha terminado (o
+  alguien la paró con el mando de la tele). Si nunca llegó a sonar, la tele no
+  pudo abrir el vídeo; se le dan treinta segundos, que al empezar pasa un
+  momento por `STOPPED`.
+
+Lo que **no** hace, a propósito o todavía: elegir idioma o subtítulos —DLNA no
+lo deja y la tele pone la pista por defecto—, mandar lo ya descargado —haría
+falta que el teléfono sirviera el fichero por la red— y apuntar el avance con
+el teléfono bloqueado, que es la trampa de los temporizadores: la tele sigue a
+lo suyo, y al desbloquear se pone al día.
+
 ## Trampas conocidas
+
+- **Un `403` con una página que dice "Acceso Denegado… ajenas a Vodafone" no
+  es el panel: es el operador.** Pasó con la otra lista, la de la caché de
+  `probe`: la API contestaba bien y los vídeos daban `403` a cualquiera —a la
+  tele, a VLC y a Node—, con una página de Vodafone en vez del JSON del panel.
+  La tele lo traducía como su error DLNA `716` ("Resource not found"), que
+  parece un fallo de la tele y no lo es. Antes de buscar el problema en el
+  código, mirar **el cuerpo** del 403, no solo el código.
 
 - **El EPG del panel viene en UTC y en base64.** Los títulos y las sinopsis van
   codificados, y los tiempos —incluidas las cadenas `start` y `end`, que

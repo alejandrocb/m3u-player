@@ -31,8 +31,8 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { avanceDePrograma, leerClaveDeEpisodio, programaActual, qualityRank } from '@m3u/core';
-import type { Programa } from '@m3u/core';
+import { MandoDeTele, avanceDePrograma, leerClaveDeEpisodio, programaActual, qualityRank } from '@m3u/core';
+import type { Programa, Situacion, Tele } from '@m3u/core';
 import type {
   Ajustes,
   AlmacenPerfiles,
@@ -65,6 +65,7 @@ import {
   TOPE_DE_MANO,
   claveDeDescarga,
   ficheroDe,
+  urlSinCredenciales,
   varianteParaDescargar,
   canalDeElemento,
   medioDeElemento,
@@ -79,6 +80,7 @@ import {
 import { almacenDeCuentas } from './src/almacen';
 import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
 import { avisarDeLasDescargas } from './src/aviso-descarga';
+import { buscarTeles, pedirALaTele } from './src/teles';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -637,6 +639,22 @@ function BibliotecaVista({
   const [verAjustes, setVerAjustes] = useState(false);
   /** La lista de descargas, que cuelga del menú del perfil. */
   const [verDescargas, setVerDescargas] = useState(false);
+  /*
+    "Ver en la tele": lo que suena en una tele de la casa, mandado desde aquí.
+
+    `teleEnCurso` es lo que vale y `enLaTele` es su copia para pintar: el
+    reloj que pregunta a la tele cada dos segundos necesita leer y apuntar sin
+    esperar a que React vuelva a pintar, y con solo el estado leería siempre
+    el de hace un pintado.
+  */
+  const [enLaTele, setEnLaTele] = useState<EnLaTele | null>(null);
+  const teleEnCurso = useRef<EnLaTele | null>(null);
+  const mandoTele = useRef<MandoDeTele | null>(null);
+  /** Por dónde iba, para saltar ahí en cuanto la tele empiece a sonar. */
+  const saltoPendiente = useRef<number | null>(null);
+  const [verMando, setVerMando] = useState(false);
+  /** Con más de una tele en casa, cuál: se pregunta en vez de adivinar. */
+  const [elegirTele, setElegirTele] = useState<{ teles: Tele[]; medio: MedioParaTele } | null>(null);
   /** Cuánto ocupan y cuánto queda libre. Se mide al abrir, no en cada pintado. */
   const [disco, setDisco] = useState<{ ocupado: number; libre: number } | null>(null);
   /** A qué velocidad va lo que se está bajando, para el tiempo estimado. */
@@ -1193,11 +1211,258 @@ function BibliotecaVista({
     [biblioteca, cola, duracionDePelicula],
   );
 
+  /** Suelta la tele: la ranura, el mando y lo que se pinta. */
+  const soltarTele = useCallback(
+    (motivo: string | null) => {
+      mandoTele.current = null;
+      teleEnCurso.current = null;
+      saltoPendiente.current = null;
+      arbitro.soltar(RANURA_TELE, Date.now());
+      setEnLaTele(null);
+      setVerMando(false);
+      if (motivo) setAviso(motivo);
+    },
+    [arbitro],
+  );
+
+  /**
+   * Manda una ficha a una tele concreta y se queda de mando.
+   *
+   * Lo que viaja es **la URL de la mejor variante**, no la imagen: la tele se
+   * la pide al panel por su cuenta y en calidad original. Por eso gasta una
+   * ranura de la cuenta igual que si se reprodujera aquí, y se le pide al
+   * árbitro como una reproducción más: si una descarga la estaba usando, se
+   * echa a la descarga, que es lo único que no pierde nada.
+   */
+  const ponerEnLaTele = useCallback(
+    async (tele: Tele, medio: MedioParaTele) => {
+      const variantes = await biblioteca.variantes(medio.clase, medio.id).catch(() => []);
+      const mejor = variantes[0];
+      if (!mejor) {
+        setAviso('Esta ficha no tiene ninguna URL asociada');
+        return;
+      }
+
+      const permiso = arbitro.pedir(RANURA_TELE, 'reproducir', Date.now());
+      if (!permiso.concedido) {
+        setAviso(`Las conexiones están ocupadas; prueba en ${Math.max(1, Math.ceil(permiso.esperar / 1000))} s`);
+        return;
+      }
+      for (const echado of permiso.expulsados) pararDescarga(echado);
+
+      setAviso(`Mandando a ${tele.nombre}…`);
+      console.log(`[tele] ${medio.titulo} → ${tele.nombre} · ${urlSinCredenciales(mejor.url)}`);
+      const mando = new MandoDeTele(tele, pedirALaTele);
+      try {
+        // Lo que estuviera sonando, fuera: hay teles que no aceptan un vídeo
+        // nuevo encima de otro. Que no hubiera nada no es un fallo.
+        await mando.parar().catch(() => undefined);
+        await mando.poner(mejor.url, medio.titulo);
+        await mando.reproducir();
+      } catch (fallo) {
+        arbitro.soltar(RANURA_TELE, Date.now());
+        console.warn('[tele] no se pudo mandar', fallo);
+        setAviso(fallo instanceof Error ? `No se pudo: ${fallo.message}` : 'No se pudo mandar a la tele');
+        return;
+      }
+
+      /*
+        Por donde iba, si iba por algún sitio. No se salta ya: hasta que la
+        tele no está sonando, un salto se pierde o lo rechaza. Lo hace el reloj
+        que pregunta, en cuanto la vea en marcha.
+      */
+      const avance =
+        medio.clase === 'canal' ? null : await perfiles.avanceDe(perfil.id, medio.clase, medio.id).catch(() => null);
+      saltoPendiente.current =
+        avance && avance.segundos > 30 && (!avance.duracion || avance.segundos < avance.duracion * 0.9)
+          ? avance.segundos
+          : null;
+
+      mandoTele.current = mando;
+      teleEnCurso.current = { tele, medio, situacion: null, empezada: false, desde: Date.now() };
+      setEnLaTele({ ...teleEnCurso.current });
+      setVerMando(true);
+    },
+    [biblioteca, arbitro, pararDescarga, perfiles, perfil.id],
+  );
+
+  /** Busca las teles y manda, o pregunta a cuál si hay más de una. */
+  const mandarALaTele = useCallback(
+    async (medio: MedioParaTele) => {
+      setAviso('Buscando la tele…');
+      const teles = await buscarTeles();
+      if (teles.length === 0) {
+        setAviso('No encuentro ninguna tele en la red. ¿Está encendida y en la misma wifi?');
+        return;
+      }
+      if (teles.length === 1) {
+        await ponerEnLaTele(teles[0]!, medio);
+        return;
+      }
+      setAviso(null);
+      setElegirTele({ teles, medio });
+    },
+    [ponerEnLaTele],
+  );
+
+  /** Apunta por dónde va, para "seguir viendo". Igual que el reproductor. */
+  const apuntarLoDeLaTele = useCallback(
+    (actual: EnLaTele) => {
+      const { medio, situacion } = actual;
+      if (medio.clase === 'canal') {
+        // Un directo no tiene posición: se apunta cuánto lleva, como hace el
+        // reproductor, y sobre todo cuándo.
+        const segundos = (Date.now() - actual.desde) / 1000;
+        if (segundos < 30) return;
+        void perfiles
+          .anotarAvance(perfil.id, {
+            clase: 'canal',
+            itemId: medio.id,
+            titulo: medio.titulo,
+            segundos,
+            duracion: 0,
+            visto: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+        return;
+      }
+      if (situacion?.posicion === null || situacion?.posicion === undefined || !situacion.duracion) return;
+      if (situacion.posicion < 30) return;
+      void perfiles
+        .anotarAvance(perfil.id, {
+          clase: medio.clase,
+          itemId: medio.id,
+          titulo: medio.titulo,
+          segundos: situacion.posicion,
+          duracion: situacion.duracion,
+          visto: new Date().toISOString(),
+        })
+        .catch(() => undefined);
+    },
+    [perfiles, perfil.id],
+  );
+
+  const enLaTeleActiva = enLaTele !== null;
+
+  /*
+    Mientras hay algo en la tele, se le pregunta cada dos segundos en qué
+    está. Es lo que mueve la barra del mando, lo que apunta "seguir viendo",
+    lo que salta a donde ibas y lo que se entera de que ha terminado.
+
+    **Ojo con el teléfono bloqueado**: el reloj de JavaScript se para —la
+    trampa de los temporizadores del CLAUDE.md— y mientras tanto no se apunta
+    nada. La tele sigue a lo suyo; al desbloquear, se pone al día.
+  */
+  useEffect(() => {
+    if (!enLaTeleActiva) return;
+    let fallos = 0;
+    let preguntando = false;
+    let ultimoApunte = 0;
+
+    const mirar = async (): Promise<void> => {
+      const mando = mandoTele.current;
+      const actual = teleEnCurso.current;
+      if (!mando || !actual || preguntando) return;
+      preguntando = true;
+      try {
+        const situacion = await mando.situacion();
+        fallos = 0;
+        if (teleEnCurso.current !== actual) return;
+
+        const suena = situacion.estado === 'PLAYING' || situacion.estado === 'PAUSED_PLAYBACK';
+        actual.situacion = situacion;
+        if (suena) actual.empezada = true;
+
+        if (situacion.estado === 'PLAYING' && saltoPendiente.current !== null) {
+          const destino = saltoPendiente.current;
+          saltoPendiente.current = null;
+          void mando.saltarA(destino).catch(() => undefined);
+        }
+
+        if (suena && Date.now() - ultimoApunte >= 10_000) {
+          ultimoApunte = Date.now();
+          apuntarLoDeLaTele(actual);
+        }
+
+        /*
+          Parada quiere decir dos cosas distintas según haya sonado o no. Si ya
+          sonaba, se ha terminado —o alguien la ha parado con el mando de la
+          tele—. Si nunca llegó a sonar, la tele no pudo abrir el vídeo; se le
+          dan treinta segundos, que al empezar pasa un momento por "parada".
+        */
+        const parada = situacion.estado === 'STOPPED' || situacion.estado === 'NO_MEDIA_PRESENT';
+        if (parada && actual.empezada) {
+          soltarTele('Se ha dejado de ver en la tele');
+          return;
+        }
+        if (parada && Date.now() - actual.desde > 30_000) {
+          soltarTele('La tele no ha conseguido abrir el vídeo');
+          return;
+        }
+        setEnLaTele({ ...actual });
+      } catch (fallo) {
+        fallos += 1;
+        console.warn('[tele] no contesta', fallo);
+        if (fallos >= 5) soltarTele('Se ha perdido la conexión con la tele');
+      } finally {
+        preguntando = false;
+      }
+    };
+
+    void mirar();
+    const reloj = setInterval(() => void mirar(), 2_000);
+    return () => clearInterval(reloj);
+  }, [enLaTeleActiva, apuntarLoDeLaTele, soltarTele]);
+
+  /** Lo que hacen los botones del mando. Todo va a la tele y nada espera. */
+  const ordenALaTele = useCallback(
+    (orden: 'alternar' | 'atras' | 'adelante' | 'parar') => {
+      const mando = mandoTele.current;
+      const actual = teleEnCurso.current;
+      if (!mando || !actual) return;
+      const posicion = actual.situacion?.posicion ?? 0;
+
+      if (orden === 'parar') {
+        apuntarLoDeLaTele(actual);
+        void mando.parar().catch(() => undefined);
+        soltarTele(null);
+        return;
+      }
+      if (orden === 'alternar') {
+        const sonando = actual.situacion?.estado === 'PLAYING';
+        void (sonando ? mando.pausar() : mando.reproducir()).catch((fallo: unknown) =>
+          setAviso(fallo instanceof Error ? fallo.message : 'La tele no ha hecho caso'),
+        );
+        // Se pinta ya lo que se ha pedido; la próxima pregunta lo confirma.
+        if (actual.situacion) actual.situacion = { ...actual.situacion, estado: sonando ? 'PAUSED_PLAYBACK' : 'PLAYING' };
+        setEnLaTele({ ...actual });
+        return;
+      }
+      const destino = Math.max(0, posicion + (orden === 'adelante' ? 30 : -30));
+      void mando.saltarA(destino).catch((fallo: unknown) =>
+        setAviso(fallo instanceof Error ? fallo.message : 'La tele no ha hecho caso'),
+      );
+      if (actual.situacion) actual.situacion = { ...actual.situacion, posicion: destino };
+      setEnLaTele({ ...actual });
+    },
+    [apuntarLoDeLaTele, soltarTele],
+  );
+
   const atras = useCallback((): boolean => {
     const instancia = presentador.current;
     if (!instancia) return false;
 
     // Lo que esté encima se cierra antes que nada, de más reciente a menos.
+    if (elegirTele) {
+      setElegirTele(null);
+      return true;
+    }
+    // Cerrar el mando no para la tele: se esconde, y se vuelve a él desde el
+    // menú del perfil.
+    if (verMando) {
+      setVerMando(false);
+      return true;
+    }
     if (verDescargas) {
       setVerDescargas(false);
       return true;
@@ -1242,7 +1507,7 @@ function BibliotecaVista({
       }, MARGEN_SALIDA_MS);
     });
     return true;
-  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha, verDescargas]);
+  }, [reproduciendo, aPantallaCompleta, verAjustes, verPerfil, menuFicha, verDescargas, elegirTele, verMando]);
 
   useEffect(() => {
     const suscripcion = BackHandler.addEventListener('hardwareBackPress', atras);
@@ -1666,6 +1931,24 @@ function BibliotecaVista({
               },
             ]
           : []),
+        /*
+          Solo en la mano: una tele no le manda vídeo a otra tele. Y de una
+          serie no, que no se reproduce entera: se manda un capítulo.
+        */
+        ...(!Platform.isTV &&
+        (menuFicha.clase === 'pelicula' || menuFicha.clase === 'episodio' || menuFicha.clase === 'canal')
+          ? [
+              {
+                texto: 'Ver en la tele',
+                onPress: () =>
+                  void mandarALaTele({
+                    clase: menuFicha.clase as MedioParaTele['clase'],
+                    id: menuFicha.id,
+                    titulo: menuFicha.titulo,
+                  }),
+              },
+            ]
+          : []),
       ]
     : [];
 
@@ -1682,6 +1965,11 @@ function BibliotecaVista({
    * donde se ve lo que se está tocando.
    */
   const opcionesPerfil: Array<{ texto: string; onPress: () => void; retrato?: Perfil }> = [
+    // Lo que suena en la tele, arriba del todo: es lo único de aquí que está
+    // pasando ahora mismo.
+    ...(enLaTele && !verMando
+      ? [{ texto: `En la tele: ${enLaTele.medio.titulo}`, onPress: () => setVerMando(true) }]
+      : []),
     ...otrosPerfiles.map((otro) => ({
       texto: otro.nombre,
       retrato: otro,
@@ -2106,6 +2394,81 @@ function BibliotecaVista({
               </View>
             ))}
           </ScrollView>
+        </View>
+      ) : null}
+
+      {elegirTele ? (
+        <View style={estilos.menuPerfil}>
+          <Text style={estilos.menuNombre}>¿En qué tele?</Text>
+          {elegirTele.teles.map((tele) => (
+            <Pressable
+              key={tele.control}
+              focusable={false}
+              style={estilos.menuOpcion}
+              onPress={() => {
+                const { medio } = elegirTele;
+                setElegirTele(null);
+                void ponerEnLaTele(tele, medio);
+              }}
+            >
+              <Text style={estilos.menuOpcionTexto}>{tele.nombre}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {/*
+        El mando de la tele. Lo que se ve es lo que dice la tele cada dos
+        segundos, no lo que se le ha pedido: si alguien la pausa con su propio
+        mando, aquí sale en pausa.
+      */}
+      {enLaTele && verMando ? (
+        <View style={estilos.panelDescargas}>
+          <View style={estilos.descargaCabecera}>
+            <Text style={estilos.descargaAyuda}>En {enLaTele.tele.nombre}</Text>
+            <Text style={estilos.menuNombre} numberOfLines={2}>
+              {enLaTele.medio.titulo}
+            </Text>
+            <Text style={estilos.descargaEstado}>{comoVaLaTele(enLaTele)}</Text>
+            {enLaTele.situacion?.duracion && enLaTele.situacion.posicion !== null ? (
+              <View style={estilos.descargaBarra}>
+                <View
+                  style={[
+                    estilos.descargaBarraHecha,
+                    {
+                      width: `${Math.min(100, Math.round((enLaTele.situacion.posicion / enLaTele.situacion.duracion) * 100))}%`,
+                    },
+                  ]}
+                />
+              </View>
+            ) : null}
+          </View>
+
+          <View style={estilos.descargaBotones}>
+            {enLaTele.medio.clase !== 'canal' ? (
+              <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('atras')}>
+                <Text style={estilos.descargaBotonTexto}>−30 s</Text>
+              </Pressable>
+            ) : null}
+            <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('alternar')}>
+              <Text style={estilos.descargaBotonTexto}>
+                {enLaTele.situacion?.estado === 'PLAYING' ? 'Pausa' : 'Seguir'}
+              </Text>
+            </Pressable>
+            {enLaTele.medio.clase !== 'canal' ? (
+              <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('adelante')}>
+                <Text style={estilos.descargaBotonTexto}>+30 s</Text>
+              </Pressable>
+            ) : null}
+          </View>
+          <View style={estilos.descargaBotones}>
+            <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => ordenALaTele('parar')}>
+              <Text style={estilos.descargaBotonTexto}>Parar</Text>
+            </Pressable>
+            <Pressable focusable={false} style={estilos.descargaBoton} onPress={() => setVerMando(false)}>
+              <Text style={estilos.descargaBotonTexto}>Esconder</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -2926,6 +3289,46 @@ function megas(bytes: number): string {
  * en vez de contarlo como cero: una película sin duración haría que el total
  * se quedara corto y nadie sabría por qué.
  */
+/** Lo que se le puede mandar a una tele: una cosa que se reproduce entera. */
+type MedioParaTele = { clase: 'pelicula' | 'episodio' | 'canal'; id: string; titulo: string };
+
+/** Lo que está sonando en una tele de la casa, mandado desde aquí. */
+interface EnLaTele {
+  tele: Tele;
+  medio: MedioParaTele;
+  /** Lo último que dijo la tele. Nulo hasta la primera respuesta. */
+  situacion: Situacion | null;
+  /** Si llegó a sonar: es lo que distingue "ha terminado" de "no pudo abrirlo". */
+  empezada: boolean;
+  /** Cuándo se mandó, en ms. */
+  desde: number;
+}
+
+/**
+ * La ranura que ocupa la tele en el árbitro. Una sola: mandar otra cosa
+ * reemplaza lo que hubiera, igual que en la propia tele.
+ */
+const RANURA_TELE = 'tele';
+
+/** `12:03` o `1:05:20`, como en el reproductor. */
+function enReloj(segundos: number): string {
+  const total = Math.max(0, Math.floor(segundos));
+  const horas = Math.floor(total / 3600);
+  const minutos = Math.floor((total % 3600) / 60);
+  const resto = String(total % 60).padStart(2, '0');
+  return horas > 0 ? `${horas}:${String(minutos).padStart(2, '0')}:${resto}` : `${minutos}:${resto}`;
+}
+
+/** En qué está la tele, en una línea. */
+function comoVaLaTele(enLaTele: EnLaTele): string {
+  const situacion = enLaTele.situacion;
+  if (!situacion || situacion.estado === 'TRANSITIONING' || !enLaTele.empezada) return 'Abriendo el vídeo en la tele…';
+  const estado = situacion.estado === 'PAUSED_PLAYBACK' ? 'En pausa' : 'Sonando';
+  if (enLaTele.medio.clase === 'canal') return `${estado} · en directo`;
+  if (situacion.posicion === null) return estado;
+  return `${estado} · ${enReloj(situacion.posicion)}${situacion.duracion ? ` de ${enReloj(situacion.duracion)}` : ''}`;
+}
+
 function tiempoBajado(descargas: Descarga[]): string {
   const hechas = descargas.filter((una) => una.estado === 'hecha');
   if (hechas.length === 0) return '';
