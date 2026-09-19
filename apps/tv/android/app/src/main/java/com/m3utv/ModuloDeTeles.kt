@@ -1,6 +1,9 @@
 package com.m3utv
 
 import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.core.content.ContextCompat
 import android.net.wifi.WifiManager
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -98,5 +101,39 @@ class ModuloDeTeles(contexto: ReactApplicationContext) : ReactContextBaseJavaMod
         candado?.release()
       }
     }.start()
+  }
+
+  /**
+   * Pone o cambia el aviso de "En la tele", que es lo que deja salir de la
+   * aplicación sin que la tele se quede sin vídeo (`ServicioDeTele`).
+   *
+   * Como el de las descargas, nada de esto puede tumbar la aplicación: si el
+   * sistema no deja arrancar el servicio, se apunta y se sigue.
+   */
+  @ReactMethod
+  fun avisar(titulo: String, detalle: String, sonando: Boolean) {
+    val contexto = reactApplicationContext
+    try {
+      ContextCompat.startForegroundService(
+        contexto,
+        Intent(contexto, ServicioDeTele::class.java).apply {
+          putExtra(ServicioDeTele.TITULO, titulo)
+          putExtra(ServicioDeTele.DETALLE, detalle)
+          putExtra(ServicioDeTele.SONANDO, sonando)
+        },
+      )
+    } catch (fallo: Exception) {
+      Log.w("Teles", "no se pudo poner el aviso", fallo)
+    }
+  }
+
+  @ReactMethod
+  fun callar() {
+    val contexto = reactApplicationContext
+    try {
+      contexto.stopService(Intent(contexto, ServicioDeTele::class.java))
+    } catch (fallo: Exception) {
+      Log.w("Teles", "no se pudo quitar el aviso", fallo)
+    }
   }
 }

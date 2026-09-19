@@ -89,7 +89,16 @@ import {
 import { almacenDeCuentas } from './src/almacen';
 import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
 import { avisarDeLasDescargas } from './src/aviso-descarga';
-import { buscarTeles, cerrarPuente, direccionParaLaTele, mirarElFichero, pedirALaTele } from './src/teles';
+import {
+  alPulsarElAviso,
+  avisarDeLaTele,
+  buscarTeles,
+  callarLaTele,
+  cerrarPuente,
+  direccionParaLaTele,
+  mirarElFichero,
+  pedirALaTele,
+} from './src/teles';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -104,7 +113,7 @@ import {
   VERDE,
 } from './src/tema';
 import { almacenDeSync } from './src/almacen-sync';
-import { IconoPausa, IconoPlay, IconoSalto } from './src/iconos';
+import { IconoEmitir, IconoPausa, IconoPlay, IconoSalto } from './src/iconos';
 import { cargarCatalogo } from './src/carga';
 import type { Avance, Medicion } from './src/carga';
 import { PantallaEmparejar } from './src/pantalla-emparejar';
@@ -663,6 +672,8 @@ function BibliotecaVista({
   /** Por dónde iba, para saltar ahí en cuanto la tele empiece a sonar. */
   const saltoPendiente = useRef<number | null>(null);
   const [verMando, setVerMando] = useState(false);
+  /** Lo que mide la barra de la pantalla de la tele, para convertir un toque en minuto. */
+  const anchoBarraTele = useRef(0);
   /** Con más de una tele en casa, cuál: se pregunta en vez de adivinar. */
   const [elegirTele, setElegirTele] = useState<{ teles: Tele[]; medio: MedioParaTele } | null>(null);
   /** Cuánto ocupan y cuánto queda libre. Se mide al abrir, no en cada pintado. */
@@ -1232,6 +1243,7 @@ function BibliotecaVista({
       teleEnCurso.current = null;
       saltoPendiente.current = null;
       cerrarPuente();
+      callarLaTele();
       arbitro.soltar(RANURA_TELE, Date.now());
       setEnLaTele(null);
       setVerMando(false);
@@ -1259,6 +1271,7 @@ function BibliotecaVista({
       mandoTele.current = null;
       saltoPendiente.current = null;
       cerrarPuente();
+      callarLaTele();
       arbitro.soltar(RANURA_TELE, Date.now());
       actual.fallo = texto;
       setEnLaTele({ ...actual });
@@ -1480,6 +1493,23 @@ function BibliotecaVista({
     return () => clearInterval(reloj);
   }, [enLaTeleActiva, apuntarLoDeLaTele, soltarTele, fallarTele]);
 
+  /** Lleva la tele a un minuto. Lo usan los botones de 30 s y la barra. */
+  const saltarLaTeleA = useCallback((segundos: number) => {
+    const mando = mandoTele.current;
+    const actual = teleEnCurso.current;
+    if (!mando || !actual) return;
+    const duracion = actual.situacion?.duracion;
+    const destino = Math.max(0, duracion ? Math.min(duracion - 5, segundos) : segundos);
+    console.log(`[tele] salto a ${Math.round(destino)} s`);
+    void mando.saltarA(destino).catch((fallo: unknown) => {
+      console.warn('[tele] la tele no ha querido saltar', fallo);
+      setAviso(fallo instanceof Error ? `No ha saltado: ${fallo.message}` : 'La tele no ha hecho caso');
+    });
+    // Se pinta ya a dónde se ha pedido; la próxima pregunta lo confirma.
+    if (actual.situacion) actual.situacion = { ...actual.situacion, posicion: destino };
+    setEnLaTele({ ...actual });
+  }, []);
+
   /** Lo que hacen los botones del mando. Todo va a la tele y nada espera. */
   const ordenALaTele = useCallback(
     (orden: 'alternar' | 'atras' | 'adelante' | 'parar') => {
@@ -1504,15 +1534,31 @@ function BibliotecaVista({
         setEnLaTele({ ...actual });
         return;
       }
-      const destino = Math.max(0, posicion + (orden === 'adelante' ? 30 : -30));
-      void mando.saltarA(destino).catch((fallo: unknown) =>
-        setAviso(fallo instanceof Error ? fallo.message : 'La tele no ha hecho caso'),
-      );
-      if (actual.situacion) actual.situacion = { ...actual.situacion, posicion: destino };
-      setEnLaTele({ ...actual });
+      saltarLaTeleA(posicion + (orden === 'adelante' ? 30 : -30));
     },
-    [apuntarLoDeLaTele, soltarTele],
+    [apuntarLoDeLaTele, soltarTele, saltarLaTeleA],
   );
+
+  /*
+    Los botones del aviso de la barra —Pausa y Parar— llegan aquí: el servicio
+    no habla con la tele, le pasa la orden a quien tiene el mando.
+  */
+  useEffect(() => alPulsarElAviso((orden) => ordenALaTele(orden)), [ordenALaTele]);
+
+  /*
+    Y el aviso sigue lo que dice la tele: si alguien la pausa con su propio
+    mando, el botón del aviso pasa a "Seguir". No lleva la posición: cambiaría
+    cada dos segundos y el aviso parpadearía.
+  */
+  useEffect(() => {
+    if (!enLaTele || enLaTele.fallo) return;
+    const enPausa = enLaTele.situacion?.estado === 'PAUSED_PLAYBACK';
+    avisarDeLaTele(
+      enLaTele.subtitulo ? `${enLaTele.titulo} · ${enLaTele.subtitulo}` : enLaTele.titulo,
+      `En ${enLaTele.tele.nombre}${enPausa ? ' · en pausa' : ''}`,
+      !enPausa,
+    );
+  }, [enLaTele]);
 
   const atras = useCallback((): boolean => {
     const instancia = presentador.current;
@@ -2488,6 +2534,34 @@ function BibliotecaVista({
         segundos, no lo que se le ha pedido: si alguien la pausa con su propio
         mando, aquí sale en pausa.
       */}
+      {/*
+        El chivato: con el mando escondido, algo tiene que decir que la tele
+        está sonando y dejar volver a él. Es el icono de emitir que usa todo el
+        mundo, con lo que suena, y la pausa a mano.
+      */}
+      {enLaTele && !verMando && !reproduciendo ? (
+        <Pressable
+          focusable={false}
+          style={[estilos.chivatoTele, { bottom: insets.bottom + 12 }]}
+          onPress={() => setVerMando(true)}
+        >
+          <IconoEmitir tamano={20} color={VERDE} />
+          <View style={estilos.chivatoTeleTextos}>
+            <Text style={estilos.chivatoTeleTitulo} numberOfLines={1}>
+              {enLaTele.subtitulo ? `${enLaTele.titulo} · ${enLaTele.subtitulo}` : enLaTele.titulo}
+            </Text>
+            <Text style={estilos.chivatoTeleDonde} numberOfLines={1}>
+              {enLaTele.fallo ? 'No se ha podido reproducir' : `En ${enLaTele.tele.nombre}`}
+            </Text>
+          </View>
+          {!enLaTele.fallo ? (
+            <Pressable focusable={false} style={estilos.chivatoTeleBoton} onPress={() => ordenALaTele('alternar')}>
+              {enLaTele.situacion?.estado === 'PLAYING' ? <IconoPausa tamano={18} /> : <IconoPlay tamano={20} />}
+            </Pressable>
+          ) : null}
+        </Pressable>
+      ) : null}
+
       {enLaTele && verMando ? (
         <View style={estilos.pantallaTele}>
           {enLaTele.imagen ? (
@@ -2540,19 +2614,38 @@ function BibliotecaVista({
 
             {!enLaTele.fallo ? (
               <>
-                <View style={estilos.pantallaTeleBarra}>
-                  <View
-                    style={[
-                      estilos.pantallaTeleBarraHecha,
-                      {
-                        width:
-                          enLaTele.situacion?.duracion && enLaTele.situacion.posicion !== null
-                            ? `${Math.min(100, (enLaTele.situacion.posicion / enLaTele.situacion.duracion) * 100)}%`
-                            : '0%',
-                      },
-                    ]}
-                  />
-                </View>
+                {/*
+                  La barra se toca para ir a ese punto, como en el reproductor.
+                  La zona que responde es más alta que la raya: cuatro píxeles
+                  no se aciertan con el dedo.
+                */}
+                <Pressable
+                  focusable={false}
+                  style={estilos.pantallaTeleBarraToque}
+                  onLayout={(evento) => {
+                    anchoBarraTele.current = evento.nativeEvent.layout.width;
+                  }}
+                  onPress={(evento) => {
+                    const duracion = enLaTele.situacion?.duracion;
+                    if (!duracion || anchoBarraTele.current <= 0 || enLaTele.medio.clase === 'canal') return;
+                    const fraccion = Math.min(1, Math.max(0, evento.nativeEvent.locationX / anchoBarraTele.current));
+                    saltarLaTeleA(fraccion * duracion);
+                  }}
+                >
+                  <View style={estilos.pantallaTeleBarra}>
+                    <View
+                      style={[
+                        estilos.pantallaTeleBarraHecha,
+                        {
+                          width:
+                            enLaTele.situacion?.duracion && enLaTele.situacion.posicion !== null
+                              ? `${Math.min(100, (enLaTele.situacion.posicion / enLaTele.situacion.duracion) * 100)}%`
+                              : '0%',
+                        },
+                      ]}
+                    />
+                  </View>
+                </Pressable>
                 <Text style={estilos.pantallaTeleEstado}>{comoVaLaTele(enLaTele)}</Text>
               </>
             ) : null}
@@ -4396,12 +4489,49 @@ const estilos = StyleSheet.create({
     color: TINTA_SUAVE,
     fontSize: 16,
   },
+  pantallaTeleBarraToque: {
+    marginTop: 4,
+    paddingVertical: 12,
+  },
   pantallaTeleBarra: {
     backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 2,
-    height: 4,
-    marginTop: 10,
+    borderRadius: 3,
+    height: 6,
     overflow: 'hidden',
+  },
+  chivatoTele: {
+    alignItems: 'center',
+    backgroundColor: SUPERFICIE,
+    borderColor: 'rgba(53,208,127,0.45)',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 14,
+    left: 12,
+    paddingLeft: 16,
+    paddingRight: 8,
+    paddingVertical: 10,
+    position: 'absolute',
+    right: 12,
+    zIndex: 25,
+  },
+  chivatoTeleTextos: {
+    flex: 1,
+  },
+  chivatoTeleTitulo: {
+    color: TINTA,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  chivatoTeleDonde: {
+    color: TINTA_TENUE,
+    fontSize: 13,
+  },
+  chivatoTeleBoton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   pantallaTeleBarraHecha: {
     backgroundColor: VERDE,
@@ -5270,6 +5400,9 @@ const estilos = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     position: 'absolute',
+    // Por encima de la pantalla de la tele, que es la más alta: un fallo al
+    // saltar salía debajo de ella y no se veía.
+    zIndex: 40,
   },
   avisoTexto: {
     color: '#fff',

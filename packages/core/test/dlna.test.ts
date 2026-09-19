@@ -85,8 +85,19 @@ test('la URL del vídeo va escapada dos veces, que la ficha viaja dentro del sob
   // Dentro de la ficha, dos: el & de la URL acaba como &amp;amp;.
   assert.match(cuerpo, /token=a&amp;amp;b=c/);
   assert.match(cuerpo, /Tom &amp;amp; Jerry/);
-  // Y se le dice qué le llega: sin esto, la Samsung rechaza la orden.
-  assert.match(cuerpo, /http-get:\*:video\/vnd\.dlna\.mpeg-tts:\*/);
+  // Y se le dice qué le llega: sin esto, la Samsung rechaza la orden. Un
+  // directo no se puede saltar, y se le dice.
+  assert.match(cuerpo, /http-get:\*:video\/vnd\.dlna\.mpeg-tts:DLNA\.ORG_OP=00;/);
+});
+
+test('de una película se le dice a la tele que puede saltar', async () => {
+  // Sin la marca, la Samsung reproducía pero rechazaba cualquier salto.
+  const { pedir, pedidas } = teleFalsa(() => ({ texto: '<ok/>' }));
+  const mando = new MandoDeTele({ nombre: 'T', modelo: null, ficha: 'f', control: 'http://tele/avt' }, pedir);
+
+  await mando.poner('http://telefono:4000/v/abc.mkv', 'Película');
+
+  assert.match(pedidas[0]!.cuerpo, /http-get:\*:video\/x-mkv:DLNA\.ORG_OP=01;DLNA\.ORG_CI=0;DLNA\.ORG_FLAGS=017/);
 });
 
 test('saltar se pide en horas, minutos y segundos', async () => {

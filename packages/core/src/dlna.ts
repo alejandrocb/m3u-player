@@ -160,6 +160,23 @@ export function tipoDeVideo(url: string): string {
   }
 }
 
+/**
+ * Lo que va en el cuarto campo de `protocolInfo`: si se puede saltar.
+ *
+ * Sin esto la tele reproduce pero **no salta**: la Samsung aceptaba el vídeo y
+ * rechazaba cualquier `Seek`, porque nadie le había dicho que el servidor
+ * admite rangos. `DLNA.ORG_OP=01` es "se salta por bytes": la tele calcula a
+ * qué byte corresponde cada minuto con el índice del propio fichero. Un
+ * directo no tiene a dónde saltar, y se le dice que no (`00`).
+ *
+ * Las `FLAGS` son las que pone cualquier servidor DLNA para vídeo que se
+ * reproduce mientras llega: streaming, en segundo plano y versión 1.5.
+ */
+function marcasDlna(tipo: string): string {
+  const saltable = tipo !== 'video/vnd.dlna.mpeg-tts' && tipo !== 'application/vnd.apple.mpegurl';
+  return `DLNA.ORG_OP=${saltable ? '01' : '00'};DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000`;
+}
+
 /** `H:MM:SS`, que es como DLNA quiere las posiciones. */
 export function aReloj(segundos: number): string {
   const total = Math.max(0, Math.floor(segundos));
@@ -208,7 +225,7 @@ export class MandoDeTele {
       'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">' +
       `<item id="0" parentID="-1" restricted="1"><dc:title>${escapar(titulo)}</dc:title>` +
       '<upnp:class>object.item.videoItem</upnp:class>' +
-      `<res protocolInfo="http-get:*:${tipoDeVideo(url)}:*">${escapar(url)}</res></item></DIDL-Lite>`;
+      `<res protocolInfo="http-get:*:${tipoDeVideo(url)}:${marcasDlna(tipoDeVideo(url))}">${escapar(url)}</res></item></DIDL-Lite>`;
 
     await this.#orden(
       'SetAVTransportURI',

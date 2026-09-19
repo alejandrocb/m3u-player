@@ -1079,11 +1079,41 @@ Cinco detalles que no son opcionales:
   pudo abrir el vídeo; se le dan treinta segundos, que al empezar pasa un
   momento por `STOPPED`.
 
+**Y la tele no le pide el vídeo al panel: se lo pide al teléfono.** Con la
+URL del panel tal cual, la Samsung se ponía en negro y sacaba "Error
+inesperado", y no era el fichero —H.264 y AC3, servido por rangos y sin
+redirecciones, leído con `codecsDeMatroska`—. Es cómo se hablan: un
+reproductor DLNA pregunta con `HEAD`, quiere cabeceras DLNA y abre varias
+conexiones al mismo fichero, y un panel Xtream no está hecho para eso. Con el
+**puente** (`ModuloDePuente.kt`) el teléfono le contesta a la tele lo que
+espera y al panel le pide como un reproductor cualquiera; funcionó a la
+primera. De paso apunta cada petición de la tele (`adb logcat -s Puente`).
+
+El precio es que **el vídeo pasa por el teléfono**, y eso trae dos cosas:
+
+- **Hace falta un servicio en primer plano** (`ServicioDeTele`, tipo
+  `mediaPlayback`) mientras algo suena en la tele. Sin él, en cuanto la
+  aplicación se iba al fondo MIUI le quitaba el candado de CPU al puente —el
+  registro lo dice tal cual: `disabled: true, procState: 15, reason: Process
+  Priority`— y la tele se quedaba sin vídeo a los pocos segundos. Es el mismo
+  mecanismo que el de las descargas, con la tarea sin interfaz para que el
+  reloj que pregunta a la tele siga andando, y su aviso trae **Pausa y
+  Parar**, que llegan a JavaScript como evento (`ordenDeTele`).
+- **Para saltar hay que decirle a la tele que se puede.** La ficha del vídeo
+  lleva en `protocolInfo` las marcas DLNA (`DLNA.ORG_OP=01`: "se salta por
+  bytes"); sin ellas la Samsung reproducía y rechazaba cualquier `Seek`. Un
+  directo lleva `00`, que no tiene a dónde saltar.
+
+Lo que se ve en el teléfono es **una pantalla como la del reproductor**, con
+el fotograma del capítulo quieto de fondo: pausa, saltos de 30 s y la barra,
+que se toca para ir a ese punto. Si la tele no puede, el porqué se queda en
+esa pantalla con "Reintentar" —un aviso de tres segundos abajo no lo ve nadie,
+que uno está mirando la tele—. Al esconderla queda un **chivato** abajo, con
+el icono de emitir de siempre, que vuelve a ella.
+
 Lo que **no** hace, a propósito o todavía: elegir idioma o subtítulos —DLNA no
-lo deja y la tele pone la pista por defecto—, mandar lo ya descargado —haría
-falta que el teléfono sirviera el fichero por la red— y apuntar el avance con
-el teléfono bloqueado, que es la trampa de los temporizadores: la tele sigue a
-lo suyo, y al desbloquear se pone al día.
+lo deja y la tele pone la pista por defecto— y mandar lo ya descargado, que
+el puente podría servir del disco pero todavía no lo hace.
 
 ## Trampas conocidas
 

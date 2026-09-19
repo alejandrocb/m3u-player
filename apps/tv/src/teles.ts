@@ -6,13 +6,15 @@
  * `leerTele`, de `@m3u/core`, que es lo mismo que se prueba en el portátil.
  */
 
-import { NativeModules } from 'react-native';
+import { DeviceEventEmitter, NativeModules } from 'react-native';
 
 import { codecsDeMatroska, leerTele, type Tele } from '@m3u/core';
 import { urlSinCredenciales } from '@m3u/ui';
 
 interface Nativo {
   buscar(milisegundos: number): Promise<string[]>;
+  avisar(titulo: string, detalle: string, sonando: boolean): void;
+  callar(): void;
 }
 
 /*
@@ -109,4 +111,52 @@ export async function direccionParaLaTele(url: string, tipo: string): Promise<st
 /** Cierra el puente al dejar de ver en la tele: suelta la wifi y la CPU. */
 export function cerrarPuente(): void {
   puente?.cerrar();
+}
+
+/*
+  El aviso de la barra mientras algo suena en la tele (`ServicioDeTele`).
+
+  Es lo que deja salir de la aplicación: el vídeo pasa por el teléfono, y sin
+  un servicio en primer plano MIUI le quita el candado de CPU al puente en
+  cuanto la aplicación se va al fondo. Y trae la tarea sin interfaz que
+  mantiene andando el reloj de JavaScript, que es el que pregunta a la tele.
+*/
+
+/** Lo último que se mandó, para no repintar el aviso cada dos segundos. */
+let ultimoAviso = '';
+let cerrarTarea: (() => void) | null = null;
+let hayTele = false;
+
+/** Pone o cambia el aviso. Solo llama al lado nativo si ha cambiado algo. */
+export function avisarDeLaTele(titulo: string, detalle: string, sonando: boolean): void {
+  hayTele = true;
+  const linea = `${titulo}|${detalle}|${sonando}`;
+  if (!nativo || linea === ultimoAviso) return;
+  ultimoAviso = linea;
+  nativo.avisar(titulo, detalle, sonando);
+}
+
+/** Lo quita, y con él la tarea y el candado. */
+export function callarLaTele(): void {
+  hayTele = false;
+  ultimoAviso = '';
+  cerrarTarea?.();
+  cerrarTarea = null;
+  nativo?.callar();
+}
+
+/** La tarea sin interfaz, registrada en `index.js`: existir es su trabajo. */
+export function tareaDeTele(): Promise<void> {
+  if (!hayTele) return Promise.resolve();
+  return new Promise<void>((listo) => {
+    cerrarTarea = listo;
+  });
+}
+
+/** Lo que piden los botones del aviso: "alternar" o "parar". */
+export function alPulsarElAviso(hacer: (orden: 'alternar' | 'parar') => void): () => void {
+  const suscripcion = DeviceEventEmitter.addListener('ordenDeTele', (orden: string) => {
+    if (orden === 'alternar' || orden === 'parar') hacer(orden);
+  });
+  return () => suscripcion.remove();
 }

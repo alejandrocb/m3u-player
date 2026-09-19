@@ -25,6 +25,12 @@
       búsqueda vuelve vacía aunque la tele esté encendida al lado.
     -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!--
+      "Ver en la tele" pasa el vídeo por el teléfono, así que mientras dura el
+      teléfono tiene que seguir vivo aunque se salga de la aplicación. Es un
+      servicio de reproducción: lo que suena, suena en otra pantalla.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
  
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />
@@ -58,6 +64,11 @@
       <service
         android:name=".ServicioDeDescargas"
         android:foregroundServiceType="dataSync"
+        android:exported="false" />
+
+      <service
+        android:name=".ServicioDeTele"
+        android:foregroundServiceType="mediaPlayback"
         android:exported="false" />
     </application>
 </manifest>
