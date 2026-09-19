@@ -15,6 +15,11 @@
  * `Date` ya hace la conversión a la hora local de quien mire la pantalla.
  */
 
+import { bytesDeBase64 } from './base64.ts';
+
+/** Caracteres que no aparecen en un título de programa ni por asomo. */
+const CONTROLES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
+
 export interface Programa {
   /** Título ya descodificado. Nunca vacío: si falta, queda "Sin título". */
   titulo: string;
@@ -31,46 +36,6 @@ interface ListadoCrudo {
   description?: string;
   start_timestamp?: string | number;
   stop_timestamp?: string | number;
-}
-
-const ALFABETO = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-/** Caracteres que no aparecen en un título de programa ni por asomo. */
-const CONTROLES = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
-
-/**
- * Base64 a bytes, a mano.
- *
- * Ni `atob` ni `Buffer` ni `TextDecoder`: `packages/core` tiene que funcionar
- * igual en Node y en Hermes, y **Hermes no trae `TextDecoder`**. Costó verlo,
- * porque la conversión fallaba en silencio y la parrilla salía escrita en
- * base64 en la tablet mientras los tests pasaban en el portátil.
- */
-export function bytesDeBase64(valor: string): number[] | null {
-  const sinEspacios = valor.replace(/\s/g, '');
-  // La longitud múltiplo de cuatro es lo que separa el base64 de una frase que
-  // por casualidad solo lleva letras: "Telediario 1" se descodificaría sin
-  // protestar y saldría convertido en tres caracteres ilegibles.
-  if (sinEspacios.length === 0 || sinEspacios.length % 4 !== 0) return null;
-
-  const limpio = sinEspacios.replace(/=+$/, '');
-  if (limpio.length === 0) return [];
-
-  const bytes: number[] = [];
-  let acumulado = 0;
-  let bits = 0;
-  for (const letra of limpio) {
-    const indice = ALFABETO.indexOf(letra);
-    // Un carácter que no es base64 significa que esto no venía codificado.
-    if (indice < 0) return null;
-    acumulado = (acumulado << 6) | indice;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      bytes.push((acumulado >> bits) & 0xff);
-    }
-  }
-  return bytes;
 }
 
 /**

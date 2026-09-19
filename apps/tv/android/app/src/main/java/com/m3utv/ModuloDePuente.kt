@@ -2,6 +2,7 @@ package com.m3utv
 
 import android.content.Context
 import android.net.wifi.WifiManager
+import android.util.Base64
 import android.os.PowerManager
 import android.util.Log
 import com.facebook.react.bridge.Promise
@@ -55,7 +56,17 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
   private var candadoWifi: WifiManager.WifiLock? = null
   private var candadoCpu: PowerManager.WakeLock? = null
 
-  private data class Destino(val url: String, val tipo: String, val huecos: List<LongRange>)
+  private data class Destino(val url: String, val tipo: String, val parches: List<Parche>)
+
+  /**
+   * Un trozo del fichero cambiado por otro **del mismo tamaño**.
+   *
+   * Es como se eligen el audio y los subtítulos: DLNA no sabe pedir una pista,
+   * así que se reescriben las fichas de las pistas al pasar. Los bytes los
+   * calcula `@m3u/core` (`parchesParaDejarSolo`), que es donde están las
+   * pruebas; aquí solo se colocan en su sitio.
+   */
+  private data class Parche(val desde: Long, val bytes: ByteArray)
 
   /**
    * Abre el puente para una URL del panel y devuelve la que hay que darle a
@@ -63,7 +74,7 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
    * podría pedir cosas a este puerto, y sin él sería un proxy abierto.
    */
   @ReactMethod
-  fun abrir(url: String, tipo: String, huecos: ReadableArray?, promesa: Promise) {
+  fun abrir(url: String, tipo: String, parches: ReadableArray?, promesa: Promise) {
     try {
       val ip = ipDeLaWifi()
       if (ip == null) {
@@ -76,24 +87,17 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
       }
       candados(true)
 
-      /*
-        Los huecos son trozos del fichero que hay que tapar al pasar: las
-        pistas de audio y subtítulos que no se quieren. Se cambian por un
-        `Void` de EBML **del mismo tamaño exacto**, así que ninguna posición
-        del fichero se mueve y la tele puede seguir saltando.
-      */
-      val aTapar = mutableListOf<LongRange>()
-      for (i in 0 until (huecos?.size() ?: 0)) {
-        val hueco = huecos?.getMap(i) ?: continue
-        val desde = hueco.getDouble("desde").toLong()
-        val hasta = hueco.getDouble("hasta").toLong()
-        if (hasta - desde >= 9) aTapar.add(desde until hasta)
+      val aCambiar = mutableListOf<Parche>()
+      for (i in 0 until (parches?.size() ?: 0)) {
+        val parche = parches?.getMap(i) ?: continue
+        val datos = parche.getString("datos") ?: continue
+        aCambiar.add(Parche(parche.getDouble("desde").toLong(), Base64.decode(datos, Base64.DEFAULT)))
       }
 
       val clave = UUID.randomUUID().toString().replace("-", "")
       destinos.clear()
-      destinos[clave] = Destino(url, tipo, aTapar)
-      if (aTapar.isNotEmpty()) Log.i("Puente", "tapando ${aTapar.size} pistas")
+      destinos[clave] = Destino(url, tipo, aCambiar)
+      if (aCambiar.isNotEmpty()) Log.i("Puente", "cambiando ${aCambiar.size} pistas al pasar")
 
       val extension = url.substringBefore('?').substringAfterLast('.', "mkv").take(4)
       val direccion = "http://$ip:${socket.localPort}/v/$clave.$extension"
@@ -236,7 +240,7 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
           falta para saber si lo que pasa por aquí cae dentro de un hueco.
         */
         val empiezaEn = rangoPanel?.substringAfter("bytes ")?.substringBefore('-')?.trim()?.toLongOrNull() ?: 0L
-        val pasados = panel.inputStream.use { origen -> copiar(origen, salida, empiezaEn, destino.huecos) }
+        val pasados = panel.inputStream.use { origen -> copiar(origen, salida, empiezaEn, destino.parches) }
         Log.i("Puente", "  terminado, ${pasados / 1_000_000} MB")
       } catch (fallo: Exception) {
         // Que la tele cierre una conexión a medias es lo normal: salta a otro
@@ -275,14 +279,14 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
     salida.flush()
   }
 
-  private fun copiar(origen: InputStream, destino: OutputStream, empiezaEn: Long, huecos: List<LongRange>): Long {
+  private fun copiar(origen: InputStream, destino: OutputStream, empiezaEn: Long, parches: List<Parche>): Long {
     val trozo = ByteArray(64 * 1024)
     var total = 0L
     var puesto = empiezaEn
     while (true) {
       val leidos = origen.read(trozo)
       if (leidos < 0) break
-      if (huecos.isNotEmpty()) taparLoQueToque(trozo, leidos, puesto, huecos)
+      if (parches.isNotEmpty()) cambiarLoQueToque(trozo, leidos, puesto, parches)
       destino.write(trozo, 0, leidos)
       total += leidos
       puesto += leidos
@@ -292,34 +296,24 @@ class ModuloDePuente(contexto: ReactApplicationContext) : ReactContextBaseJavaMo
   }
 
   /**
-   * Cambia por un hueco de EBML los trozos que caigan dentro de lo que se
+   * Coloca en su sitio los trozos cambiados que caigan dentro de lo que se
    * está mandando.
    *
-   * Un `Void` es su identificador (`0xEC`), su longitud y relleno. La
-   * longitud se escribe con ocho bytes aunque quepa en menos: así la cabecera
-   * mide siempre nueve y el hueco ocupa **exactamente** lo que ocupaba la
-   * pista. Si el trozo empieza a la mitad de un hueco —porque la tele saltó
-   * ahí—, va relleno y ya está: eso ya no lo lee nadie.
+   * La tele pide el fichero a trozos y por donde le parece, así que un parche
+   * puede caer entero, a medias o no caer: se copia solo lo que solape. Los
+   * bytes ya vienen calculados y **miden lo mismo que lo que sustituyen**, de
+   * modo que ninguna posición del fichero se mueve y la tele puede seguir
+   * saltando.
    */
-  private fun taparLoQueToque(trozo: ByteArray, leidos: Int, puesto: Long, huecos: List<LongRange>) {
+  private fun cambiarLoQueToque(trozo: ByteArray, leidos: Int, puesto: Long, parches: List<Parche>) {
     val ultimo = puesto + leidos - 1
-    for (hueco in huecos) {
-      val desde = maxOf(hueco.first, puesto)
-      val hasta = minOf(hueco.last, ultimo)
+    for (parche in parches) {
+      val finDelParche = parche.desde + parche.bytes.size - 1
+      val desde = maxOf(parche.desde, puesto)
+      val hasta = minOf(finDelParche, ultimo)
       if (desde > hasta) continue
-      val largo = hueco.last - hueco.first + 1
       for (byte in desde..hasta) {
-        val dentroDelHueco = byte - hueco.first
-        trozo[(byte - puesto).toInt()] = when {
-          dentroDelHueco == 0L -> 0xEC.toByte()
-          dentroDelHueco == 1L -> 0x01
-          dentroDelHueco < 9L -> {
-            // Los siete bytes de la longitud, del más alto al más bajo.
-            val relleno = largo - 9
-            ((relleno shr ((8 - dentroDelHueco.toInt()) * 8)) and 0xFF).toByte()
-          }
-          else -> 0
-        }
+        trozo[(byte - puesto).toInt()] = parche.bytes[(byte - parche.desde).toInt()]
       }
     }
   }

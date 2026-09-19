@@ -28,10 +28,22 @@ export interface PistaMkv {
   nombre: string | null;
   /** Si el fichero la marca como la que hay que usar. */
   porDefecto: boolean;
+  /** Si está encendida. Una apagada no la usa nadie, ni aunque esté marcada. */
+  encendida: boolean;
   /** Dónde empieza su ficha dentro del fichero, contando desde el byte 0. */
   desde: number;
   /** Y dónde acaba, sin incluir este byte. */
   hasta: number;
+  /**
+   * Dónde está el byte que dice "esta es la buena", si el fichero lo trae.
+   *
+   * Cambiar ese byte es un solo cambio, y es como se elige una pista sin
+   * tocar nada más. Cuando no está, la pista cuenta como marcada y para
+   * quitarle la marca hay que reescribir su ficha entera.
+   */
+  marca: number | null;
+  /** Su identificador único, tal cual está escrito: hay que conservarlo. */
+  uid: number[] | null;
 }
 
 /* Los identificadores de EBML que hacen falta, tal cual salen en el fichero. */
@@ -45,6 +57,9 @@ const IDIOMA = 0x22b59c;
 const IDIOMA_BCP47 = 0x22b59d;
 const NOMBRE = 0x536e;
 const POR_DEFECTO = 0x88;
+const ENCENDIDA = 0xb9;
+const UID = 0x73c5;
+const HUECO = 0xec;
 
 /** Lo que lleva un elemento: dónde empieza su contenido y cuánto ocupa. */
 interface Elemento {
@@ -187,8 +202,11 @@ function leerUnaPista(bytes: Uint8Array, entrada: Elemento, fin: number): PistaM
     // Y que sí, que es la buena: por eso una pista sin marca cuenta como
     // marcada, y por eso unos subtítulos salen sin que nadie los pida.
     porDefecto: true,
+    encendida: true,
     desde: entrada.desde,
     hasta: fin,
+    marca: null,
+    uid: null,
   };
 
   let puesto = entrada.contenido;
@@ -214,6 +232,14 @@ function leerUnaPista(bytes: Uint8Array, entrada: Elemento, fin: number): PistaM
         break;
       case POR_DEFECTO:
         pista.porDefecto = comoNumero(bytes, campo.contenido, campo.largo) !== 0;
+        // El último byte del valor: es el que se cambia para elegirla.
+        pista.marca = campo.contenido + campo.largo - 1;
+        break;
+      case UID:
+        pista.uid = [...bytes.subarray(campo.desde, campo.contenido + campo.largo)];
+        break;
+      case ENCENDIDA:
+        pista.encendida = comoNumero(bytes, campo.contenido, campo.largo) !== 0;
         break;
       default:
         break;
@@ -251,36 +277,142 @@ export function nombreDeIdioma(idioma: string): string {
   return conocidos[idioma] ?? idioma.toUpperCase();
 }
 
+/** Un trozo del fichero cambiado por otro **del mismo tamaño**. */
+export interface Parche {
+  desde: number;
+  bytes: number[];
+}
+
+/** Un elemento EBML con su longitud escrita en un solo byte (hasta 127). */
+function elementoCorto(id: number[], contenido: number[]): number[] {
+  return [...id, 0x80 | contenido.length, ...contenido];
+}
+
+/** Una longitud de EBML escrita en tantos bytes como se le diga. */
+function longitud(valor: number, bytes: number): number[] {
+  const escrita: number[] = [];
+  for (let byte = bytes - 1; byte >= 0; byte -= 1) escrita.push(Math.floor(valor / 256 ** byte) % 256);
+  // El bit que dice cuántos bytes ocupa va en el primero.
+  escrita[0] = escrita[0]! | (0x80 >> (bytes - 1));
+  return escrita;
+}
+
+/** Si una longitud cabe escrita en tantos bytes. */
+function cabe(valor: number, bytes: number): boolean {
+  return valor >= 0 && valor < 2 ** (7 * bytes) - 1;
+}
+
+/** Un hueco de EBML que ocupe exactamente lo que se le pida, o nada. */
+function hueco(total: number): number[] | null {
+  if (total === 0) return [];
+  // Uno de un solo byte no existe: hace falta el identificador y la longitud.
+  if (total === 1) return null;
+  for (let bytes = 1; bytes <= 8; bytes += 1) {
+    const dentro = total - 1 - bytes;
+    if (dentro >= 0 && cabe(dentro, bytes)) {
+      return [HUECO, ...longitud(dentro, bytes), ...new Array<number>(dentro).fill(0)];
+    }
+  }
+  return null;
+}
+
 /**
- * Qué trozos del fichero hay que tapar para que la tele use las pistas que
- * uno quiere.
+ * Cómo dejar una pista escrita pero **apagada**.
  *
- * DLNA no sabe pedir una pista, así que se le quitan las demás: la ficha de
- * cada pista sobrante se sustituye por un **hueco** (el elemento `Void` de
- * EBML), que es exactamente lo que existe para esto. Los bloques de vídeo que
- * apunten a una pista que ya no está los ignora cualquier reproductor.
+ * La primera versión de esto tapaba la pista entera con un hueco, y la tele
+ * daba un tirón cada pocos segundos: los bloques de esa pista **siguen dentro
+ * del vídeo**, repartidos por todo el fichero, y se quedaban apuntando a una
+ * pista que ya no existía. Un reproductor debería ignorarlos sin más; el de
+ * la Samsung tropezaba.
  *
- * Y se tapa **sin cambiar ni un byte de longitud**, que es la clave: si el
- * fichero se acortara, todas las posiciones de dentro dejarían de valer y la
- * tele no podría saltar, que es para lo que sirve `Range`.
+ * Así que la pista se queda —con su número, su identificador, su clase y su
+ * códec, que es lo que hace falta para saber de quién son esos bloques— y se
+ * le pone `FlagEnabled = 0`. Lo que sobra se rellena con un hueco, de modo que
+ * **ocupa exactamente lo mismo que ocupaba**.
  *
- * El vídeo nunca se toca. `subtitulo: null` quiere decir sin subtítulos, que
- * es lo que uno espera al poner una película en español.
+ * Puede no caber: una ficha pequeña no tiene sitio para lo que hay que
+ * escribir. Entonces se devuelve `null` y quien llama se conforma con quitarle
+ * la marca, que es menos, pero no rompe nada.
  */
-export function huecosParaDejarSolo(
+function fichaApagada(pista: PistaMkv): Parche | null {
+  const total = pista.hasta - pista.desde;
+  const tipo = pista.clase === 'audio' ? 2 : pista.clase === 'subtitulo' ? 17 : 3;
+
+  const conMarca = [
+    ...elementoCorto([NUMERO], [pista.numero]),
+    ...(pista.uid ?? []),
+    ...elementoCorto([TIPO], [tipo]),
+    ...elementoCorto([CODEC], [...pista.codec].map((letra) => letra.charCodeAt(0))),
+    ...elementoCorto([ENCENDIDA], [0]),
+    ...elementoCorto([POR_DEFECTO], [0]),
+  ];
+  // Si no cabe con la marca, sin ella: lo que de verdad la quita de en medio
+  // es estar apagada.
+  const sinMarca = conMarca.slice(0, conMarca.length - 3);
+
+  for (let bytesDeLargo = 1; bytesDeLargo <= 8; bytesDeLargo += 1) {
+    const contenido = total - 1 - bytesDeLargo;
+    if (!cabe(contenido, bytesDeLargo)) continue;
+
+    for (const dentro of [conMarca, sinMarca]) {
+      const relleno = hueco(contenido - dentro.length);
+      if (contenido < dentro.length || relleno === null) continue;
+      return {
+        desde: pista.desde,
+        bytes: [UNA_PISTA, ...longitud(contenido, bytesDeLargo), ...dentro, ...relleno],
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Qué hay que cambiar del fichero para que la tele use las pistas que uno
+ * quiere.
+ *
+ * DLNA no sabe pedir una pista: la tele usa la que el fichero marca, y en
+ * Matroska **una pista sin marca cuenta como marcada**, que es justo por lo
+ * que salen unos subtítulos que nadie ha pedido.
+ *
+ * Así que se cambia el fichero al vuelo, y siempre **del mismo tamaño
+ * exacto**: si se acortara, todas las posiciones de dentro dejarían de valer
+ * y la tele no podría saltar. La elegida solo necesita su marca; las demás se
+ * quedan escritas pero apagadas (ver `fichaApagada`).
+ *
+ * El vídeo no se toca nunca. `subtitulo: null` quiere decir sin subtítulos,
+ * que es lo que uno espera al poner una película en su idioma.
+ */
+export function parchesParaDejarSolo(
   pistas: PistaMkv[],
   eleccion: { audio: number | null; subtitulo: number | null },
-): Array<{ desde: number; hasta: number }> {
-  return pistas
-    .filter((pista) => {
-      if (pista.clase === 'audio') return eleccion.audio !== null && pista.numero !== eleccion.audio;
-      if (pista.clase === 'subtitulo') return pista.numero !== eleccion.subtitulo;
-      return false;
-    })
-    // Un hueco de EBML necesita nueve bytes para su propia cabecera; una
-    // ficha de pista siempre es mucho mayor, pero más vale no romper nada.
-    .filter((pista) => pista.hasta - pista.desde >= 9)
-    .map((pista) => ({ desde: pista.desde, hasta: pista.hasta }));
+): Parche[] {
+  const parches: Parche[] = [];
+
+  for (const pista of pistas) {
+    if (pista.clase !== 'audio' && pista.clase !== 'subtitulo') continue;
+
+    // Sin audio elegido no se toca ninguno: apagarlos todos sería quedarse
+    // sin sonido, que es peor que cualquier idioma.
+    if (pista.clase === 'audio' && eleccion.audio === null) continue;
+
+    const elegida = pista.clase === 'audio' ? eleccion.audio === pista.numero : eleccion.subtitulo === pista.numero;
+    if (elegida) {
+      // La elegida solo necesita la marca, y solo si la trae escrita: sin
+      // ella ya cuenta como marcada.
+      if (pista.marca !== null && !pista.porDefecto) parches.push({ desde: pista.marca, bytes: [1] });
+      continue;
+    }
+
+    /*
+      Y las demás, apagadas. Quitarles la marca no basta: una pista sin marca
+      puede salir igual si la tele decide que es la única en ese idioma.
+    */
+    const apagada = fichaApagada(pista);
+    if (apagada) parches.push(apagada);
+    else if (pista.marca !== null) parches.push({ desde: pista.marca, bytes: [0] });
+  }
+
+  return parches;
 }
 
 /** El audio que hay que poner si nadie ha elegido: el del fichero. */

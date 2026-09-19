@@ -35,7 +35,7 @@ import {
   MandoDeTele,
   audioPorDefecto,
   avanceDePrograma,
-  huecosParaDejarSolo,
+  parchesParaDejarSolo,
   nombreDeIdioma,
   tipoDeVideo,
   leerClaveDeEpisodio,
@@ -1298,7 +1298,7 @@ function BibliotecaVista({
     async (
       tele: Tele,
       medio: MedioParaTele,
-      eleccion?: { audio: number | null; subtitulo: number | null; desde?: number },
+      eleccion?: { audio: number | null; subtitulo: number | null; desde?: number; sinTocar?: boolean },
     ) => {
       const variantes = await biblioteca.variantes(medio.clase, medio.id).catch(() => []);
       const mejor = variantes[0];
@@ -1348,7 +1348,8 @@ function BibliotecaVista({
       const pistas = cabecera?.pistas ?? [];
       const audio = eleccion ? eleccion.audio : audioPorDefecto(pistas);
       const subtitulo = eleccion ? eleccion.subtitulo : null;
-      const huecos = pistas.length > 0 ? huecosParaDejarSolo(pistas, { audio, subtitulo }) : [];
+      const parches =
+        pistas.length > 0 && !eleccion?.sinTocar ? parchesParaDejarSolo(pistas, { audio, subtitulo }) : [];
       const mando = new MandoDeTele(tele, pedirALaTele);
       try {
         // Lo que estuviera sonando, fuera: hay teles que no aceptan un vídeo
@@ -1356,7 +1357,7 @@ function BibliotecaVista({
         await mando.parar().catch(() => undefined);
         // Lo que se le da a la tele es el puente del teléfono, no el panel:
         // la Samsung no se entiende con el panel directamente.
-        const direccion = await direccionParaLaTele(mejor.url, tipoDeVideo(mejor.url), huecos);
+        const direccion = await direccionParaLaTele(mejor.url, tipoDeVideo(mejor.url), parches);
         await mando.poner(direccion, medio.titulo);
         await mando.reproducir();
       } catch (fallo) {
@@ -1412,11 +1413,16 @@ function BibliotecaVista({
    * es un fichero, y el fichero cambia.
    */
   const cambiarPistas = useCallback(
-    (audio: number | null, subtitulo: number | null) => {
+    (audio: number | null, subtitulo: number | null, sinTocar = false) => {
       const actual = teleEnCurso.current;
       if (!actual) return;
       setElegirPistas(false);
-      void ponerEnLaTele(actual.tele, actual.medio, { audio, subtitulo, desde: actual.situacion?.posicion ?? 0 });
+      void ponerEnLaTele(actual.tele, actual.medio, {
+        audio,
+        subtitulo,
+        sinTocar,
+        desde: actual.situacion?.posicion ?? 0,
+      });
     },
     [ponerEnLaTele],
   );
@@ -2818,6 +2824,20 @@ function BibliotecaVista({
                   </Text>
                 </Pressable>
               ))}
+
+            {/*
+              La salida de emergencia: mandar el fichero sin tocarle nada, con
+              todas sus pistas. Sirve para comparar cuando la tele haga algo
+              raro, que tocar el fichero por dentro es lo más nuevo de todo
+              esto.
+            */}
+            <Pressable
+              focusable={false}
+              style={estilos.menuOpcion}
+              onPress={() => cambiarPistas(enLaTele.audio, enLaTele.pistaDeSubtitulos, true)}
+            >
+              <Text style={estilos.menuOpcionTexto}>Mandar el fichero tal cual</Text>
+            </Pressable>
 
             <Pressable focusable={false} style={estilos.menuOpcion} onPress={() => setElegirPistas(false)}>
               <Text style={estilos.menuOpcionTexto}>Dejarlo como está</Text>

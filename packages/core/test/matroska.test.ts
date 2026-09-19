@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { audioPorDefecto, huecosParaDejarSolo, nombreDeIdioma, pistasDeMatroska } from '../src/matroska.ts';
+import { audioPorDefecto, nombreDeIdioma, parchesParaDejarSolo, pistasDeMatroska } from '../src/matroska.ts';
 
 const texto = (cadena: string): number[] => [...cadena].map((letra) => letra.charCodeAt(0));
 
@@ -125,32 +125,64 @@ test('los idiomas se dicen en cristiano', () => {
   assert.equal(nombreDeIdioma('tlh'), 'TLH');
 });
 
-test('para dejar un audio y ningún subtítulo se tapa todo lo demás', () => {
-  const pistas = pistasDeMatroska(ficheroFalso());
-
-  const huecos = huecosParaDejarSolo(pistas, { audio: 2, subtitulo: null });
-
-  // El vídeo no se toca nunca; el audio elegido tampoco.
-  const tapadas = pistas.filter((una) => huecos.some((hueco) => hueco.desde === una.desde));
-  assert.deepEqual(
-    tapadas.map((una) => `${una.numero} ${una.clase}`),
-    ['3 audio', '4 subtitulo'],
-  );
-});
-
-test('y para poner los subtítulos, se deja el que se elija', () => {
-  const pistas = pistasDeMatroska(ficheroFalso());
-
-  const huecos = huecosParaDejarSolo(pistas, { audio: 3, subtitulo: 4 });
-  const tapadas = pistas.filter((una) => huecos.some((hueco) => hueco.desde === una.desde));
-
-  assert.deepEqual(
-    tapadas.map((una) => `${una.numero} ${una.clase}`),
-    ['2 audio'],
-  );
-});
-
 test('el audio por defecto es el que marca el fichero', () => {
   assert.equal(audioPorDefecto(pistasDeMatroska(ficheroFalso())), 2);
   assert.equal(audioPorDefecto([]), null);
+});
+
+/** Aplica los parches como haría el puente al pasar los bytes. */
+function conLosParches(bytes: Uint8Array, parches: ReturnType<typeof parchesParaDejarSolo>): Uint8Array {
+  const copia = Uint8Array.from(bytes);
+  for (const parche of parches) copia.set(Uint8Array.from(parche.bytes), parche.desde);
+  return copia;
+}
+
+test('las pistas que no se quieren se quedan escritas, pero apagadas', () => {
+  const bytes = ficheroFalso();
+  const pistas = pistasDeMatroska(bytes);
+
+  const parches = parchesParaDejarSolo(pistas, { audio: 2, subtitulo: null });
+  const despues = pistasDeMatroska(conLosParches(bytes, parches));
+
+  // Siguen las cuatro, y cada una con su número y su clase: es lo que hace
+  // falta para que la tele sepa de quién son los bloques que se va a
+  // encontrar repartidos por el vídeo.
+  assert.deepEqual(
+    despues.map((una) => `${una.numero} ${una.clase} ${una.encendida ? 'encendida' : 'apagada'}`),
+    ['1 video encendida', '2 audio encendida', '3 audio apagada', '4 subtitulo apagada'],
+  );
+});
+
+test('y el fichero mide exactamente lo mismo, que si no la tele no podría saltar', () => {
+  const bytes = ficheroFalso();
+  const pistas = pistasDeMatroska(bytes);
+
+  for (const eleccion of [
+    { audio: 2, subtitulo: null },
+    { audio: 3, subtitulo: 4 },
+    { audio: null, subtitulo: null },
+  ]) {
+    const parches = parchesParaDejarSolo(pistas, eleccion);
+    for (const parche of parches) {
+      const pista = pistas.find((una) => una.desde === parche.desde);
+      // O es una ficha entera reescrita, o es el byte de la marca.
+      if (pista) assert.equal(parche.bytes.length, pista.hasta - pista.desde);
+      else assert.equal(parche.bytes.length, 1);
+    }
+    const despues = conLosParches(bytes, parches);
+    assert.equal(despues.length, bytes.length);
+    // Y sigue leyéndose: no se ha roto el EBML por el camino.
+    assert.equal(pistasDeMatroska(despues).length, 4);
+  }
+});
+
+test('elegir un audio que no venía marcado le pone la marca', () => {
+  const bytes = ficheroFalso();
+  const pistas = pistasDeMatroska(bytes);
+
+  const parches = parchesParaDejarSolo(pistas, { audio: 3, subtitulo: null });
+  const despues = pistasDeMatroska(conLosParches(bytes, parches));
+
+  assert.equal(despues.find((una) => una.numero === 3)?.porDefecto, true);
+  assert.equal(despues.find((una) => una.numero === 2)?.porDefecto, false);
 });

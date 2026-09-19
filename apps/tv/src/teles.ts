@@ -10,7 +10,16 @@ import { DeviceEventEmitter, NativeModules } from 'react-native';
 
 import ReactNativeBlobUtil from 'react-native-blob-util';
 
-import { bytesDeBase64, codecsDeMatroska, leerTele, pistasDeMatroska, type PistaMkv, type Tele } from '@m3u/core';
+import {
+  base64DeBytes,
+  bytesDeBase64,
+  codecsDeMatroska,
+  leerTele,
+  pistasDeMatroska,
+  type Parche,
+  type PistaMkv,
+  type Tele,
+} from '@m3u/core';
 
 interface Nativo {
   buscar(milisegundos: number): Promise<string[]>;
@@ -124,7 +133,7 @@ function comoTexto(bytes: Uint8Array): string {
 }
 
 interface NativoPuente {
-  abrir(url: string, tipo: string, huecos: Array<{ desde: number; hasta: number }>): Promise<string>;
+  abrir(url: string, tipo: string, parches: Array<{ desde: number; datos: string }>): Promise<string>;
   cerrar(): void;
 }
 
@@ -137,13 +146,14 @@ const puente = (NativeModules as { Puente?: NativoPuente }).Puente;
  * Si el puente no está —un APK anterior— se le da la del panel tal cual,
  * que con algunas teles funciona y con la Samsung de casa no.
  */
-export async function direccionParaLaTele(
-  url: string,
-  tipo: string,
-  huecos: Array<{ desde: number; hasta: number }> = [],
-): Promise<string> {
+export async function direccionParaLaTele(url: string, tipo: string, parches: Parche[] = []): Promise<string> {
   if (!puente) return url;
-  return puente.abrir(url, tipo, huecos);
+  // Los bytes viajan en base64: es lo que entiende el puente del otro lado.
+  return puente.abrir(
+    url,
+    tipo,
+    parches.map((parche) => ({ desde: parche.desde, datos: base64DeBytes(parche.bytes) })),
+  );
 }
 
 /** Cierra el puente al dejar de ver en la tele: suelta la wifi y la CPU. */

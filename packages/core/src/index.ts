@@ -14,3 +14,4 @@ export * from './xtream/index.ts';
 export * from './dlna.ts';
 export * from './codecs.ts';
 export * from './matroska.ts';
+export * from './base64.ts';
