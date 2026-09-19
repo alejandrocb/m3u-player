@@ -8,7 +8,8 @@
 
 import { NativeModules } from 'react-native';
 
-import { leerTele, type Tele } from '@m3u/core';
+import { codecsDeMatroska, leerTele, type Tele } from '@m3u/core';
+import { urlSinCredenciales } from '@m3u/ui';
 
 interface Nativo {
   buscar(milisegundos: number): Promise<string[]>;
@@ -63,4 +64,25 @@ export async function buscarTeles(): Promise<Tele[]> {
   const teles = [...porControl.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
   console.log(`[tele] ${teles.length} saben reproducir: ${teles.map((tele) => tele.nombre).join(', ') || 'ninguna'}`);
   return teles;
+}
+
+/**
+ * Lo que dice el propio fichero cuando se le pregunta como lo haría un
+ * reproductor: si el panel lo da, si redirige a otro servidor y qué pistas
+ * trae.
+ *
+ * Se piden **solo los primeros 256 KB**: en un MKV la lista de pistas va al
+ * principio, y pedir más sería bajarse la película para leer una etiqueta.
+ * Se leen como texto aunque sean binarios; los nombres de los códecs son
+ * ASCII y sobreviven (ver `codecsDeMatroska`).
+ */
+export async function mirarElFichero(url: string): Promise<{ estado: number; redirige: string | null; codecs: string[] }> {
+  const respuesta = await conPlazo(15_000)(url, {
+    headers: { 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20', Range: 'bytes=0-262143' },
+  });
+  const texto = await respuesta.text().catch(() => '');
+  // Si la dirección final no es la pedida, el panel ha redirigido: hay teles
+  // que no saben seguir ese salto.
+  const final = respuesta.url && respuesta.url !== url ? urlSinCredenciales(respuesta.url) : null;
+  return { estado: respuesta.status, redirige: final, codecs: codecsDeMatroska(texto) };
 }

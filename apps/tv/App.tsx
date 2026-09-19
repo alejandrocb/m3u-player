@@ -31,7 +31,15 @@ import {
 } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { MandoDeTele, avanceDePrograma, leerClaveDeEpisodio, programaActual, qualityRank } from '@m3u/core';
+import {
+  MandoDeTele,
+  avanceDePrograma,
+  leerClaveDeEpisodio,
+  loQueUnaTeleNoSabe,
+  nombreDeCodec,
+  programaActual,
+  qualityRank,
+} from '@m3u/core';
 import type { Programa, Situacion, Tele } from '@m3u/core';
 import type {
   Ajustes,
@@ -80,7 +88,7 @@ import {
 import { almacenDeCuentas } from './src/almacen';
 import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
 import { avisarDeLasDescargas } from './src/aviso-descarga';
-import { buscarTeles, pedirALaTele } from './src/teles';
+import { buscarTeles, mirarElFichero, pedirALaTele } from './src/teles';
 import {
   ESCALA_ENFOQUE,
   FONDO,
@@ -722,10 +730,14 @@ function BibliotecaVista({
     perfiles.perfiles().then((todos) => setOtrosPerfiles(todos.filter((uno) => uno.id !== perfil.id)));
   }, [verPerfil, perfiles, perfil.id]);
 
-  /* El aviso de abajo se va solo: es un acuse de recibo, no un mensaje. */
+  /*
+    El aviso de abajo se va solo: es un acuse de recibo, no un mensaje. Pero
+    dura lo que se tarda en leerlo: tres segundos valen para "a la cola de
+    descargas" y se quedan cortos para explicar por qué la tele no abre algo.
+  */
   useEffect(() => {
     if (!aviso) return;
-    const reloj = setTimeout(() => setAviso(null), 3000);
+    const reloj = setTimeout(() => setAviso(null), Math.max(3000, aviso.length * 70));
     return () => clearTimeout(reloj);
   }, [aviso]);
 
@@ -1226,6 +1238,38 @@ function BibliotecaVista({
   );
 
   /**
+   * Por qué la tele no ha podido abrir algo que el teléfono sí abre.
+   *
+   * La tele solo dice "Error inesperado", y casi siempre es el formato: el
+   * teléfono decodifica casi todo por software y la tele solo lo que trae su
+   * chip. Así que se leen los primeros kilobytes del fichero, que en un MKV
+   * dicen en claro qué pistas trae, y se cuenta.
+   *
+   * **Solo cuando falla**: leer el fichero gasta una conexión del panel, y
+   * cuando la tele reproduce bien no hace ninguna falta. Para entonces la de
+   * la tele ya se ha soltado.
+   */
+  const explicarFalloDeTele = useCallback(async (url: string) => {
+    setAviso('La tele no ha conseguido abrir el vídeo; miro por qué…');
+    const visto = await mirarElFichero(url).catch(() => null);
+    if (!visto) {
+      setAviso('La tele no ha conseguido abrir el vídeo');
+      return;
+    }
+    console.log(
+      `[tele] el fichero: ${visto.estado}${visto.redirige ? ` · redirige a ${visto.redirige}` : ''}` +
+        ` · ${visto.codecs.join(', ') || 'sin pistas reconocibles'}`,
+    );
+
+    const problemas = loQueUnaTeleNoSabe(visto.codecs);
+    const pistas = visto.codecs.filter((codec) => !codec.startsWith('S_')).map(nombreDeCodec);
+    if (problemas.length > 0) setAviso(`La tele no puede con este fichero: ${problemas.join('; ')}`);
+    else if (visto.estado >= 400) setAviso(`La tele no ha podido abrirlo: el panel contesta ${visto.estado}`);
+    else if (pistas.length > 0) setAviso(`La tele no ha conseguido abrirlo (trae ${pistas.join(', ')})`);
+    else setAviso('La tele no ha conseguido abrir el vídeo');
+  }, []);
+
+  /**
    * Manda una ficha a una tele concreta y se queda de mando.
    *
    * Lo que viaja es **la URL de la mejor variante**, no la imagen: la tele se
@@ -1279,7 +1323,7 @@ function BibliotecaVista({
           : null;
 
       mandoTele.current = mando;
-      teleEnCurso.current = { tele, medio, situacion: null, empezada: false, desde: Date.now() };
+      teleEnCurso.current = { tele, medio, url: mejor.url, situacion: null, empezada: false, desde: Date.now() };
       setEnLaTele({ ...teleEnCurso.current });
       setVerMando(true);
     },
@@ -1396,7 +1440,8 @@ function BibliotecaVista({
           return;
         }
         if (parada && Date.now() - actual.desde > 30_000) {
-          soltarTele('La tele no ha conseguido abrir el vídeo');
+          soltarTele(null);
+          void explicarFalloDeTele(actual.url);
           return;
         }
         setEnLaTele({ ...actual });
@@ -1412,7 +1457,7 @@ function BibliotecaVista({
     void mirar();
     const reloj = setInterval(() => void mirar(), 2_000);
     return () => clearInterval(reloj);
-  }, [enLaTeleActiva, apuntarLoDeLaTele, soltarTele]);
+  }, [enLaTeleActiva, apuntarLoDeLaTele, soltarTele, explicarFalloDeTele]);
 
   /** Lo que hacen los botones del mando. Todo va a la tele y nada espera. */
   const ordenALaTele = useCallback(
@@ -3296,6 +3341,8 @@ type MedioParaTele = { clase: 'pelicula' | 'episodio' | 'canal'; id: string; tit
 interface EnLaTele {
   tele: Tele;
   medio: MedioParaTele;
+  /** Lo que se le mandó. Hace falta para explicar un fallo, no para pintar. */
+  url: string;
   /** Lo último que dijo la tele. Nulo hasta la primera respuesta. */
   situacion: Situacion | null;
   /** Si llegó a sonar: es lo que distingue "ha terminado" de "no pudo abrirlo". */

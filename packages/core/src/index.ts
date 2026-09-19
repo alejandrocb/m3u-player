@@ -12,3 +12,4 @@ export * from './episodios.ts';
 export * from './m3u/index.ts';
 export * from './xtream/index.ts';
 export * from './dlna.ts';
+export * from './codecs.ts';
