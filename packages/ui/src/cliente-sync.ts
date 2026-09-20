@@ -190,6 +190,20 @@ export interface ProgramaRemoto {
   sinopsis: string | null;
 }
 
+/**
+ * No se pudo guardar el emparejamiento recién concedido.
+ *
+ * Es distinto de un fallo de red, y por eso tiene su propio tipo: el token se
+ * entrega **una sola vez**, así que reintentar no lo arregla, solo quema otro
+ * código. Quien lo reciba tiene que decirlo y parar.
+ */
+export class ErrorDeEmparejamiento extends Error {
+  constructor(mensaje: string) {
+    super(mensaje);
+    this.name = 'ErrorDeEmparejamiento';
+  }
+}
+
 export class ClienteSync {
   #almacen: AlmacenSync;
   #perfiles: FuenteDeCambios;
@@ -250,9 +264,35 @@ export class ClienteSync {
     };
     if (datos.estado !== 'aprobado' || !datos.token) return { estado: 'pendiente' };
 
+    /*
+      **Este token se entrega una sola vez.** El servidor lo da, marca el
+      aparato como activo y borra el código; a la siguiente pregunta con el
+      mismo secreto contesta "no te conozco". Así que si guardarlo aquí falla,
+      el emparejamiento se ha perdido y no hay forma de recuperarlo: hay que
+      volver a pedir código y a aprobarlo en la web.
+
+      Por eso el fallo **no puede quedarse en silencio**. Quien llama trata un
+      corte de red como algo pasajero —y hace bien—, y esto se le colaba por
+      ahí: se aprobaban códigos, el aparato pedía otro, y así indefinidamente.
+    */
+    try {
+      await this.#guardarEmparejamiento(datos.token, servidor, datos);
+    } catch (fallo) {
+      console.warn('[sync] no se pudo guardar el emparejamiento', fallo);
+      throw new ErrorDeEmparejamiento(fallo instanceof Error ? fallo.message : String(fallo));
+    }
+
+    return { estado: 'aprobado', grupo: datos.grupo ?? null, listas: datos.listas ?? [] };
+  }
+
+  async #guardarEmparejamiento(
+    token: string,
+    servidor: string,
+    datos: { aparato?: { nombre: string | null }; grupo?: { id: string; nombre: string } | null },
+  ): Promise<void> {
     await this.#almacen.guardar({
       servidor: limpiar(servidor),
-      token: datos.token,
+      token,
       grupo: datos.grupo ?? null,
       aparato: datos.aparato?.nombre ?? undefined,
       // Desde cero las dos: un aparato recién emparejado se trae todo lo que
@@ -262,8 +302,6 @@ export class ClienteSync {
       // Y lo suyo lo tira: los perfiles son de la casa.
       adoptar: true,
     });
-
-    return { estado: 'aprobado', grupo: datos.grupo ?? null, listas: datos.listas ?? [] };
   }
 
   /**

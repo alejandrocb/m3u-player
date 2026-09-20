@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { ErrorDeEmparejamiento } from '@m3u/ui';
 import type { ClienteSync, ListaRemota } from '@m3u/ui';
 import { SERVIDOR } from 'servidor-sync';
 import { FONDO, ROJO, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
@@ -83,10 +84,24 @@ export function PantallaEmparejar({ cliente, onListo, onCancelar }: Props) {
           clearInterval(reloj);
           void pedirCodigo(estado.servidor);
         }
-      } catch {
-        // Un fallo de red no rompe la espera: se vuelve a intentar a la
-        // siguiente vuelta, que es lo que quieres cuando la tele acaba de
-        // encenderse y el wifi todavía no ha levantado.
+      } catch (fallo) {
+        /*
+          Un fallo de red no rompe la espera: se vuelve a intentar a la
+          siguiente vuelta, que es lo que quieres cuando la tele acaba de
+          encenderse y el wifi todavía no ha levantado.
+
+          **Pero no guardar el emparejamiento sí lo rompe**, y de la peor
+          manera: el token se entrega una sola vez, así que insistir solo
+          consigue quemar otro código. Eso se dice y se para.
+        */
+        if (fallo instanceof ErrorDeEmparejamiento) {
+          clearInterval(reloj);
+          if (!vivo.current) return;
+          setEstado({
+            tipo: 'fallo',
+            mensaje: `Se aprobó, pero este aparato no pudo guardarlo: ${fallo.message}`,
+          });
+        }
       }
     }, CADA_MS);
 
