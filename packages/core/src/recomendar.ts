@@ -58,3 +58,73 @@ export function filtroRecomendadaSQL(prefijo = ''): string {
     ` AND ${prefijo}sort_title NOT LIKE '%screening%'`
   );
 }
+
+/**
+ * Cuántos votos hacen falta para que una nota de TMDb signifique algo.
+ *
+ * Es la diferencia entre un 8 que han puesto mil personas y un 10 que han
+ * puesto dos, que es exactamente el problema de la nota del proveedor. Cien es
+ * suficiente para que una película no se cuele por el voto de sus cuatro
+ * amigos, y bajo para no dejar fuera el cine que no es de estreno.
+ */
+export const VOTOS_MINIMOS = 100;
+
+/**
+ * Lo mejor valorado **de verdad**: por la nota de TMDb, con votos bastantes.
+ *
+ * Es el orden que la nota del panel no podía dar. Aquí sí se ordena por nota,
+ * porque detrás hay un recuento de votos que la sostiene, y a igualdad manda
+ * lo más reciente: entre dos ochos, el de este año.
+ */
+export function ordenMejorSQL(prefijo = ''): string {
+  return `${prefijo}nota_tmdb DESC, ${prefijo}year IS NULL, ${prefijo}year DESC`;
+}
+
+export function filtroMejorSQL(prefijo = ''): string {
+  return (
+    `${prefijo}nota_tmdb IS NOT NULL AND ${prefijo}votos_tmdb >= ${VOTOS_MINIMOS}` +
+    ` AND ${prefijo}sort_title NOT LIKE '%screening%'`
+  );
+}
+
+/**
+ * Lo bueno de un tema, sin dejar fuera medio catálogo.
+ *
+ * Es el orden de las filas por género del inicio, y existe porque usar
+ * `recomendada` ahí era un error: su filtro exige una nota del proveedor entre
+ * 7 y 10, y con eso la fila de "Ciencia ficción" se quedaba en cuatro
+ * películas de las cuatrocientas que hay. Contar cuatrocientas en el rótulo y
+ * enseñar cuatro es lo peor de los dos mundos.
+ *
+ * Así que aquí no se descarta nada salvo las copias de pase de prensa, y se
+ * ordena por lo mejor valorado en TMDb; lo que aún no tiene nota va detrás,
+ * por año. Según el servidor va rellenando, la fila se ordena mejor sola.
+ */
+export function ordenDestacadaSQL(prefijo = ''): string {
+  return (
+    `${prefijo}nota_tmdb IS NULL, ${prefijo}nota_tmdb DESC,` +
+    ` ${prefijo}year IS NULL, ${prefijo}year DESC, ${prefijo}added IS NULL, ${prefijo}added DESC`
+  );
+}
+
+export function filtroDestacadaSQL(prefijo = ''): string {
+  return `${prefijo}sort_title NOT LIKE '%screening%'`;
+}
+
+/**
+ * Lo que más se está viendo, según TMDb.
+ *
+ * Su popularidad es un número que ellos calculan con las visitas y las
+ * búsquedas de su web, y es lo único que tenemos que mide **el mundo de
+ * fuera**: ni el panel ni nosotros sabemos qué está de moda esta semana.
+ *
+ * Lo que se guarda es la foto del día en que se preguntó, no un dato vivo: se
+ * refresca cuando se vuelva a pasar por esa ficha, no solo.
+ */
+export function ordenPopularSQL(prefijo = ''): string {
+  return `${prefijo}popularidad DESC, ${prefijo}year IS NULL, ${prefijo}year DESC`;
+}
+
+export function filtroPopularSQL(prefijo = ''): string {
+  return `${prefijo}popularidad IS NOT NULL AND ${prefijo}sort_title NOT LIKE '%screening%'`;
+}

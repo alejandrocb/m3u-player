@@ -40,6 +40,25 @@ test('parseName no confunde un número del título con el año', () => {
   assert.equal(parseName('Blade Runner 2049 (2017)').year, 2017);
 });
 
+test('las abreviaturas con puntos son la misma película que sin ellos', () => {
+  /*
+    "V.O.S.E." es lo mismo que "VOSE", pero los puntos rompen el patrón de
+    etiquetas y el título se quedaba con ellos dentro. Como la identidad de una
+    película es su título más el año, en la biblioteca salían dos: *La captura*
+    y *La captura V.O.S.E.*.
+  */
+  assert.equal(parseName('La captura V.O.S.E.').title, 'La captura');
+  assert.deepEqual(parseName('La captura V.O.S.E.').tags, ['vose']);
+  assert.equal(parseName('La captura VOSE').title, 'La captura');
+
+  // Y las siglas se unifican, que el proveedor las escribe de las dos formas.
+  assert.equal(parseName('S.W.A.T.').title, 'SWAT');
+
+  // Sin tocar los títulos que llevan puntuación de verdad.
+  assert.equal(parseName('K-PAX: Un universo aparte').title, 'K-PAX: Un universo aparte');
+  assert.equal(parseName('Wall-E').title, 'Wall-E');
+});
+
 test('qualityRank ordena de mejor a peor', () => {
   assert.ok(qualityRank('4K') > qualityRank('FHD'));
   assert.ok(qualityRank('FHD') > qualityRank('HD'));

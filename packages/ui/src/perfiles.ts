@@ -25,6 +25,14 @@ export interface Perfil {
   nombre: string;
   /** Color de la ficha, para distinguirlos de un vistazo. */
   color: string;
+  /**
+   * Cuál de los retratos que trae la aplicación se ha elegido.
+   *
+   * Vacío es "ninguno": entonces el círculo lleva la inicial, que es como
+   * empiezan todos. Lo que se guarda es el nombre del retrato y no una
+   * imagen, así que viaja entre aparatos como cualquier otro dato del perfil.
+   */
+  avatar: string;
   creado: string;
 }
 
@@ -36,6 +44,52 @@ export interface Avance {
   segundos: number;
   duracion: number;
   visto: string;
+}
+
+/**
+ * Lo que este perfil está viendo, y dónde.
+ *
+ * Un perfil es una persona, y una persona no ve dos cosas a la vez: cuando
+ * empieza algo en un aparato, lo que estuviera sonando en otro se para. Para
+ * eso hace falta que los aparatos sepan quién está reproduciendo, y viaja por
+ * donde ya viaja todo lo del perfil.
+ */
+export interface Reproduccion {
+  /**
+   * **El identificador del aparato**, no su nombre.
+   *
+   * Es lo que decide si el anuncio es de aquí o de otro sitio, y por eso no
+   * puede ser el nombre: el nombre lo pone quien aprueba el aparato en la web
+   * y un aparato emparejado antes de que esto existiera no lo tiene. Con dos
+   * aparatos sin nombre, los dos se creerían el que está sonando y no se
+   * callaría ninguno.
+   */
+  aparato: string;
+  /** Cómo se llama en la casa, para poder decirlo: "TV Salón". */
+  nombre: string;
+  titulo: string;
+  /** Cuándo empezó, en ISO. Desempata dos anuncios casi simultáneos. */
+  desde: string;
+}
+
+/** La clave con la que se guarda en los ajustes del perfil. */
+export const CLAVE_REPRODUCCION = 'reproduciendo';
+
+/** Lee un anuncio guardado, que puede venir de otro aparato o estar vacío. */
+export function reproduccionDesde(valor: string | null | undefined): Reproduccion | null {
+  if (!valor) return null;
+  try {
+    const leido = JSON.parse(valor) as Partial<Reproduccion>;
+    if (!leido.aparato || !leido.desde) return null;
+    return {
+      aparato: leido.aparato,
+      nombre: leido.nombre || 'otro aparato',
+      titulo: leido.titulo ?? '',
+      desde: leido.desde,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export interface Favorito {
@@ -62,12 +116,47 @@ export interface AlmacenPerfiles {
    * distingue a cuatro personas de un vistazo, que es para lo que sirve.
    */
   recolorear(id: string, color: string): Promise<void>;
+  /** Le pone uno de los retratos de la aplicación, o ninguno con ''. */
+  ponerRetrato(id: string, avatar: string): Promise<void>;
   borrar(id: string): Promise<void>;
+  /**
+   * Tira lo local para adoptar lo de la casa. **Borra de verdad.**
+   *
+   * Es la única excepción a la regla de no borrar nunca, y por eso está
+   * aparte de `borrar`: no es una baja que haya que contarle a nadie —eso
+   * enterraría los perfiles de la casa, que llevan el mismo identificador—,
+   * es este aparato olvidando lo suyo antes de traerse el estado del grupo.
+   *
+   * Se hace al emparejar, y solo entonces: los perfiles son de la casa, así
+   * que el que se hubiera creado el aparato por su cuenta sobra en cuanto
+   * entra en una.
+   */
+  vaciarLoLocal(): Promise<void>;
 
   /** Guarda por dónde va. Se llama cada pocos segundos mientras se reproduce. */
   anotarAvance(perfilId: string, avance: Avance): Promise<void>;
   /** Lo empezado y sin terminar, de lo más reciente a lo más viejo. */
   seguirViendo(perfilId: string, limite?: number): Promise<Avance[]>;
+  /**
+   * Las películas que este perfil ya se ha visto enteras.
+   *
+   * Va aparte de `seguirViendo` porque aquello devuelve **lo más reciente** y
+   * poco: una película vista hace dos meses no entra en esos cuarenta avances,
+   * y seguía saliendo en "Novedades" como si fuera nueva. Aquí no hay límite,
+   * pero tampoco hace falta traerse nada gordo: son identificadores.
+   *
+   * Solo películas. En una serie, terminar un capítulo no es terminar la
+   * serie, y para eso está el relevo al siguiente.
+   */
+  vistas(perfilId: string): Promise<string[]>;
+  /**
+   * Por dónde va este perfil en cada serie que haya empezado, sin límite.
+   *
+   * Una por serie y la más reciente de cada una. Sin límite por lo mismo que
+   * `vistas`: una serie que se terminó hace medio año no está entre los
+   * últimos avances, y es justo de la que interesa saber si han sacado más.
+   */
+  seriesEmpezadas(perfilId: string): Promise<SerieEmpezada[]>;
   /** Por dónde iba una cosa concreta, si es que se empezó. */
   avanceDe(perfilId: string, clase: ClaseMedio, itemId: string): Promise<Avance | null>;
   /**
@@ -80,9 +169,47 @@ export interface AlmacenPerfiles {
   avancesDe(perfilId: string, medios: Array<{ clase: ClaseMedio; id: string }>): Promise<Record<string, number>>;
   olvidarAvance(perfilId: string, clase: ClaseMedio, itemId: string): Promise<void>;
 
+  /**
+   * Anuncia lo que este perfil está viendo aquí, o lo borra al parar.
+   *
+   * Se guarda como un ajuste más del perfil, así que **viaja con la
+   * sincronización** sin ninguna tubería nueva: el aparato que reciba un
+   * anuncio de otro sabrá que le toca callarse.
+   */
+  anunciarReproduccion(perfilId: string, reproduccion: { nombre: string; titulo: string } | null): Promise<void>;
+  /**
+   * Lo último que se anunció para este perfil, venga de donde venga.
+   *
+   * `propia` dice si lo escribió este mismo aparato, que es lo único que hay
+   * que mirar para saber si toca callarse: el almacén conoce su identificador
+   * y quien pinta la pantalla, no.
+   */
+  reproduccion(perfilId: string): Promise<(Reproduccion & { propia: boolean }) | null>;
+
+  /**
+   * Apunta que este perfil ha visto algo de estas categorías.
+   *
+   * Se cuentan **reproducciones**: mirar una carátula no es verla. Es lo que
+   * ordena las filas del inicio, y viaja con el perfil, así que lo que ves en
+   * la tele ordena también el inicio de la tablet.
+   */
+  anotarUso(perfilId: string, claves: string[]): Promise<void>;
+  /** Cuántas veces ha reproducido este perfil de cada categoría. */
+  afinidad(perfilId: string): Promise<Record<string, number>>;
+
   /** Preferencias del perfil: columnas de la rejilla, orden... */
   ajustes(perfilId: string): Promise<Ajustes>;
   guardarAjuste(perfilId: string, clave: keyof Ajustes, valor: string): Promise<void>;
+  /**
+   * Un ajuste suelto del perfil, de los que no caben en `Ajustes`.
+   *
+   * Es el mismo cajón —`profile_setting`, clave y valor— y viaja igual con la
+   * sincronización. Lo usa el reproductor para recordar el audio y los
+   * subtítulos de cada serie, que son tantas claves como series y no una lista
+   * fija.
+   */
+  preferencia(perfilId: string, clave: string): Promise<string | null>;
+  guardarPreferencia(perfilId: string, clave: string, valor: string): Promise<void>;
 
   favoritos(perfilId: string): Promise<Favorito[]>;
   marcarFavorito(perfilId: string, favorito: Favorito): Promise<void>;
@@ -108,11 +235,28 @@ export interface AlmacenPerfiles {
  * Va por perfil y no por aparato: en la misma tablet, a uno le caben seis
  * carátulas por fila y otro las quiere grandes.
  */
+/** Por dónde va un perfil en una serie. */
+export interface SerieEmpezada {
+  serieId: string;
+  /** La clave del último capítulo tocado, para saber si queda alguno después. */
+  ultimaClave: string;
+  /** Cuándo fue, en ISO. Se compara con lo que diga el catálogo de la serie. */
+  cuando: string;
+}
+
 export interface Ajustes {
   /** Carátulas por fila en Películas y Series. */
   columnas: number;
   /** Cómo se ordenan: alfabéticamente, por nota o por lo último que entró. */
   orden: Orden;
+  /**
+   * Encadenar con el episodio siguiente al terminar uno.
+   *
+   * Es de cada persona y no de la casa: hay a quien le gusta que siga solo y
+   * hay a quien le parece que le roban la noche. Por eso es un ajuste del
+   * perfil, que además viaja con la sincronización.
+   */
+  continua: boolean;
 }
 
 /** Los criterios de orden admitidos, para descartar lo que venga guardado mal. */
@@ -121,7 +265,11 @@ const ORDENES: Orden[] = ['titulo', 'valoracion', 'reciente'];
 /** Cuántas columnas se admiten: menos de tres no aprovecha, más de ocho no se lee. */
 export const COLUMNAS_POSIBLES = [3, 4, 5, 6, 8] as const;
 
-export const AJUSTES_POR_DEFECTO: Ajustes = { columnas: 4, orden: 'titulo' };
+/**
+ * Encadenada por defecto, que es lo que hacen todos y lo que uno espera de una
+ * serie. Se apaga desde el menú del perfil.
+ */
+export const AJUSTES_POR_DEFECTO: Ajustes = { columnas: 4, orden: 'titulo', continua: true };
 
 /** Interpreta lo guardado, que siempre es texto, y descarta lo que no vale. */
 export function ajustesDesde(guardado: Record<string, string>): Ajustes {
@@ -131,6 +279,8 @@ export function ajustesDesde(guardado: Record<string, string>): Ajustes {
       ? columnas
       : AJUSTES_POR_DEFECTO.columnas,
     orden: ORDENES.includes(guardado.orden as Orden) ? (guardado.orden as Orden) : AJUSTES_POR_DEFECTO.orden,
+    // Lo guardado es texto: solo un "no" explícito la apaga.
+    continua: guardado.continua === undefined ? AJUSTES_POR_DEFECTO.continua : guardado.continua !== 'no',
   };
 }
 
@@ -138,10 +288,20 @@ export function ajustesDesde(guardado: Record<string, string>): Ajustes {
 export const COLORES_PERFIL = ['#35d07f', '#4aa3f0', '#f0a24a', '#c86cf0', '#f05a5a'] as const;
 
 /**
- * Se considera terminado a partir del 95 %: los últimos minutos son títulos de
- * crédito, y dejarlo en "seguir viendo" al 98 % es molesto.
+ * A partir de dónde se da algo por visto.
+ *
+ * Los últimos minutos son títulos de crédito, y dejar algo en "seguir viendo"
+ * al 98 % es molesto. **Una película se da por vista antes que un capítulo**:
+ * los créditos de una película son largos, y encadenar el capítulo siguiente
+ * exige más certeza de que el anterior ha terminado de verdad.
  */
-export const FIN_PROPORCION = 0.95;
+export const FIN_PELICULA = 0.9;
+export const FIN_EPISODIO = 0.95;
+
+/** El umbral que le toca a cada clase. */
+export function finDe(clase: ClaseMedio): number {
+  return clase === 'pelicula' ? FIN_PELICULA : FIN_EPISODIO;
+}
 
 /** Lo que falta por ver, entre 0 y 1. Sirve para pintar la barrita de avance. */
 export function proporcionVista(avance: Avance): number {
@@ -151,7 +311,7 @@ export function proporcionVista(avance: Avance): number {
 
 /** ¿Se puede dar por visto? */
 export function estaTerminado(avance: Avance): boolean {
-  return proporcionVista(avance) >= FIN_PROPORCION;
+  return proporcionVista(avance) >= finDe(avance.clase);
 }
 
 /**

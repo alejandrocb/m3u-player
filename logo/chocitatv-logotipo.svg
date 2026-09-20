@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 100" width="1260" height="300" role="img" aria-label="ChocitaTV">
+  <title>ChocitaTV (marca y nombre)</title>
+  <!--
+    La marca con el nombre al lado, para cabeceras y para el banner.
+
+    El nombre va como texto y no como trazados: así se puede cambiar y sigue
+    siendo legible en el fichero. Al exportar a PNG se usa Segoe UI Bold, que
+    es la que hay en el equipo; en un navegador cualquiera de la pila hace el
+    mismo papel. Si algún día hace falta un PNG idéntico en otra máquina, lo
+    suyo es convertir el texto a trazados con la fuente elegida.
+  -->
+  <polygon points="50,3 97,48 3,48" fill="#26ae69"/>
+  <path d="M17 44 H83 V89 a6 6 0 0 1 -6 6 H23 a6 6 0 0 1 -6 -6 Z" fill="#35d07f"/>
+  <path d="M35 71 a15 15 0 0 1 30 0 V95 H35 Z" fill="#f0c14a"/>
+  <polygon points="43,67 43,87 61,77" fill="#0b0b0c"/>
+
+  <text x="118" y="50" dominant-baseline="central"
+        font-family="Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif"
+        font-size="42" font-weight="700" fill="#ffffff">Chocita<tspan fill="#35d07f">TV</tspan></text>
+</svg>

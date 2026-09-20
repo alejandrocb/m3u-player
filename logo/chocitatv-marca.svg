@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512" role="img" aria-label="ChocitaTV">
+  <title>ChocitaTV (marca sin fondo)</title>
+  <!-- La misma choza, sin el cuadrado de fondo: para ponerla sobre lo que sea. -->
+  <polygon points="50,3 97,48 3,48" fill="#26ae69"/>
+  <path d="M17 44 H83 V89 a6 6 0 0 1 -6 6 H23 a6 6 0 0 1 -6 -6 Z" fill="#35d07f"/>
+  <path d="M35 71 a15 15 0 0 1 30 0 V95 H35 Z" fill="#f0c14a"/>
+  <!--
+    El ▶ va del color del fondo sobre el que se ponga. En negro queda como en
+    el icono; sobre claro, cámbialo por el color de ese fondo.
+  -->
+  <polygon points="43,67 43,87 61,77" fill="#0b0b0c"/>
+</svg>

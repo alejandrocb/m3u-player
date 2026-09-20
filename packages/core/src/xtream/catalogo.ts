@@ -24,6 +24,9 @@ import type {
   Series,
   Variant,
 } from '../models.ts';
+import { idDeCanalPorNombre, idDeCanalPorTvg } from '../canales.ts';
+import { duplicadasSinAnio } from '../duplicados.ts';
+import type { ConAnio } from '../duplicados.ts';
 import { cleanGroup, parseChannelName, parseName, qualityRank, slug } from '../normalize.ts';
 import { anioDeFecha, epoch, segundosDeEpisodio, tituloDeEpisodio } from '../episodios.ts';
 import { ordenarPor } from '../ordenar.ts';
@@ -118,6 +121,22 @@ export async function construirCatalogo(
     [...grupos.entries()].map(([name, ids]) => ({ name, channelIds: [...ids] })),
     (grupo) => grupo.name,
   );
+  /*
+    El proveedor manda la misma película escrita de las dos formas —con el año
+    y sin él— y salían dos fichas idénticas, una al lado de la otra. Se juntan
+    antes de ordenar, y solo cuando no hay duda de cuál es cuál.
+  */
+  juntarSueltas(peliculas);
+  juntarSueltas(series, (destino, suelta) => {
+    // Los identificadores del panel son los que luego piden las temporadas:
+    // si se pierden, la serie juntada se queda sin episodios.
+    destino.panelIds ??= [];
+    for (const panelId of suelta.panelIds ?? []) {
+      if (!destino.panelIds.includes(panelId)) destino.panelIds.push(panelId);
+    }
+    if (!destino.genre && suelta.genre) destino.genre = suelta.genre;
+  });
+
   const listaPeliculas = ordenarPor([...peliculas.values()], (pelicula) => pelicula.title);
   const listaSeries = ordenarPor([...series.values()], (serie) => serie.title);
 
@@ -174,7 +193,7 @@ function anadirCanal(
   // Las categorías del panel llevan la misma decoración que los grupos del
   // M3U ("== NOTICIAS"), puesta para forzar el orden alfabético.
   const grupo = cleanGroup(categoria.category_name);
-  const id = tvgId ? `tvg:${tvgId}` : `name:${slug(name)}@${slug(grupo)}`;
+  const id = tvgId ? idDeCanalPorTvg(tvgId) : idDeCanalPorNombre(name, grupo);
 
   let canal = canales.get(id);
   if (!canal) {
@@ -200,6 +219,38 @@ function anadirCanal(
     grupos.set(grupo, bucket);
   }
   bucket.add(id);
+}
+
+/**
+ * Junta en una las fichas que son la misma con y sin año.
+ *
+ * Lo común —carátula, nota, categorías, fecha de alta— se junta aquí; lo que
+ * cambia entre películas y series lo añade quien llama.
+ */
+function juntarSueltas<T extends ConAnio & Comunes>(
+  fichas: Map<string, T>,
+  ademas?: (destino: T, suelta: T) => void,
+): void {
+  for (const { suelta, destino } of duplicadasSinAnio(fichas.values())) {
+    if (!destino.logo && suelta.logo) destino.logo = suelta.logo;
+    if (destino.rating === null && suelta.rating !== null) destino.rating = suelta.rating;
+    // La fecha de alta más reciente: es la que decide en "recién llegadas".
+    if (suelta.added !== null && (destino.added === null || suelta.added > destino.added)) {
+      destino.added = suelta.added;
+    }
+    for (const grupo of suelta.groups) {
+      if (!destino.groups.includes(grupo)) destino.groups.push(grupo);
+    }
+    ademas?.(destino, suelta);
+    fichas.delete(suelta.id);
+  }
+}
+
+interface Comunes {
+  logo: string | null;
+  rating: number | null;
+  added: number | null;
+  groups: string[];
 }
 
 function anadirPelicula(
@@ -299,7 +350,13 @@ function anadirSerie(series: Map<string, Series>, ficha: XtreamSeries, categoria
 export async function fichaDeSerie(
   cliente: XtreamClient,
   panelIds: number[],
-): Promise<{ sinopsis: string | null; reparto: string | null; fondo: string | null; genero: string | null } | null> {
+): Promise<{
+  sinopsis: string | null;
+  reparto: string | null;
+  fondo: string | null;
+  genero: string | null;
+  trailer: string | null;
+} | null> {
   for (const panelId of panelIds) {
     let info;
     try {
@@ -313,8 +370,11 @@ export async function fichaDeSerie(
     const reparto = info.cast?.trim() || null;
     const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
     const genero = info.genre?.trim() || null;
+    const trailer = info.youtube_trailer?.trim() || null;
 
-    if (sinopsis || reparto || fondo || genero) return { sinopsis, reparto, fondo, genero };
+    if (sinopsis || reparto || fondo || genero || trailer) {
+      return { sinopsis, reparto, fondo, genero, trailer };
+    }
   }
   return null;
 }

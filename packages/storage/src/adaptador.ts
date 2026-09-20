@@ -27,6 +27,7 @@ import type {
 } from '@m3u/ui';
 
 import type { LibraryStore, OwnerKind } from './store.ts';
+import { leerClaveDeEpisodio } from '@m3u/core';
 
 /** Traduce las clases que usa la interfaz a las del almacén. */
 const DUENO: Record<'canal' | 'pelicula' | 'episodio', OwnerKind> = {
@@ -36,14 +37,27 @@ const DUENO: Record<'canal' | 'pelicula' | 'episodio', OwnerKind> = {
 };
 
 /** El criterio de orden que pide la interfaz, en el idioma del almacén. */
-function ordenDe(pagina: Pagina): { sort?: 'rating' | 'added' | 'recomendada' } {
+function ordenDe(pagina: Pagina): {
+  sort?: 'rating' | 'added' | 'recomendada' | 'destacada' | 'mejor' | 'popular';
+} {
   if (pagina.orden === 'recomendada') return { sort: 'recomendada' };
+  if (pagina.orden === 'destacada') return { sort: 'destacada' };
+  if (pagina.orden === 'mejor') return { sort: 'mejor' };
+  if (pagina.orden === 'popular') return { sort: 'popular' };
   if (pagina.orden === 'valoracion') return { sort: 'rating' };
   if (pagina.orden === 'reciente') return { sort: 'added' };
   return {};
 }
 
 export function bibliotecaDesde(store: LibraryStore): Biblioteca {
+  /** De la clave de un episodio al número de fila con el que se guardó. */
+  const episodioDeClave = (clave: string): string | null => {
+    const donde = leerClaveDeEpisodio(clave);
+    if (!donde) return null;
+    const episodio = store.episodeAt(donde.serieId, donde.temporada, donde.numero);
+    return episodio ? String(episodio.id) : null;
+  };
+
   return {
     async grupos(): Promise<GrupoFicha[]> {
       return store.groups().map((grupo) => ({ nombre: grupo.name, canales: grupo.channels }));
@@ -73,6 +87,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           limit: pagina.limite,
           offset: pagina.desde,
           ...(pagina.grupo ? { group: pagina.grupo } : {}),
+          ...(pagina.tema ? { theme: pagina.tema } : {}),
           ...ordenDe(pagina),
         })
         .map((pelicula) => ({
@@ -91,6 +106,7 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
           limit: pagina.limite,
           offset: pagina.desde,
           ...(pagina.grupo ? { group: pagina.grupo } : {}),
+          ...(pagina.tema ? { theme: pagina.tema } : {}),
           ...ordenDe(pagina),
         })
         .map((serie) => ({
@@ -136,16 +152,32 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       }));
     },
 
-    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
-      return store.episodesById(ids).map((episodio) => ({
-        id: episodio.id,
-        serieId: episodio.seriesId,
-        serieTitulo: episodio.seriesTitle,
-        serieLogo: episodio.seriesLogo,
-        temporada: episodio.season,
-        numero: episodio.episode,
-        titulo: episodio.title,
-      }));
+    async episodioSiguiente(): Promise<EpisodioDeSerieFicha | null> {
+      // El escritorio es un prototipo y no tiene "seguir viendo" por series:
+      // cuando lo tenga, esto será la misma consulta que en Android.
+      return null;
+    },
+
+    async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
+      const fichas: EpisodioDeSerieFicha[] = [];
+      for (const clave of claves) {
+        const donde = leerClaveDeEpisodio(clave);
+        if (!donde) continue;
+
+        const episodio = store.episodeAt(donde.serieId, donde.temporada, donde.numero);
+        if (!episodio) continue;
+
+        fichas.push({
+          clave,
+          serieId: episodio.seriesId,
+          serieTitulo: episodio.seriesTitle,
+          serieLogo: episodio.seriesLogo,
+          temporada: episodio.season,
+          numero: episodio.episode,
+          titulo: episodio.title,
+        });
+      }
+      return fichas;
     },
 
     async detalleDePelicula(): Promise<FichaLarga | null> {
@@ -154,8 +186,13 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
       return null;
     },
 
-    async guardarGeneros(): Promise<void> {
+    async guardarFichas(): Promise<void> {
       // El escritorio no habla con el servidor de la casa todavía.
+    },
+
+    async gruposDe(): Promise<string[]> {
+      // El escritorio todavía no ordena el inicio por lo que ves.
+      return [];
     },
 
     async detalleDeSerie(): Promise<FichaLarga | null> {
@@ -180,6 +217,13 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
         nombre: canal.name,
         grupo: canal.group,
         logo: canal.logo,
+      }));
+    },
+
+    async temas(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
+      return store.themes(tipo === 'pelicula' ? 'movie' : 'series').map((tema) => ({
+        nombre: tema.name,
+        canales: tema.items,
       }));
     },
 
@@ -218,7 +262,12 @@ export function bibliotecaDesde(store: LibraryStore): Biblioteca {
     },
 
     async variantes(clase, id): Promise<Variante[]> {
-      return store.variants(DUENO[clase], id).map((variante) => ({
+      // En un episodio lo que llega es su clave; las variantes se guardan
+      // contra el número de fila, así que hay que traducir.
+      const dueno = clase === 'episodio' ? episodioDeClave(id) : id;
+      if (dueno === null) return [];
+
+      return store.variants(DUENO[clase], dueno).map((variante) => ({
         url: variante.url,
         calidad: variante.quality,
       }));

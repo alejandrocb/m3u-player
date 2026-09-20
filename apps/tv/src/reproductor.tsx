@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,13 +25,34 @@ import {
 import Video from 'react-native-video';
 import type { VideoRef } from 'react-native-video';
 
-import type { AlmacenPerfiles, Biblioteca, ClaseMedio, Perfil, Programacion, Reproducible } from '@m3u/ui';
-import { reloj, vaAnotado } from '@m3u/ui';
-import { avanceDePrograma, programaActual } from '@m3u/core';
+import type {
+  AlmacenPerfiles,
+  Arbitro,
+  Biblioteca,
+  ClaseMedio,
+  Perfil,
+  Programacion,
+  PistasElegidas,
+  Reproducible,
+  Uso,
+} from '@m3u/ui';
+import {
+  FIN_EPISODIO,
+  SIN_SUBTITULOS,
+  clavePistas,
+  comoRecordar,
+  escribirPistas,
+  esLimiteDeConexiones,
+  leerPistas,
+  pistaQueToca,
+  reloj,
+  vaAnotado,
+} from '@m3u/ui';
+import { avanceDePrograma, leerClaveDeEpisodio, programaActual } from '@m3u/core';
 import type { Programa } from '@m3u/core';
 
-import { hora } from './parrilla';
-import type { Caja } from './parrilla';
+import { hora } from './reloj';
+import type { Caja } from './reloj';
 import { FONDO, TINTA_SUAVE, VERDE } from './tema';
 
 import {
@@ -46,6 +68,28 @@ import {
 
 /** Cuánto tarda en esconderse el rótulo si no se toca nada. */
 const OCULTAR_MS = 4000;
+/**
+ * Cuánto salta cada pulsación con el foco en la barra de tiempo.
+ *
+ * Medio minuto de entrada —el salto fino, de diez segundos, se queda en el
+ * círculo de reproducir— y, manteniendo pulsado, hasta cinco minutos, que
+ * cruza un capítulo en cuatro pulsaciones. Los escalones son a ojo pero el
+ * orden importa: el primero tiene que ser cómodo y el último, rápido.
+ */
+const SALTOS_LARGOS_S = [30, 60, 120, 300];
+
+/** Cuánto puede tardar la siguiente pulsación y seguir contando como racha. */
+const RACHA_MS = 500;
+
+/**
+ * A partir de cuántos segundos se anota lo visto.
+ *
+ * Abrir algo para ver qué es y salir no debería llenar el "seguir viendo". Es
+ * el mismo mínimo que usa `vaAnotado` para decidir si merece la pena ofrecer
+ * reanudar.
+ */
+const MINIMO_ANOTABLE_S = 30;
+
 /** Salto de las flechas y de los botones de avance. */
 const SALTO_S = 10;
 /** Cada cuánto se apunta por dónde va. Escribir en cada fotograma sobra. */
@@ -102,6 +146,37 @@ interface Props {
    */
   caja?: Caja | null;
   /**
+   * Quién reparte las conexiones del panel.
+   *
+   * Sin él, el reproductor abre y ya está: es lo que hacía hasta ahora, y por
+   * eso un 403 salía como fallo. Con él, se pide la ranura antes de abrir y se
+   * espera cuando la casa está al tope.
+   */
+  arbitro?: Arbitro;
+  /**
+   * El fichero ya bajado a este aparato, si lo hay.
+   *
+   * Cuando está, se reproduce de aquí y **no se toca el panel**: ni una
+   * petición, ni una ranura. Es lo que hace que ver algo bajado no le quite la
+   * conexión a quien esté viendo otra cosa en la casa.
+   */
+  ficheroLocal?: string | null;
+  /**
+   * Qué hacer con lo que el árbitro echa para dejar sitio a esto.
+   *
+   * El árbitro no conoce ni descargas ni reproductores: dice a quién hay que
+   * parar y quien pide es responsable de pararlo.
+   */
+  onExpulsar?: (id: string) => void;
+  /**
+   * Encadenar con el siguiente al terminar.
+   *
+   * Es un ajuste del perfil, no del aparato: lo decide quien está viendo. Solo
+   * aplica a lo que tiene cola —los capítulos de una serie—; una película no
+   * encadena con nada.
+   */
+  continua?: boolean;
+  /**
    * El mando está sobre la vista previa.
    *
    * El resalte lo dibuja el reproductor y no la columna: el vídeo va por
@@ -150,12 +225,25 @@ export function mensajeDeError(fallo: unknown): string {
 interface Pista {
   indice: number;
   nombre: string;
+  /**
+   * El idioma que declare el fichero, si lo declara.
+   *
+   * Es lo que se recuerda de una serie a otra: el **número** de pista depende
+   * de cómo empaquetara el fichero quien lo codificó y cambia de un capítulo a
+   * otro, así que guardarlo acabaría poniendo el comentario del director.
+   */
+  idioma?: string | null;
 }
 
 /** Nombre presentable de una pista: idioma, título, o su número. */
 function nombreDePista(pista: { language?: string; title?: string }, indice: number): string {
   const partes = [pista.title, pista.language].filter(Boolean);
   return partes.length > 0 ? partes.join(' · ') : `Pista ${indice + 1}`;
+}
+
+/** Una pista tal como la da el reproductor, con lo que aquí hace falta. */
+function comoPista(pista: { language?: string; title?: string }, indice: number): Pista {
+  return { indice, nombre: nombreDePista(pista, indice), idioma: pista.language ?? null };
 }
 
 export function Reproductor({
@@ -166,6 +254,10 @@ export function Reproductor({
   cola,
   onCambiar,
   programacion,
+  arbitro,
+  ficheroLocal,
+  onExpulsar,
+  continua = false,
   caja,
   resaltado,
   onAbrir,
@@ -178,6 +270,26 @@ export function Reproductor({
   const [url, setUrl] = useState<string | null>(null);
   const [calidad, setCalidad] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Segundos que faltan para volver a intentarlo.
+   *
+   * No es un error: es que las conexiones de la casa están ocupadas —por otro
+   * aparato, o por lo que este mismo acaba de cerrar, que el panel tarda medio
+   * minuto en soltar—. Con un mensaje de fallo, uno cierra y vuelve a entrar;
+   * con una cuenta atrás, espera.
+   */
+  const [espera, setEspera] = useState<number | null>(null);
+  /** Sube en cada reintento: es lo que rehace la petición y remonta el vídeo. */
+  const [intento, setIntento] = useState(0);
+  /**
+   * Cuándo se puso lo que está sonando.
+   *
+   * En directo **no hay posición**: ExoPlayer devuelve `TIME_UNSET` —el
+   * `Long.MIN_VALUE`, que llega aquí como −9,2·10¹⁸— porque un flujo en
+   * directo no empieza ni acaba. Así que "cuánto llevas" se mide con el reloj,
+   * desde que se abrió el canal.
+   */
+  const arrancado = useRef(Date.now());
 
   const [pausado, setPausado] = useState(false);
   const [tiempo, setTiempo] = useState(0);
@@ -194,6 +306,65 @@ export function Reproductor({
   // -1 es "sin subtítulos", que es como debe empezar.
   const [subtitulo, setSubtitulo] = useState(-1);
   const [panel, setPanel] = useState<'ninguno' | 'audio' | 'subtitulos'>('ninguno');
+  /*
+    Dónde está el mando dentro del reproductor.
+
+    En `video`, las flechas saltan y el OK pausa, que es lo que uno espera con
+    un mando delante de la tele. Bajando se entra en la fila de botones
+    —principio, audio, subtítulos, siguiente—, que hasta ahora **no había
+    forma de alcanzar**: con el dedo se tocan, pero un televisor no tiene dedo.
+    Y con un panel de pistas abierto, el mando es suyo.
+  */
+  /*
+    Dónde está el mando dentro del reproductor, **de arriba abajo y en el orden
+    en que se ven las cosas**: la barra de tiempo, la fila de reproducir y la
+    fila de ajustes.
+
+    El foco entra en `video` —el círculo de reproducir—, que es lo que uno
+    quiere tocar el 90 % de las veces. Desde ahí, arriba lleva a la barra y
+    abajo a los ajustes: cada cosa donde se ve, sin recorridos que aprender.
+  */
+  const [zona, setZona] = useState<'creditos' | 'barra' | 'video' | 'botones' | 'pistas'>('video');
+  /**
+   * Cuántas veces seguidas se ha movido la barra sin soltar.
+   *
+   * Es lo que hace que mantener pulsado corra: cada pulsación salta un minuto,
+   * y al mantener va subiendo hasta diez. Sin esto, cruzar una película de dos
+   * horas serían ciento veinte pulsaciones.
+   */
+  const racha = useRef({ ultimo: 0, veces: 0 });
+
+  /**
+   * Cuánto salta la siguiente pulsación, según lo que se lleve pulsado.
+   *
+   * Un minuto de entrada y, manteniendo, hasta diez. Cada llamada cuenta como
+   * una pulsación: si pasa más de medio segundo entre dos, la racha se rompe y
+   * se vuelve a empezar por el escalón corto.
+   */
+  const saltoDeLaRacha = useCallback((): number => {
+    const ahora = Date.now();
+    const seguida = ahora - racha.current.ultimo < RACHA_MS;
+    racha.current = { ultimo: ahora, veces: seguida ? racha.current.veces + 1 : 0 };
+
+    // Cada cuatro pulsaciones seguidas se sube un escalón: con tres se
+    // disparaba en cuanto uno dejaba el dedo puesto un instante de más.
+    const escalon = Math.min(Math.floor(racha.current.veces / 4), SALTOS_LARGOS_S.length - 1);
+    return SALTOS_LARGOS_S[escalon]!;
+  }, []);
+
+  const [focoBoton, setFocoBoton] = useState(0);
+  const [focoPista, setFocoPista] = useState(0);
+
+  /**
+   * Lo que este perfil eligió la última vez en esta serie.
+   *
+   * Va en una referencia y no en el estado porque no se pinta: solo sirve para
+   * poner la pista en cuanto el fichero dice cuáles trae, que puede ser al
+   * cargar o un rato después.
+   */
+  const recordadas = useRef<PistasElegidas>({ audio: null, subtitulo: null });
+  /** Si ya se aplicó lo recordado a este capítulo: solo se hace una vez. */
+  const aplicadas = useRef({ audio: false, subtitulo: false });
 
   /** Segundo por el que se quedó la última vez, si es que ya lo había visto. */
   const [reanudar, setReanudar] = useState<number | null>(null);
@@ -205,6 +376,80 @@ export function Reproductor({
   const [visible, setVisible] = useState(true);
   const opacidad = useRef(new Animated.Value(1)).current;
   const temporizador = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * La serie a la que pertenece lo que suena, si es un capítulo.
+   *
+   * Las preferencias de pista son **de la serie**: uno ve Friends en inglés y
+   * las noticias en español, y no tendría sentido guardarlo por capítulo.
+   */
+  const serie = medio.clase === 'episodio' ? (leerClaveDeEpisodio(medio.id)?.serieId ?? null) : null;
+
+  useEffect(() => {
+    aplicadas.current = { audio: false, subtitulo: false };
+    recordadas.current = { audio: null, subtitulo: null };
+    if (!serie) return;
+
+    let vigente = true;
+    perfiles
+      .preferencia(perfil.id, clavePistas(serie))
+      .then((guardado) => {
+        if (vigente) recordadas.current = leerPistas(guardado);
+      })
+      .catch(() => {});
+    return () => {
+      vigente = false;
+    };
+  }, [perfiles, perfil.id, serie]);
+
+  /*
+    Y se aplica en cuanto el fichero dice qué pistas trae, que puede ser al
+    cargar o un rato después —en un MKV por HTTP las de subtítulos llegan
+    tarde—. Solo una vez por capítulo: si no, cambiar de pista a mano se
+    desharía sola en el siguiente aviso.
+  */
+  useEffect(() => {
+    if (audios.length === 0 || aplicadas.current.audio) return;
+    const toca = pistaQueToca(audios, recordadas.current.audio);
+    aplicadas.current.audio = true;
+    if (toca) setAudio(toca.indice);
+  }, [audios]);
+
+  useEffect(() => {
+    if (aplicadas.current.subtitulo) return;
+    const querido = recordadas.current.subtitulo;
+    if (!querido) return;
+
+    if (querido === SIN_SUBTITULOS) {
+      aplicadas.current.subtitulo = true;
+      setSubtitulo(-1);
+      return;
+    }
+    if (subtitulos.length === 0) return;
+    const toca = pistaQueToca(subtitulos, querido);
+    aplicadas.current.subtitulo = true;
+    if (toca) setSubtitulo(toca.indice);
+  }, [subtitulos]);
+
+  /** Anota lo que se acaba de elegir, para el resto de la serie. */
+  const recordarPistas = useCallback(
+    (cambio: Partial<PistasElegidas>) => {
+      if (!serie) return;
+      recordadas.current = { ...recordadas.current, ...cambio };
+      void perfiles
+        .guardarPreferencia(perfil.id, clavePistas(serie), escribirPistas(recordadas.current))
+        .catch(() => {});
+    },
+    [perfiles, perfil.id, serie],
+  );
+
+  /*
+    Qué ranura se pide. La vista previa es otra cosa que el reproductor
+    entero: vale menos —se cede antes— y las dos pueden convivir si la cuenta
+    tiene ranuras de sobra.
+  */
+  const idRanura = compacto ? 'previa' : 'reproductor';
+  const usoRanura: Uso = compacto ? 'previa' : 'reproducir';
 
   /** Enseña los controles y programa su desaparición. */
   const despertar = useCallback(() => {
@@ -237,6 +482,16 @@ export function Reproductor({
     setError(null);
     setTiempo(0);
     setTotal(0);
+    /*
+      **Y el punto de reanudar, que es del capítulo que se deja.**
+
+      Sin esto, el siguiente arrancaba por donde iba el anterior: como se
+      encadena al final, el que venía empezaba en los créditos, se daba por
+      terminado en el acto y cargaba el siguiente, y así hasta el infinito.
+      Un capítulo al que se llega desde el anterior empieza por el principio.
+    */
+    setReanudar(null);
+    arrancado.current = Date.now();
 
     perfiles
       .avanceDe(perfil.id, medio.clase as ClaseMedio, medio.id)
@@ -245,6 +500,19 @@ export function Reproductor({
         if (vigente && guardado && vaAnotado(guardado)) setReanudar(guardado.segundos);
       })
       .catch(() => {});
+
+    /*
+      Lo bajado se reproduce del disco y se acabó: sin variantes, sin árbitro y
+      sin panel. Ni siquiera hace falta preguntar por la URL.
+    */
+    if (ficheroLocal) {
+      setCalidad(null);
+      setEspera(null);
+      setUrl(ficheroLocal.startsWith('file://') ? ficheroLocal : `file://${ficheroLocal}`);
+      return () => {
+        vigente = false;
+      };
+    }
 
     biblioteca
       .variantes(medio.clase, medio.id)
@@ -257,6 +525,25 @@ export function Reproductor({
           return;
         }
         setCalidad(mejor.calidad);
+
+        /*
+          La ranura, antes de abrir. Si no la hay, no se intenta siquiera: el
+          panel contestaría 403 y el reproductor lo enseñaría como un fallo
+          suyo, que es lo que confundía.
+        */
+        const permiso = arbitro?.pedir(idRanura, usoRanura, Date.now());
+        if (permiso && !permiso.concedido) {
+          setEspera(Math.max(1, Math.ceil(permiso.esperar / 1000)));
+          return;
+        }
+        /*
+          Y a quien haya echado hay que **pararlo de verdad**. El árbitro solo
+          reparte: si nadie corta la descarga expulsada, se queda bajando y el
+          panel acaba cortando una de las dos conexiones por su cuenta —que es
+          justo el "Download interrupted" que se veía—.
+        */
+        if (permiso?.concedido) for (const echado of permiso.expulsados) onExpulsar?.(echado);
+        setEspera(null);
         setUrl(mejor.url);
       })
       .catch((fallo) => vigente && setError(String(fallo)));
@@ -265,7 +552,69 @@ export function Reproductor({
       vigente = false;
       if (temporizador.current) clearTimeout(temporizador.current);
     };
-  }, [biblioteca, medio]);
+    // `intento` está a propósito: subirlo es lo que rehace la petición.
+  }, [biblioteca, medio, intento, arbitro, idRanura, usoRanura, ficheroLocal, onExpulsar]);
+
+  /*
+    La cuenta atrás del reintento.
+
+    Se cuenta en la pantalla porque esperar sin saber cuánto es lo que hace que
+    uno cierre la aplicación. Al llegar a cero se vuelve a pedir la ranura.
+  */
+  useEffect(() => {
+    if (espera === null) return;
+    if (espera <= 0) {
+      setEspera(null);
+      setIntento((antes) => antes + 1);
+      return;
+    }
+    const reloj = setTimeout(() => setEspera((quedan) => (quedan === null ? null : quedan - 1)), 1000);
+    return () => clearTimeout(reloj);
+  }, [espera]);
+
+  /*
+    En directo, el historial lo lleva un reloj propio.
+
+    `onProgress` **solo avisa una vez** cuando el flujo no tiene posición: llega
+    el primer aviso a los tres segundos y nunca más, porque no hay nada que
+    contar. Con eso, un canal no llegaba jamás al mínimo para anotarse y "seguir
+    viendo" no lo veía por mucho rato que se estuviera con él puesto.
+
+    Lo que se anota es cuánto llevas puesto —medido con el reloj— y sobre todo
+    **cuándo**: es la hora la que decide si el programa que estabas viendo sigue
+    echándose.
+  */
+  useEffect(() => {
+    if (!enDirecto || !url || pausado) return;
+
+    const anotar = (): void => {
+      const segundos = (Date.now() - arrancado.current) / 1000;
+      if (segundos < MINIMO_ANOTABLE_S) return;
+      perfiles
+        .anotarAvance(perfil.id, {
+          clase: 'canal',
+          itemId: medio.id,
+          titulo: medio.titulo,
+          segundos,
+          // Un directo no tiene duración: ni barra, ni "visto del todo".
+          duracion: 0,
+          visto: new Date().toISOString(),
+        })
+        .catch(() => {});
+    };
+
+    const reloj = setInterval(anotar, ANOTAR_CADA_MS);
+    return () => clearInterval(reloj);
+  }, [enDirecto, url, pausado, medio.id, medio.titulo, perfiles, perfil.id]);
+
+  /*
+    Al cerrar, la ranura se suelta **siempre**. Es la mitad que falla en los
+    reproductores comerciales: dejan la conexión colgada y la cuenta se queda
+    bloqueada hasta que el panel la caduca por su cuenta.
+  */
+  useEffect(() => {
+    return () => arbitro?.soltar(idRanura, Date.now());
+  }, [arbitro, idRanura]);
 
   // Qué echan en el canal, para poner el programa donde iría la duración.
   useEffect(() => {
@@ -309,6 +658,20 @@ export function Reproductor({
   const anterior = vecino(-1);
   const siguiente = vecino(1);
 
+  /*
+    Los créditos, sin más dato que la duración.
+
+    No hay quien nos diga dónde empiezan de verdad —el panel no marca
+    segmentos y los ficheros habría que analizarlos—, así que se toma el mismo
+    umbral con el que se da un capítulo por visto: a partir de ahí, lo que
+    queda son títulos. En un capítulo de 50 minutos son los últimos dos y
+    medio, y el error es siempre por defecto: el botón aparece un poco tarde,
+    nunca en mitad de la escena.
+
+    Solo con algo detrás que poner: sin siguiente no hay botón que ofrecer.
+  */
+  const enCreditos = !enDirecto && Boolean(siguiente) && total > 0 && tiempo >= total * FIN_EPISODIO;
+
   const saltar = useCallback(
     (segundos: number) => {
       const destino = Math.max(0, Math.min(total || Number.MAX_SAFE_INTEGER, tiempo + segundos));
@@ -322,34 +685,285 @@ export function Reproductor({
     [despertar, tiempo, total],
   );
 
+  /*
+    La fila de abajo, armada como datos y no como JSX suelto.
+
+    Es lo que permite que el mando la recorra: para saber cuál está enfocado y
+    activarlo desde el manejador de teclas hace falta una lista, no una
+    sucesión de etiquetas.
+  */
+  const secundarios: Array<{
+    clave: string;
+    etiqueta: string;
+    activo?: boolean;
+    onPress: () => void;
+    onLongPress?: () => void;
+  }> = [
+    ...(enDirecto
+      ? []
+      : [
+          {
+            clave: 'principio',
+            etiqueta: 'Desde el principio',
+            onPress: () => saltar(-tiempo),
+          },
+        ]),
+    ...(audios.length > 1
+      ? [
+          {
+            clave: 'audio',
+            etiqueta: 'Audio',
+            activo: panel === 'audio',
+            onPress: () => setPanel((abierto) => (abierto === 'audio' ? 'ninguno' : 'audio')),
+          },
+        ]
+      : []),
+    ...(subtitulos.length > 0
+      ? [
+          {
+            clave: 'subtitulos',
+            etiqueta: 'Subtítulos',
+            activo: panel === 'subtitulos' || subtitulo >= 0,
+            onPress: () => setPanel((abierto) => (abierto === 'subtitulos' ? 'ninguno' : 'subtitulos')),
+          },
+        ]
+      : []),
+    ...(!enDirecto && siguiente
+      ? [{ clave: 'siguiente', etiqueta: 'Siguiente', onPress: () => onCambiar?.(siguiente) }]
+      : []),
+  ];
+
+  /** Las pistas del panel abierto, para poder recorrerlas con el mando. */
+  const pistas: Array<{ etiqueta: string; onPress: () => void }> =
+    panel === 'ninguno'
+      ? []
+      : [
+          ...(panel === 'subtitulos'
+            ? [
+                {
+                  etiqueta: 'Sin subtítulos',
+                  onPress: () => {
+                    setSubtitulo(-1);
+                    // Apagarlos es una elección como otra: se recuerda, o
+                    // volverían a salir en el capítulo siguiente.
+                    recordarPistas({ subtitulo: SIN_SUBTITULOS });
+                    setPanel('ninguno');
+                    setZona('botones');
+                  },
+                },
+              ]
+            : []),
+          ...(panel === 'audio' ? audios : subtitulos).map((pista) => ({
+            etiqueta: pista.nombre,
+            onPress: () => {
+              if (panel === 'audio') {
+                setAudio(pista.indice);
+                recordarPistas({ audio: comoRecordar(pista) });
+              } else {
+                setSubtitulo(pista.indice);
+                recordarPistas({ subtitulo: comoRecordar(pista) });
+              }
+              setPanel('ninguno');
+              setZona('botones');
+            },
+          })),
+        ];
+
+  /*
+    Al cerrarse los controles el mando vuelve al vídeo —si no, al despertarlos
+    el foco seguiría en un botón que ya no se recuerda dónde estaba—, salvo
+    durante los créditos: ahí lo que hay en pantalla es el aviso del siguiente
+    capítulo, así que **el foco es suyo** y basta con pulsar OK.
+  */
+  useEffect(() => {
+    if (!visible) {
+      setZona(enCreditos ? 'creditos' : 'video');
+      setPanel('ninguno');
+    }
+  }, [visible, enCreditos]);
+
+  // Un panel de pistas que se abre se lleva el foco: es lo que se acaba de
+  // pedir, y sin esto habría que bajar otra vez a ciegas.
+  useEffect(() => {
+    if (panel !== 'ninguno') {
+      setZona('pistas');
+      setFocoPista(0);
+    }
+  }, [panel]);
+
+  /*
+    "Atrás" cierra primero lo que esté abierto **dentro** del reproductor.
+
+    Estando en la fila de botones o en las pistas, atrás salía del vídeo y
+    devolvía a la serie, que es dos pantallas de más: lo que uno quiere cerrar
+    es el menú que tiene delante. El manejador de la aplicación sigue detrás
+    para cuando no hay nada abierto, y por eso este devuelve `false` entonces:
+    Android va llamando a los manejadores del último registrado al primero
+    hasta que uno diga que sí.
+  */
+  useEffect(() => {
+    const suscripcion = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (compacto) return false;
+
+      // Primero las pistas, que es lo último que se abrió.
+      if (panel !== 'ninguno') {
+        setPanel('ninguno');
+        setZona('botones');
+        return true;
+      }
+      /*
+        Y con los controles puestos, atrás **los esconde**: da igual en qué
+        botón esté el foco. Solo cuando ya no hay nada delante, el segundo
+        atrás sale del vídeo, que es lo que uno espera de un mando.
+      */
+      if (visible) {
+        if (temporizador.current) clearTimeout(temporizador.current);
+        setVisible(false);
+        setZona(enCreditos ? 'creditos' : 'video');
+        return true;
+      }
+      return false;
+    });
+    return () => suscripcion.remove();
+  }, [compacto, panel, visible, enCreditos]);
+
   useTVEventHandler((evento) => {
     // En pequeño manda la lista de canales, no el reproductor.
     if (compacto) return;
+    /*
+      Los créditos, con los controles escondidos: en pantalla solo está el
+      aviso del siguiente capítulo, así que el OK lo activa directamente. Bajar
+      saca los controles de siempre, que es lo que uno hace si lo que quería
+      era otra cosa.
+    */
+    if (zona === 'creditos' && !visible) {
+      if (evento.eventType === 'select') {
+        if (siguiente) onCambiar?.(siguiente);
+        return;
+      }
+      // Cualquier otra tecla saca los controles, y el foco pasa al vídeo.
+      setZona('video');
+      despertar();
+      return;
+    }
+
+    despertar();
+
+    // Con las pistas abiertas, el mando es suyo hasta que se elija una.
+    if (zona === 'pistas') {
+      switch (evento.eventType) {
+        case 'left':
+          setFocoPista((actual) => Math.max(0, actual - 1));
+          return;
+        case 'right':
+          setFocoPista((actual) => Math.min(pistas.length - 1, actual + 1));
+          return;
+        case 'select':
+          pistas[focoPista]?.onPress();
+          return;
+        case 'up':
+        case 'down':
+          setPanel('ninguno');
+          setZona('botones');
+          return;
+        default:
+          return;
+      }
+    }
+
+    /*
+      La barra de tiempo, que está **encima** de los botones: se sube a ella y
+      se baja de vuelta. Aquí las flechas mueven de medio minuto en adelante y
+      van corriendo si se mantiene pulsado; los diez segundos finos se quedan
+      abajo, en el círculo de reproducir.
+    */
+    if (zona === 'barra') {
+      switch (evento.eventType) {
+        case 'left':
+        case 'right': {
+          const salto = saltoDeLaRacha();
+          saltar(evento.eventType === 'left' ? -salto : salto);
+          return;
+        }
+        case 'down':
+          setZona('video');
+          return;
+        // El OK pausa, que es lo que uno espera con la barra delante.
+        case 'select':
+          setPausado((estaba) => !estaba);
+          return;
+        default:
+          return;
+      }
+    }
+
+    if (zona === 'botones') {
+      // Mantener pulsado sobre un botón hace lo suyo, si es que hace algo:
+      // hoy solo el de saltar la intro, que así se puede desmarcar.
+      if (evento.eventType === 'longSelect') {
+        secundarios[focoBoton]?.onLongPress?.();
+        return;
+      }
+      switch (evento.eventType) {
+        case 'left':
+          setFocoBoton((actual) => Math.max(0, actual - 1));
+          return;
+        case 'right':
+          setFocoBoton((actual) => Math.min(secundarios.length - 1, actual + 1));
+          return;
+        case 'select':
+          secundarios[focoBoton]?.onPress();
+          return;
+        // Subiendo se vuelve al vídeo, que es la otra parada.
+        case 'up':
+          setZona('video');
+          return;
+        default:
+          return;
+      }
+    }
+
     switch (evento.eventType) {
-      // En directo no hay a dónde saltar: las flechas cambian de canal, que es
-      // lo que uno hace con un mando delante de la tele.
+      /*
+        Con el foco en reproducir, las flechas saltan **diez segundos**: es el
+        salto fino, el de volver a oír una frase. Los saltos largos están en la
+        barra, que se alcanza subiendo.
+
+        En directo no hay a dónde saltar —el flujo no empieza ni acaba—, así
+        que ahí las flechas cambian de canal.
+      */
       case 'left':
+      case 'right': {
         if (enDirecto) {
-          if (anterior) onCambiar?.(anterior);
-        } else {
-          saltar(-SALTO_S);
+          const destino = evento.eventType === 'left' ? anterior : siguiente;
+          if (destino) onCambiar?.(destino);
+          break;
         }
+        saltar(evento.eventType === 'left' ? -SALTO_S : SALTO_S);
         break;
-      case 'right':
-        if (enDirecto) {
-          if (siguiente) onCambiar?.(siguiente);
-        } else {
-          saltar(SALTO_S);
-        }
-        break;
+      }
       case 'select':
         // Si los controles estaban escondidos, el primer OK solo los enseña.
         if (visible) setPausado((estaba) => !estaba);
-        despertar();
         break;
-      case 'up':
+      /*
+        Bajando se entra en la fila de botones. Es el recorrido de cualquier
+        televisor —flechas para saltar, abajo para los ajustes del vídeo— y es
+        lo que faltaba para poder cambiar el audio o los subtítulos sin dedo.
+      */
       case 'down':
-        despertar();
+        if (!visible) break;
+        if (secundarios.length > 0) {
+          setZona('botones');
+          setFocoBoton((actual) => Math.min(actual, secundarios.length - 1));
+        }
+        break;
+      /*
+        Y arriba, la barra de tiempo, que es lo que hay justo encima. En
+        directo no existe: no hay línea de tiempo que mover.
+      */
+      case 'up':
+        if (visible && !enDirecto) setZona('barra');
         break;
     }
   });
@@ -375,6 +989,7 @@ export function Reproductor({
     >
       {url ? (
         <Video
+          key={intento}
           ref={video}
           source={{ uri: url }}
           style={StyleSheet.absoluteFill}
@@ -387,9 +1002,16 @@ export function Reproductor({
           onBuffer={({ isBuffering }) => setCargando(isBuffering)}
           onReadyForDisplay={() => setCargando(false)}
           onProgress={({ currentTime, playableDuration, seekableDuration }) => {
-            setTiempo(currentTime);
-            setCargadoHasta(currentTime + (playableDuration ?? 0));
-            if (seekableDuration && !total) setTotal(seekableDuration);
+            /*
+              En directo, `currentTime` es `TIME_UNSET`: un número enorme y
+              negativo. Pintarlo daba una hora imposible, y —lo que de verdad
+              se notaba— hacía que un canal **no se anotara nunca** en el
+              historial, porque no llegaba al mínimo de treinta segundos.
+            */
+            const posicion = Number.isFinite(currentTime) && currentTime >= 0 ? currentTime : 0;
+            setTiempo(posicion);
+            setCargadoHasta(posicion + (playableDuration ?? 0));
+            if (seekableDuration && !total && !enDirecto) setTotal(seekableDuration);
 
             const ahora = Date.now();
             if (ahora - ultimaAnotacion.current < ANOTAR_CADA_MS) return;
@@ -399,16 +1021,29 @@ export function Reproductor({
               clase: medio.clase as ClaseMedio,
               itemId: medio.id,
               titulo: medio.titulo,
-              segundos: currentTime,
-              duracion: total || seekableDuration || 0,
+              // De un directo se anota **cuánto llevas puesto**, medido con el
+              // reloj; de lo demás, por dónde vas.
+              segundos: enDirecto ? (Date.now() - arrancado.current) / 1000 : posicion,
+              // Y un directo no tiene duración: ni barra, ni "visto del todo".
+              duracion: enDirecto ? 0 : total || seekableDuration || 0,
               visto: new Date().toISOString(),
             };
-            // Lo apenas empezado y lo ya terminado no ensucian el historial;
-            // lo terminado, además, se borra para que no reaparezca.
-            if (vaAnotado(anotacion)) {
+            /*
+              Se anota también lo terminado, y **esa es la diferencia**: antes
+              se borraba al pasar del umbral, con la idea de que no reapareciera
+              en "seguir viendo". Pero sin esa fila no hay de dónde sacar que el
+              capítulo se acabó, así que el siguiente no relevaba y la serie
+              desaparecía de la fila en vez de avanzar.
+
+              Ahora la fila se queda diciendo "esto está visto" y es la fila
+              quien decide: una película vista se cae, un capítulo visto da paso
+              al siguiente.
+
+              Lo que sigue sin anotarse son los primeros segundos: abrir algo
+              para ver qué es no debería llenar el historial.
+            */
+            if (anotacion.segundos >= MINIMO_ANOTABLE_S) {
               perfiles.anotarAvance(perfil.id, anotacion).catch(() => {});
-            } else if (anotacion.duracion > 0 && anotacion.segundos > anotacion.duracion * 0.95) {
-              perfiles.olvidarAvance(perfil.id, anotacion.clase, anotacion.itemId).catch(() => {});
             }
           }}
           onLoad={(datos) => {
@@ -418,18 +1053,8 @@ export function Reproductor({
                 ? `${datos.naturalSize?.width}x${datos.naturalSize?.height}`
                 : null,
             );
-            setAudios(
-              (datos.audioTracks ?? []).map((pista, indice) => ({
-                indice,
-                nombre: nombreDePista(pista, indice),
-              })),
-            );
-            setSubtitulos(
-              (datos.textTracks ?? []).map((pista, indice) => ({
-                indice,
-                nombre: nombreDePista(pista, indice),
-              })),
-            );
+            setAudios((datos.audioTracks ?? []).map(comoPista));
+            setSubtitulos((datos.textTracks ?? []).map(comoPista));
             // Se retoma donde se dejó, que es de lo que sirve el historial.
             if (reanudar !== null && reanudar > 0) {
               video.current?.seek(reanudar);
@@ -439,25 +1064,57 @@ export function Reproductor({
           }}
           // Con un MKV por HTTP, las pistas a veces se conocen después de
           // empezar: estos avisos las traen cuando aparecen.
-          onAudioTracks={({ audioTracks }) =>
-            setAudios(
-              (audioTracks ?? []).map((pista, indice) => ({ indice, nombre: nombreDePista(pista, indice) })),
-            )
-          }
-          onTextTracks={({ textTracks }) =>
-            setSubtitulos(
-              (textTracks ?? []).map((pista, indice) => ({ indice, nombre: nombreDePista(pista, indice) })),
-            )
-          }
+          onAudioTracks={({ audioTracks }) => setAudios((audioTracks ?? []).map(comoPista))}
+          onTextTracks={({ textTracks }) => setSubtitulos((textTracks ?? []).map(comoPista))}
+          /*
+            Al terminar, el siguiente si así lo quiere el perfil.
+
+            Solo con cola y solo hacia delante: en directo no hay final, y una
+            película no encadena con nada.
+          */
+          onEnd={() => {
+            if (continua && !enDirecto && siguiente) onCambiar?.(siguiente);
+          }}
           onError={(fallo) => {
             // El detalle completo, al registro: se lee con `adb logcat`.
             console.warn('[reproductor]', JSON.stringify(fallo));
+
+            /*
+              El 403 del panel no es un fallo del vídeo: es que las conexiones
+              de la casa están ocupadas. Se suelta lo que creíamos tener y se
+              espera, en vez de dejar la pantalla en negro con un aviso.
+            */
+            if (arbitro && esLimiteDeConexiones(fallo)) {
+              const ms = arbitro.rechazado(idRanura, Date.now());
+              setUrl(null);
+              setEspera(Math.max(1, Math.ceil(ms / 1000)));
+              return;
+            }
             setError(mensajeDeError(fallo));
           }}
         />
       ) : null}
 
-      {!url && !error ? <ActivityIndicator size="large" color={VERDE} /> : null}
+      {!url && !error && espera === null ? <ActivityIndicator size="large" color={VERDE} /> : null}
+
+      {/*
+        Esperando ranura. Se dice **por qué** y **cuánto**: sin las dos cosas
+        esto es indistinguible de un cuelgue.
+      */}
+      {espera !== null ? (
+        <View style={[estilos.fallo, compacto && estilos.falloCompacto]} pointerEvents="none">
+          {compacto ? null : <Text style={estilos.falloTitulo}>{medio.titulo}</Text>}
+          <Text
+            style={[estilos.falloTexto, compacto && estilos.falloTextoCompacto]}
+            numberOfLines={compacto ? 3 : undefined}
+          >
+            Las conexiones de la lista están ocupadas. Reintentando en {espera} s…
+          </Text>
+          {compacto ? null : (
+            <Text style={estilos.falloPie}>Se abrirá sola en cuanto quede una libre</Text>
+          )}
+        </View>
+      ) : null}
 
       {/*
         El fallo, en su propia capa y sin desvanecerse.
@@ -518,6 +1175,22 @@ export function Reproductor({
         }}
       />
 
+      {/*
+        El aviso de los créditos vive **fuera de los controles**: aparece solo,
+        abajo a la derecha y ya enfocado, así que basta con pulsar OK. Meterlo
+        en la fila de botones obligaba a sacar los controles y bajar dos veces
+        para hacer lo único que uno quiere hacer en ese momento.
+      */}
+      {enCreditos && siguiente ? (
+        <Pressable
+          focusable={false}
+          style={[estilos.creditos, zona === 'creditos' && !visible && estilos.creditosEnfocado]}
+          onPress={() => onCambiar?.(siguiente)}
+        >
+          <Text style={estilos.creditosTexto}>Siguiente capítulo  ›</Text>
+        </Pressable>
+      ) : null}
+
       {compacto ? null : (
       <Animated.View style={[estilos.controles, { opacity: opacidad }]} pointerEvents={visible ? 'auto' : 'none'}>
         {/* Sombra de abajo arriba, en capas: da contraste a los iconos sin
@@ -557,6 +1230,7 @@ export function Reproductor({
             <Text style={estilos.tiempo}>{reloj(tiempo)}</Text>
 
             <Pressable
+              focusable={false}
               style={estilos.barra}
               onLayout={(evento) => setAnchoBarra(evento.nativeEvent.layout.width)}
               onPress={(evento) => {
@@ -574,7 +1248,15 @@ export function Reproductor({
               {/* Lo descargado por delante: se ve cuánto margen hay. */}
               <View style={[estilos.cargado, { width: `${cargado * 100}%` }]} />
               <View style={[estilos.progreso, { width: `${avance * 100}%` }]} />
-              <View style={[estilos.punto, { left: `${avance * 100}%` }]} />
+              <View
+                style={[
+                  estilos.punto,
+                  // Solo cuando el foco está en la barra: si se marcaran las
+                  // dos cosas a la vez, no se sabría cuál mueven las flechas.
+                  zona === 'barra' && estilos.puntoEnfocado,
+                  { left: `${avance * 100}%` },
+                ]}
+              />
             </Pressable>
 
             <Text style={estilos.tiempo}>{total ? reloj(total) : '--:--'}</Text>
@@ -597,7 +1279,17 @@ export function Reproductor({
               </Icono>
             )}
 
-            <Icono etiqueta={pausado ? 'Reproducir' : 'Pausa'} principal onPress={() => setPausado((estaba) => !estaba)}>
+            {/*
+              Con el mando en el vídeo, el foco se enseña aquí: es donde está
+              de verdad —las flechas saltan y el OK pausa— y sin marcarlo uno
+              no sabe dónde ha quedado al subir desde los botones.
+            */}
+            <Icono
+              etiqueta={pausado ? 'Reproducir' : 'Pausa'}
+              principal
+              enfocado={zona === 'video'}
+              onPress={() => setPausado((estaba) => !estaba)}
+            >
               {pausado ? <IconoPlay /> : <IconoPausa />}
             </Icono>
 
@@ -617,66 +1309,50 @@ export function Reproductor({
           </View>
 
           <View style={estilos.secundarios}>
-            {/* Volver al principio: hace falta sobre todo cuando se ha
-                reanudado por donde se iba y resulta que uno quería empezar. */}
-            {enDirecto ? null : (
-              <Icono etiqueta="Desde el principio" apagado={tiempo < 5} onPress={() => saltar(-tiempo)}>
-                <IconoPrincipio />
-              </Icono>
-            )}
+            {secundarios.map((boton, indice) => {
+              const enfocado = zona === 'botones' && focoBoton === indice;
+              const marcado = Boolean(boton.activo);
 
-            {audios.length > 1 ? (
-              <Icono
-                etiqueta="Audio"
-                activo={panel === 'audio'}
-                onPress={() => setPanel((abierto) => (abierto === 'audio' ? 'ninguno' : 'audio'))}
-              >
-                <IconoAudio color={panel === 'audio' ? VERDE : undefined} />
-              </Icono>
-            ) : null}
-
-            {subtitulos.length > 0 ? (
-              <Icono
-                etiqueta="Subtítulos"
-                activo={panel === 'subtitulos' || subtitulo >= 0}
-                onPress={() => setPanel((abierto) => (abierto === 'subtitulos' ? 'ninguno' : 'subtitulos'))}
-              >
-                <IconoSubtitulos color={panel === 'subtitulos' || subtitulo >= 0 ? VERDE : undefined} />
-              </Icono>
-            ) : null}
-
-            {/* El siguiente episodio, que es lo que uno busca al acabar uno. */}
-            {!enDirecto && siguiente ? (
-              <Icono etiqueta="Siguiente" onPress={() => onCambiar?.(siguiente)}>
-                <IconoSiguiente />
-              </Icono>
-            ) : null}
+              return (
+                <Icono
+                  key={boton.clave}
+                  etiqueta={boton.etiqueta}
+                  activo={marcado}
+                  enfocado={enfocado}
+                  apagado={boton.clave === 'principio' && tiempo < 5}
+                  onPress={boton.onPress}
+                >
+                  {boton.clave === 'principio' ? <IconoPrincipio /> : null}
+                  {boton.clave === 'audio' ? <IconoAudio color={marcado ? VERDE : undefined} /> : null}
+                  {boton.clave === 'subtitulos' ? (
+                    <IconoSubtitulos color={marcado ? VERDE : undefined} />
+                  ) : null}
+                  {boton.clave === 'siguiente' ? <IconoSiguiente /> : null}
+                </Icono>
+              );
+            })}
           </View>
 
-          {panel !== 'ninguno' ? (
+          {pistas.length > 0 ? (
             <ScrollView style={estilos.pistas} horizontal showsHorizontalScrollIndicator={false}>
-              {panel === 'subtitulos' ? (
-                <Pastilla
-                  texto="Sin subtítulos"
-                  activo={subtitulo === -1}
-                  onPress={() => {
-                    setSubtitulo(-1);
-                    setPanel('ninguno');
-                  }}
-                />
-              ) : null}
-              {(panel === 'audio' ? audios : subtitulos).map((pista) => (
-                <Pastilla
-                  key={pista.indice}
-                  texto={pista.nombre}
-                  activo={panel === 'audio' ? audio === pista.indice : subtitulo === pista.indice}
-                  onPress={() => {
-                    if (panel === 'audio') setAudio(pista.indice);
-                    else setSubtitulo(pista.indice);
-                    setPanel('ninguno');
-                  }}
-                />
-              ))}
+              {pistas.map((pista, indice) => {
+                // Cuál está puesta ahora mismo, para marcarla.
+                const puesta =
+                  panel === 'audio'
+                    ? audios[indice]?.indice === audio
+                    : indice === 0
+                      ? subtitulo === -1
+                      : subtitulos[indice - 1]?.indice === subtitulo;
+                return (
+                  <Pastilla
+                    key={pista.etiqueta}
+                    texto={pista.etiqueta}
+                    activo={puesta}
+                    enfocada={zona === 'pistas' && focoPista === indice}
+                    onPress={pista.onPress}
+                  />
+                );
+              })}
             </ScrollView>
           ) : null}
         </View>
@@ -700,6 +1376,7 @@ function Icono({
   onPress,
   principal,
   activo,
+  enfocado,
   apagado,
 }: {
   children: React.ReactNode;
@@ -709,6 +1386,14 @@ function Icono({
   onPress: () => void;
   principal?: boolean;
   activo?: boolean;
+  /**
+   * Enfocado **por el mando**, que no es el foco del sistema.
+   *
+   * En esta pantalla el recorrido lo lleva la aplicación —igual que en la
+   * biblioteca— porque si además lo llevara Android, cada OK contaría dos
+   * veces.
+   */
+  enfocado?: boolean;
   /** Sin destino: se deja a la vista pero atenuado, para que no baile la fila. */
   apagado?: boolean;
 }) {
@@ -716,12 +1401,22 @@ function Icono({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={etiqueta}
+      /*
+        El foco del sistema no entra aquí, igual que en la biblioteca: en esta
+        pantalla el recorrido lo lleva la aplicación, y si Android además le
+        entregara el OK al botón enfocado, la pulsación no llegaría nunca al
+        manejador de teclas. Era justo lo que pasaba: con el mando se podía
+        llegar a los botones pero no activarlos.
+      */
+      focusable={false}
       disabled={apagado}
       style={({ focused, pressed }) => [
         estilos.icono,
         principal && estilos.iconoPrincipal,
         apagado && estilos.iconoApagado,
-        (focused || pressed) && !apagado && (principal ? estilos.iconoPrincipalEnfocado : estilos.iconoEnfocado),
+        (focused || pressed || enfocado) &&
+          !apagado &&
+          (principal ? estilos.iconoPrincipalEnfocado : estilos.iconoEnfocado),
       ]}
       onPress={onPress}
     >
@@ -733,13 +1428,29 @@ function Icono({
 }
 
 /** Opción de una lista de pistas: aquí sí hay que leer el idioma. */
-function Pastilla({ texto, onPress, activo }: { texto: string; onPress: () => void; activo?: boolean }) {
+function Pastilla({
+  texto,
+  onPress,
+  onLongPress,
+  activo,
+  enfocada,
+}: {
+  texto: string;
+  onPress: () => void;
+  /** Mantener pulsado, cuando el botón tenga algo que deshacer. */
+  onLongPress?: () => void;
+  activo?: boolean;
+  /** Enfocada por el mando; con el dedo manda el foco del sistema. */
+  enfocada?: boolean;
+}) {
   return (
     <Pressable
+      focusable={false}
+      onLongPress={onLongPress}
       style={({ focused, pressed }) => [
         estilos.pastilla,
         activo && estilos.pastillaActiva,
-        (focused || pressed) && estilos.pastillaEnfocada,
+        (focused || pressed || enfocada) && estilos.pastillaEnfocada,
       ]}
       onPress={onPress}
     >
@@ -878,22 +1589,38 @@ const estilos = StyleSheet.create({
     justifyContent: 'center',
     width: 56,
   },
+  /*
+    Lo enfocado con el mando tiene que cantar desde el sofá, y el 18 % de
+    blanco que había antes se pierde sobre un fotograma claro. Va el verde de
+    la marca, que es como se marca el foco en el resto de la aplicación, sobre
+    un fondo oscuro que garantiza el contraste sea cual sea la imagen.
+  */
   iconoEnfocado: {
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderColor: VERDE,
+    borderWidth: 2,
   },
   // El de reproducir es el único con círculo, y translúcido: un botón opaco
   // encima de la imagen es lo que hacía que esto pareciera un aparato viejo.
+  /*
+    El de reproducir es el único con círculo, y translúcido. **Su borde es muy
+    tenue a propósito**: con uno más marcado parecía que estaba enfocado
+    siempre, y entonces el verde de abajo se leía como otra cosa. En esta
+    pantalla el foco es una sola cosa —el aro verde— y todo lo demás es
+    decoración.
+  */
   iconoPrincipal: {
     backgroundColor: 'rgba(255,255,255,0.16)',
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(255,255,255,0.14)',
     borderRadius: 36,
     borderWidth: 1.5,
     height: 72,
     width: 72,
   },
   iconoPrincipalEnfocado: {
-    backgroundColor: 'rgba(255,255,255,0.32)',
-    borderColor: '#fff',
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderColor: VERDE,
+    borderWidth: 2,
     transform: [{ scale: 1.06 }],
   },
   // Un mando sin destino no se quita: se atenúa, o la fila baila al llegar al
@@ -948,6 +1675,38 @@ const estilos = StyleSheet.create({
     color: '#7f95a6',
     fontSize: 14,
   },
+  /* El aviso de créditos, abajo a la derecha, como en cualquier servicio. */
+  creditos: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(11,11,12,0.82)',
+    borderColor: 'transparent',
+    borderRadius: 10,
+    borderWidth: 2,
+    bottom: 60,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    position: 'absolute',
+    right: 60,
+  },
+  // El mismo aro verde que en el resto: aquí es donde está el mando.
+  creditosEnfocado: {
+    borderColor: VERDE,
+    transform: [{ scale: 1.04 }],
+  },
+  creditosTexto: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  /*
+    La barra enfocada: **solo el punto se marca**, con un borde blanco.
+    Engordar la barra entera con `scaleY` deformaba el punto en una elipse,
+    que es lo que se veía raro: la escala se aplica a los hijos.
+  */
+  puntoEnfocado: {
+    borderColor: '#fff',
+    borderWidth: 3,
+  },
   pistas: {
     alignSelf: 'center',
     marginTop: 10,
@@ -962,18 +1721,26 @@ const estilos = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 9,
   },
+  /*
+    Lo puesto ahora mismo —la pista de audio que suena— se marca con **el
+    texto en verde**, no con el fondo: el fondo verde se leía como "esto es lo
+    que tienes enfocado", que es lo que dice el aro, y con las dos cosas a la
+    vez no había manera de saber dónde estaba el mando.
+  */
   pastillaActiva: {
-    backgroundColor: VERDE,
+    backgroundColor: 'rgba(53,208,127,0.16)',
   },
   pastillaEnfocada: {
-    borderColor: '#fff',
+    backgroundColor: 'rgba(11,11,12,0.72)',
+    borderColor: VERDE,
+    transform: [{ scale: 1.04 }],
   },
   pastillaTexto: {
     color: '#fff',
     fontSize: 15,
   },
   pastillaTextoActivo: {
-    color: FONDO,
+    color: VERDE,
     fontWeight: '700',
   },
   // En la vista previa solo la ruedecita: la caja entera taparía el recuadro.

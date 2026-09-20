@@ -1,6 +1,43 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Para seguir bajando con la aplicación en segundo plano. El tipo es
+      `dataSync` porque lo que hace es traer datos de la red, y desde Android
+      14 cada tipo pide su propio permiso.
+
+      `POST_NOTIFICATIONS` es para que el aviso se vea: desde Android 13 hay
+      que pedirlo. Si se deniega, el servicio funciona igual y la descarga
+      sigue; lo único que pasa es que no se ve por dónde va.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      El `PARTIAL_WAKE_LOCK` que coge `HeadlessJsTaskService`: con la pantalla
+      apagada el aparato se suspende, y suspendido no baja nada.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!--
+      Para encontrar las teles de casa ("Ver en la tele"). Muchos Android tiran
+      los paquetes multicast para ahorrar batería, y sin este permiso la
+      búsqueda vuelve vacía aunque la tele esté encendida al lado.
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!--
+      "Ver en la tele" pasa el vídeo por el teléfono, así que mientras dura el
+      teléfono tiene que seguir vivo aunque se salga de la aplicación. Es un
+      servicio de reproducción: lo que suena, suena en otra pantalla.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!--
+      Para poder **preguntar** si se nos deja seguir con la pantalla apagada.
+      La ventana la enseña el sistema y la contesta quien mira: sin esto, el
+      teléfono congela la aplicación a los pocos minutos de bloquear y la tele
+      se queda parada a media película.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
  
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />
@@ -30,5 +67,15 @@
             <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <service
+        android:name=".ServicioDeDescargas"
+        android:foregroundServiceType="dataSync"
+        android:exported="false" />
+
+      <service
+        android:name=".ServicioDeTele"
+        android:foregroundServiceType="mediaPlayback"
+        android:exported="false" />
     </application>
 </manifest>

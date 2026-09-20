@@ -82,18 +82,14 @@ test('el presentador navega sobre la biblioteca en memoria', async () => {
   assert.ok((inicio.inicio?.filas.length ?? 0) > 0);
   assert.deepEqual(inicio.elementos, []);
 
-  // TV en directo entra ya con los canales puestos: los grupos van en la
-  // barra de la izquierda.
-  const directo = await presentador.irASeccion({ tipo: 'directo' });
-  assert.equal(directo.titulo, 'TV en directo');
-  assert.equal(directo.elementos.length, 3);
+  // TV en directo es otra pestaña del mismo inicio: una fila por grupo de
+  // canales, con todos dentro.
+  const directo = await presentador.elegirModo('directo');
+  assert.ok((directo.inicio?.filas.length ?? 0) > 0);
+  assert.deepEqual(directo.elementos, []);
 
   const { reproducir } = await presentador.aceptar();
-  assert.equal(reproducir?.titulo, '24 Horas');
-
-  // Y elegir el grupo en la barra filtra sin apilar otra pantalla.
-  const grupo = await presentador.elegirCategoria('NOTICIAS');
-  assert.equal(grupo.titulo, 'NOTICIAS');
+  assert.equal(reproducir?.clase, 'canal');
 });
 
 test('las temporadas se piden solo la primera vez que se abre la serie', async () => {

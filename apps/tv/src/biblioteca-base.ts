@@ -10,11 +10,26 @@
 import type { DB } from '@op-engineering/op-sqlite';
 
 import type { Season } from '@m3u/core';
-import { fold, filtroRecomendadaSQL, ordenRecomendadaSQL } from '@m3u/core';
+import {
+  claveDeEpisodio,
+  contarTemas,
+  filtroDestacadaSQL,
+  filtroMejorSQL,
+  filtroPopularSQL,
+  filtroRecomendadaSQL,
+  fold,
+  leerClaveDeEpisodio,
+  ordenDestacadaSQL,
+  ordenMejorSQL,
+  ordenPopularSQL,
+  ordenRecomendadaSQL,
+  temasDe,
+} from '@m3u/core';
 import type {
   Ambito,
   Biblioteca,
   CanalFicha,
+  FichaDelServidor,
   FichaLarga,
   EpisodioDeSerieFicha,
   EpisodioFicha,
@@ -58,10 +73,29 @@ export interface OpcionesBase {
  * Lo que no tiene el dato va al final salvo ordenando por título: no tener
  * nota no es tenerla mala, ni no saber cuándo entró es ser lo más viejo.
  */
+/**
+ * La nota que se enseña y con la que se ordena: **la de TMDb si la hay**.
+ *
+ * La del proveedor es la que venía en el catálogo y no vale para mucho: hay
+ * cientos de dieces que solo quieren decir que no la ha valorado nadie, y
+ * películas conocidas con un cinco. Se queda de respaldo para lo que el
+ * servidor no haya cubierto todavía.
+ *
+ * Ojo: el orden `recomendada` sigue mirando `rating`, porque su filtro es el
+ * que comparten el aparato y el servidor y tiene que decidir igual en los dos
+ * sitios; el servidor no tiene la nota de TMDb cuando prepara las portadas.
+ */
+function notaSQL(prefijo = ''): string {
+  return `COALESCE(${prefijo}nota_tmdb, ${prefijo}rating)`;
+}
+
 function ordenDe(orden: Pagina['orden'], prefijo = ''): string {
   if (orden === 'recomendada') return ordenRecomendadaSQL(prefijo);
+  if (orden === 'destacada') return ordenDestacadaSQL(prefijo);
+  if (orden === 'mejor') return ordenMejorSQL(prefijo);
+  if (orden === 'popular') return ordenPopularSQL(prefijo);
   if (orden === 'valoracion') {
-    return `${prefijo}rating IS NULL, ${prefijo}rating DESC, ${prefijo}sort_title`;
+    return `${notaSQL(prefijo)} IS NULL, ${notaSQL(prefijo)} DESC, ${prefijo}sort_title`;
   }
   if (orden === 'reciente') {
     return `${prefijo}added IS NULL, ${prefijo}added DESC, ${prefijo}sort_title`;
@@ -107,7 +141,38 @@ function panelIdsDePelicula(db: DB, id: string): number[] {
  * poner y la consulta se queda como estaba.
  */
 function filtroDe(orden: Pagina['orden'], prefijo = ''): string | null {
-  return orden === 'recomendada' ? filtroRecomendadaSQL(prefijo) : null;
+  if (orden === 'recomendada') return filtroRecomendadaSQL(prefijo);
+  if (orden === 'destacada') return filtroDestacadaSQL(prefijo);
+  if (orden === 'mejor') return filtroMejorSQL(prefijo);
+  if (orden === 'popular') return filtroPopularSQL(prefijo);
+  return null;
+}
+
+/**
+ * La condición de "esta ficha lleva este tema".
+ *
+ * Es una búsqueda dentro del campo y no una igualdad porque el panel manda
+ * varios juntos —"Drama, Romance"— y cada uno separado a su manera. Que
+ * "Terror" case también con "Terror psicológico" no es un fallo: es lo que se
+ * quiere en una fila del inicio.
+ */
+function filtroTema(prefijo = ''): string {
+  return `${prefijo}genre LIKE ?`;
+}
+
+type SitioDeEpisodio = { serieId: string; temporada: number; numero: number };
+
+/** De la clave de un episodio al número de fila con el que se guardaron sus URLs. */
+function filaDeEpisodio(db: DB, clave: string): string | null {
+  const sitio = leerClaveDeEpisodio(clave);
+  if (!sitio) return null;
+
+  const fila = filas(db, 'SELECT id FROM episode WHERE series_id = ? AND season = ? AND episode = ?', [
+    sitio.serieId,
+    sitio.temporada,
+    sitio.numero,
+  ])[0];
+  return fila ? String(fila.id) : null;
 }
 
 /** SQL devuelve un `IN` en el orden que quiere; el perfil los quiere por fecha. */
@@ -132,7 +197,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
   ): Promise<FichaLarga | null> => {
     const guardado = filas(
       db,
-      `SELECT plot, actors, backdrop, genre, detalle_pedido FROM ${tabla} WHERE id = ?`,
+      `SELECT plot, actors, backdrop, genre, trailer, seconds, detalle_pedido FROM ${tabla} WHERE id = ?`,
       [id],
     )[0];
     if (!guardado) return null;
@@ -142,6 +207,8 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       reparto: (guardado.actors as string) || null,
       fondo: (guardado.backdrop as string) || null,
       genero: (guardado.genre as string) || null,
+      trailer: (guardado.trailer as string) || null,
+      duracion: (guardado.seconds as number) || null,
     });
 
     // Ya se preguntó una vez: se devuelve lo que hubiera, aunque fuera nada.
@@ -168,12 +235,13 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       `[detalle] ${tabla} ${id}: sinopsis ${traido?.sinopsis ? 'sí' : 'no'}, reparto ${traido?.reparto ? 'sí' : 'no'}, fondo ${traido?.fondo ? 'sí' : 'no'}`,
     );
     db.executeSync(
-      `UPDATE ${tabla} SET plot = ?, actors = ?, backdrop = ?, genre = ?, detalle_pedido = ? WHERE id = ?`,
+      `UPDATE ${tabla} SET plot = ?, actors = ?, backdrop = ?, genre = ?, trailer = ?, detalle_pedido = ? WHERE id = ?`,
       [
         traido?.sinopsis ?? null,
         traido?.reparto ?? null,
         traido?.fondo ?? null,
         traido?.genero ?? null,
+        traido?.trailer ?? null,
         new Date().toISOString(),
         id,
       ],
@@ -269,21 +337,27 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async peliculas(pagina: Pagina): Promise<PeliculaFicha[]> {
-      const filtro = filtroDe(pagina.orden, 'm.');
+      const prefijo = pagina.grupo ? 'm.' : '';
+      const filtro = [filtroDe(pagina.orden, prefijo), pagina.tema ? filtroTema(prefijo) : '']
+        .filter(Boolean)
+        .join(' AND ');
       const consulta = pagina.grupo
-        ? `SELECT m.id, m.title, m.year, m.rating, m.logo, m.genre
+        ? `SELECT m.id, m.title, m.year, COALESCE(m.nota_tmdb, m.rating) AS rating, m.logo, m.genre
              FROM movie m
              JOIN item_group g ON g.kind = 'movie' AND g.item_id = m.id
             WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 'm.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo, genre FROM movie
-            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
+        : `SELECT id, title, year, ${notaSQL()} AS rating, logo, genre FROM movie
+            ${filtro ? `WHERE ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
-      const params = pagina.grupo
-        ? [pagina.grupo, pagina.limite, pagina.desde]
-        : [pagina.limite, pagina.desde];
+      const params = [
+        ...(pagina.grupo ? [pagina.grupo] : []),
+        ...(pagina.tema ? [`%${pagina.tema}%`] : []),
+        pagina.limite,
+        pagina.desde,
+      ];
 
       return filas(db, consulta, params).map((fila) => ({
         id: fila.id as string,
@@ -296,21 +370,27 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     },
 
     async series(pagina: Pagina): Promise<SerieFicha[]> {
-      const filtro = filtroDe(pagina.orden, 's.');
+      const prefijo = pagina.grupo ? 's.' : '';
+      const filtro = [filtroDe(pagina.orden, prefijo), pagina.tema ? filtroTema(prefijo) : '']
+        .filter(Boolean)
+        .join(' AND ');
       const consulta = pagina.grupo
-        ? `SELECT s.id, s.title, s.year, s.rating, s.logo, s.genre
+        ? `SELECT s.id, s.title, s.year, COALESCE(s.nota_tmdb, s.rating) AS rating, s.logo, s.genre
              FROM series s
              JOIN item_group g ON g.kind = 'series' AND g.item_id = s.id
             WHERE g.group_name = ?${filtro ? ` AND ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden, 's.')}
             LIMIT ? OFFSET ?`
-        : `SELECT id, title, year, rating, logo, genre FROM series
-            ${filtroDe(pagina.orden) ? `WHERE ${filtroDe(pagina.orden)}` : ''}
+        : `SELECT id, title, year, ${notaSQL()} AS rating, logo, genre FROM series
+            ${filtro ? `WHERE ${filtro}` : ''}
             ORDER BY ${ordenDe(pagina.orden)}
             LIMIT ? OFFSET ?`;
-      const params = pagina.grupo
-        ? [pagina.grupo, pagina.limite, pagina.desde]
-        : [pagina.limite, pagina.desde];
+      const params = [
+        ...(pagina.grupo ? [pagina.grupo] : []),
+        ...(pagina.tema ? [`%${pagina.tema}%`] : []),
+        pagina.limite,
+        pagina.desde,
+      ];
 
       return filas(db, consulta, params).map((fila) => ({
         id: fila.id as string,
@@ -354,7 +434,7 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async peliculasPorId(ids: string[]): Promise<PeliculaFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'movie', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
+        porId(db, 'movie', `id, title, year, ${notaSQL()} AS rating, logo, genre`, ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
@@ -368,60 +448,183 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
       return enElOrdenPedido(
         ids,
-        porId(db, 'series', 'id, title, year, rating, logo, genre', ids).map((fila) => ({
+        porId(db, 'series', `id, title, year, ${notaSQL()} AS rating, logo, genre, added`, ids).map((fila) => ({
           id: fila.id as string,
           titulo: fila.title as string,
           anio: (fila.year as number) ?? null,
           valoracion: (fila.rating as number) ?? null,
           logo: (fila.logo as string) ?? null,
           genero: (fila.genre as string) ?? null,
+          // De una serie, `added` es el `last_modified` del panel: sube cuando
+          // le añaden episodios.
+          tocada: (fila.added as number) ?? null,
         })),
       );
     },
 
-    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
-      if (ids.length === 0) return [];
-      const huecos = ids.map(() => '?').join(', ');
-      // El salto a `series` va aquí y no en quien llama: lo que hace falta
-      // para pintar un episodio fuera de su serie es la carátula de la serie.
+    async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
+      const donde = claves
+        .map((clave) => ({ clave, sitio: leerClaveDeEpisodio(clave) }))
+        .filter((una): una is { clave: string; sitio: SitioDeEpisodio } => una.sitio !== null);
+      if (donde.length === 0) return [];
+
+      /*
+        Las series que este aparato no haya abierto nunca no tienen episodios
+        guardados, así que se piden ahora.
+
+        Es lo que hace que una serie empezada en la tele aparezca en una
+        tablet recién puesta: hasta aquí llegaba la clave por la
+        sincronización, pero no había fila que enseñar ni URL que reproducir.
+        Son las de "seguir viendo", doce como mucho y casi siempre ninguna:
+        `asegurarEpisodios` mira primero si ya están. Y van de una en una
+        porque cada una escribe en la base.
+      */
+      for (const serieId of new Set(donde.map(({ sitio }) => sitio.serieId))) {
+        try {
+          await asegurarEpisodios(serieId);
+        } catch (error) {
+          // Sin red o con el panel caído se pinta lo que haya, como siempre.
+          console.warn('[base] no se pudieron traer los episodios de', serieId, error);
+        }
+      }
+
+      /*
+        Un `OR` por episodio en vez de un `IN`: la clave son tres columnas y
+        SQLite no admite tuplas en un `IN`. Son doce como mucho —los que caben
+        en "seguir viendo"—, así que no hay nada que optimizar.
+
+        El salto a `series` va aquí y no en quien llama: lo que hace falta para
+        pintar un episodio fuera de su serie es la carátula de la serie.
+      */
+      const condicion = donde.map(() => '(e.series_id = ? AND e.season = ? AND e.episode = ?)').join(' OR ');
+      const params = donde.flatMap(({ sitio }) => [sitio.serieId, sitio.temporada, sitio.numero]);
+
       const encontrados = filas(
         db,
-        `SELECT e.id, e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+        `SELECT e.series_id, e.season, e.episode, e.title, e.seconds, e.logo,
+                s.title AS serie, s.logo AS serie_logo
            FROM episode e JOIN series s ON s.id = e.series_id
-          WHERE e.id IN (${huecos})`,
-        ids,
+          WHERE ${condicion}`,
+        params,
       ).map((fila): EpisodioDeSerieFicha => ({
-        id: Number(fila.id),
+        clave: claveDeEpisodio(fila.series_id as string, Number(fila.season), Number(fila.episode)),
         serieId: fila.series_id as string,
         serieTitulo: fila.serie as string,
         serieLogo: (fila.serie_logo as string) ?? null,
         temporada: Number(fila.season),
         numero: Number(fila.episode),
         titulo: (fila.title as string) ?? null,
+        segundos: (fila.seconds as number) ?? null,
+        imagen: (fila.logo as string) || null,
       }));
 
-      const porClave = new Map(encontrados.map((ficha) => [String(ficha.id), ficha]));
-      return ids.map((id) => porClave.get(id)).filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
+      // En el orden en que se pidieron, que es el del historial.
+      const porClave = new Map(encontrados.map((ficha) => [ficha.clave, ficha]));
+      return claves
+        .map((clave) => porClave.get(clave))
+        .filter((ficha): ficha is EpisodioDeSerieFicha => ficha !== undefined);
+    },
+
+    /*
+      El capítulo que va después de otro.
+
+      Primero en su misma temporada y, si era el último, el primero de la
+      siguiente. Se ordena por temporada y número y se coge el primero que vaya
+      por delante: así el salto de temporada sale gratis y no hay que preguntar
+      cuántos capítulos tenía la anterior.
+
+      Los episodios se piden al panel si esta serie no se ha abierto nunca en
+      este aparato, igual que en `episodiosPorClave`: puede llegar por la
+      sincronización una serie que aquí no se ha tocado.
+    */
+    async episodioSiguiente(clave: string): Promise<EpisodioDeSerieFicha | null> {
+      const sitio = leerClaveDeEpisodio(clave);
+      if (!sitio) return null;
+
+      try {
+        await asegurarEpisodios(sitio.serieId);
+      } catch (error) {
+        console.warn('[base] no se pudieron traer los episodios de', sitio.serieId, error);
+      }
+
+      const fila = filas(
+        db,
+        `SELECT e.series_id, e.season, e.episode, e.title, s.title AS serie, s.logo AS serie_logo
+           FROM episode e JOIN series s ON s.id = e.series_id
+          WHERE e.series_id = ?
+            AND (e.season > ? OR (e.season = ? AND e.episode > ?))
+          ORDER BY e.season, e.episode
+          LIMIT 1`,
+        [sitio.serieId, sitio.temporada, sitio.temporada, sitio.numero],
+      )[0];
+      if (!fila) return null;
+
+      return {
+        clave: claveDeEpisodio(fila.series_id as string, Number(fila.season), Number(fila.episode)),
+        serieId: fila.series_id as string,
+        serieTitulo: fila.serie as string,
+        serieLogo: (fila.serie_logo as string) ?? null,
+        temporada: Number(fila.season),
+        numero: Number(fila.episode),
+        titulo: (fila.title as string) ?? null,
+      };
     },
 
     async detalleDePelicula(id: string): Promise<FichaLarga | null> {
       return fichaLarga('movie', id, () => panelIdsDePelicula(db, id), opciones.traerDetalle);
     },
 
-    async guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void> {
-      if (pares.length === 0) return;
+    async guardarFichas(fichas: FichaDelServidor[]): Promise<void> {
+      if (fichas.length === 0) return;
 
       db.executeSync('BEGIN IMMEDIATE');
       try {
-        for (const { id, genero } of pares) {
-          // Solo lo que falte: si esta película ya se preguntó por su cuenta
-          // —presidió el inicio—, lo suyo es más completo que esto.
-          db.executeSync("UPDATE movie SET genre = ? WHERE id = ? AND (genre IS NULL OR genre = '')", [genero, id]);
+        for (const ficha of fichas) {
+          const tabla = ficha.clase === 'serie' ? 'series' : 'movie';
+          /*
+            **Solo lo que falte.** Si esta ficha ya se preguntó por su cuenta
+            —presidió el inicio—, lo suyo salió del propio panel y es más de
+            fiar que esto. `NULLIF` está por las cadenas vacías: una sinopsis
+            en blanco no es una sinopsis, y sin él taparía la buena.
+
+            Y `detalle_pedido` solo se marca si viene la sinopsis: es la marca
+            de "ya se preguntó", y ponerla con un género suelto dejaría la
+            pantalla de información vacía para siempre.
+          */
+          db.executeSync(
+            `UPDATE ${tabla} SET
+               genre    = COALESCE(NULLIF(genre, ''),    NULLIF(?, '')),
+               plot     = COALESCE(NULLIF(plot, ''),     NULLIF(?, '')),
+               actors   = COALESCE(NULLIF(actors, ''),   NULLIF(?, '')),
+               backdrop = COALESCE(NULLIF(backdrop, ''), NULLIF(?, '')),
+               trailer  = COALESCE(NULLIF(trailer, ''),  NULLIF(?, '')),
+               detalle_pedido = COALESCE(detalle_pedido, ?),
+               -- Estas tres sí se pisan: no hay otra fuente que las ponga, y
+               -- si TMDb corrige una nota lo suyo es quedarse con la nueva.
+               seconds     = COALESCE(seconds, ?),
+               nota_tmdb   = COALESCE(?, nota_tmdb),
+               votos_tmdb  = COALESCE(?, votos_tmdb),
+               popularidad = COALESCE(?, popularidad)
+             WHERE id = ?`,
+            [
+              ficha.genero,
+              ficha.sinopsis ?? '',
+              ficha.reparto ?? '',
+              ficha.fondo ?? '',
+              ficha.trailer ?? '',
+              ficha.sinopsis ? new Date().toISOString() : null,
+              ficha.duracion ?? null,
+              ficha.nota ?? null,
+              ficha.votos ?? null,
+              ficha.popularidad ?? null,
+              ficha.id,
+            ],
+          );
         }
         db.executeSync('COMMIT');
       } catch (error) {
         db.executeSync('ROLLBACK');
-        console.warn('[base] no se pudieron guardar los géneros', error);
+        console.warn('[base] no se pudieron guardar las fichas', error);
       }
     },
 
@@ -444,6 +647,34 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
       );
     },
 
+    async gruposDe(clase, id): Promise<string[]> {
+      // De un episodio valen las de su serie: es lo que uno elige ver.
+      const serie = clase === 'episodio' ? leerClaveDeEpisodio(id)?.serieId : null;
+      if (clase === 'episodio' && !serie) return [];
+
+      if (clase === 'canal') {
+        const fila = filas(db, 'SELECT group_name FROM channel WHERE id = ?', [id])[0];
+        return fila ? [fila.group_name as string] : [];
+      }
+
+      const dueno = clase === 'serie' || clase === 'episodio' ? 'series' : 'movie';
+      const ficha = serie ?? id;
+
+      const categorias = filas(db, 'SELECT group_name FROM item_group WHERE kind = ? AND item_id = ?', [
+        dueno,
+        ficha,
+      ]).map((fila) => fila.group_name as string);
+
+      /*
+        Y los temas, que son lo que ordena el inicio cuando hay géneros
+        suficientes. Van en la misma lista que las categorías porque la
+        afinidad es una cuenta por nombre y los dos nombres no se pisan: una
+        categoría es "PELICULAS ACCION" y un tema es "Acción".
+      */
+      const genero = filas(db, `SELECT genre FROM ${dueno} WHERE id = ?`, [ficha])[0]?.genre;
+      return [...categorias, ...temasDe(genero as string | null)];
+    },
+
     async categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
       return filas(
         db,
@@ -453,6 +684,24 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
           ORDER BY group_name`,
         [tipo === 'pelicula' ? 'movie' : 'series'],
       ).map((fila) => ({ nombre: fila.nombre as string, canales: Number(fila.fichas) }));
+    },
+
+    async temas(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {
+      /*
+        Se agrupa por la cadena entera y se parte fuera, en JavaScript: las
+        cadenas distintas son unos cientos y las fichas dieciocho mil, así que
+        partir aquí sale mucho más barato que fila a fila. SQLite no tiene con
+        qué partir un texto, además.
+      */
+      const agrupados = filas(
+        db,
+        `SELECT genre AS genero, COUNT(*) AS fichas
+           FROM ${tipo === 'pelicula' ? 'movie' : 'series'}
+          WHERE genre IS NOT NULL AND genre <> ''
+          GROUP BY genre`,
+      ).map((fila) => ({ genero: fila.genero as string, fichas: Number(fila.fichas) }));
+
+      return contarTemas(agrupados).map((tema) => ({ nombre: tema.nombre, canales: tema.fichas }));
     },
 
     async buscar(texto: string, ambito?: Ambito): Promise<Resultado[]> {
@@ -521,10 +770,20 @@ export function bibliotecaEnBase(db: DB, opciones: OpcionesBase): Biblioteca {
 
     async variantes(clase, id): Promise<Variante[]> {
       const dueno = clase === 'canal' ? 'channel' : clase === 'pelicula' ? 'movie' : 'episode';
+      /*
+        De un episodio llega su clave, y las variantes se guardan contra el
+        número de fila: hay que traducir. Si esa serie todavía no se ha abierto
+        en este aparato no hay fila que valga, y entonces no hay nada que
+        reproducir —eso lo resuelve abrir la serie, que es cuando se piden sus
+        episodios al panel—.
+      */
+      const owner = clase === 'episodio' ? filaDeEpisodio(db, id) : id;
+      if (owner === null) return [];
+
       return filas(
         db,
         'SELECT url, quality FROM variant WHERE owner_kind = ? AND owner_id = ? ORDER BY rank DESC',
-        [dueno, id],
+        [dueno, owner],
       ).map((fila) => ({ url: fila.url as string, calidad: (fila.quality as string) ?? null }));
     },
   };

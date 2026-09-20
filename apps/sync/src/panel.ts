@@ -23,7 +23,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { INDICES_TRAS_MIGRAR_SQL, RELLENOS_SQL, SCHEMA_PERFILES_SQL } from '@m3u/storage/schema';
+import {
+  INDICES_TRAS_MIGRAR_SQL,
+  RELLENOS_SQL,
+  SCHEMA_PERFILES_SQL,
+  SINCRONIZADAS,
+  migrarTablasDePerfil,
+} from '@m3u/storage/schema';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 
 import { aleatorio, cifrarContrasena, codigoCorto, compruebaContrasena, huella } from './claves.ts';
@@ -85,6 +91,74 @@ CREATE TABLE IF NOT EXISTS portada (
   datos    TEXT NOT NULL
 );
 
+-- La programación del directo, del EPG completo del panel (xmltv.php).
+--
+-- Aquí sí van columnas y no un JSON como en la tabla portada: lo que se
+-- entrega no es la tabla entera sino "qué echan ahora", que cambia cada minuto
+-- y hay que consultarlo por hora. Guardarlo en un JSON obligaría a leer y
+-- analizar los 11.515 programas de la lista en cada petición.
+--
+-- El canal es el identificador del XMLTV, que es el tvg-id del aparato:
+-- comprobado contra la lista real, casan 191 de 191.
+CREATE TABLE IF NOT EXISTS programa (
+  lista_id TEXT NOT NULL,
+  canal    TEXT NOT NULL,
+  -- En ISO y en UTC, que es como se comparan sin depender del huso de nadie.
+  desde    TEXT NOT NULL,
+  hasta    TEXT NOT NULL,
+  titulo   TEXT NOT NULL,
+  sinopsis TEXT
+);
+-- Por canal y hora, que es como se pregunta: "lo de este canal a partir de ahora".
+CREATE INDEX IF NOT EXISTS programa_por_canal ON programa (lista_id, canal, desde);
+
+-- La ficha larga de cada película y cada serie: género, sinopsis, reparto,
+-- imagen apaisada y tráiler. El catálogo del panel no trae nada de esto —da
+-- título, cartel, nota y año— y preguntarlo cuesta una petición por título,
+-- así que se rellena poco a poco y se guarda para siempre.
+--
+-- Se apunta también lo que nadie supo contestar, con los campos vacíos: si no,
+-- cada pasada volvería sobre las mismas y no avanzaría nunca. Eso es lo que
+-- marca la columna completa, que quiere decir "ya se preguntó", no "salió
+-- con datos".
+--
+-- El sello es la hora de la pasada en milisegundos: es por donde el aparato
+-- pide "lo que no tengo", en vez de bajarse las 24.000 en cada arranque. Que
+-- sea una hora y no un contador ahorra una tabla —de ahí sale también cuándo
+-- fue la última pasada— y vale como marca de agua entre listas distintas,
+-- porque el reloj es el mismo para todas.
+CREATE TABLE IF NOT EXISTS ficha (
+  lista_id TEXT NOT NULL,
+  item_id  TEXT NOT NULL,
+  clase    TEXT NOT NULL,
+  genero   TEXT NOT NULL,
+  sinopsis TEXT,
+  reparto  TEXT,
+  -- La imagen apaisada, ya como URL entera: el aparato no tiene por qué saber
+  -- cómo monta TMDb las direcciones de sus imágenes.
+  fondo    TEXT,
+  -- El identificador de YouTube, que es lo que abre la aplicación por fuera.
+  trailer  TEXT,
+  completa INTEGER NOT NULL DEFAULT 0,
+  sello    INTEGER NOT NULL,
+  PRIMARY KEY (lista_id, item_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ficha_por_sello ON ficha (lista_id, sello);
+
+-- La tabla anterior, que solo guardaba el género. Se tira: lo que tenía hay
+-- que volver a preguntarlo de todas formas —ahora se pide también la sinopsis,
+-- el reparto y el fondo—, y dejarla ahí sería tener dos sitios donde mirar. Es
+-- una caché: se vuelve a llenar sola.
+DROP TABLE IF EXISTS genero;
+
+-- Cuándo se trajo la parrilla de cada lista, para saber si toca rehacerla.
+CREATE TABLE IF NOT EXISTS parrilla (
+  lista_id TEXT PRIMARY KEY,
+  generado TEXT NOT NULL,
+  canales  INTEGER NOT NULL,
+  programas INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS admin (
   usuario    TEXT PRIMARY KEY,
   contrasena TEXT NOT NULL,
@@ -121,6 +195,44 @@ export interface Lista {
   grupoId: string;
   nombre: string;
   url: string;
+}
+
+/**
+ * Un programa tal como se guarda y se entrega.
+ *
+ * Las horas van en texto ISO y no como `Date`: es lo que entra en SQLite, lo
+ * que viaja por JSON y lo que el aparato vuelve a convertir con su propio
+ * huso. Convertirlas aquí a hora local sería decidir por él.
+ */
+/**
+ * La ficha larga de una película o una serie, tal como se guarda y se entrega.
+ *
+ * El género va como cadena —vacía si no se sabe— y lo demás como opcional: la
+ * diferencia importa al guardar, porque lo que llega sin valor no pisa lo que
+ * ya hubiera.
+ */
+export interface FichaGuardada {
+  id: string;
+  clase: 'pelicula' | 'serie';
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  fondo?: string;
+  trailer?: string;
+  /** La nota de TMDb, sus votos y su popularidad. La del panel está inflada. */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
+}
+
+export interface ProgramaGuardado {
+  canal: string;
+  desde: string;
+  hasta: string;
+  titulo: string;
+  sinopsis: string | null;
 }
 
 function ahora(): string {
@@ -168,6 +280,42 @@ export class Panel {
     this.#db = new DatabaseSync(join(carpeta, 'panel.sqlite'));
     this.#db.exec('PRAGMA journal_mode = WAL');
     this.#db.exec(ESQUEMA_PANEL);
+    this.#migrarFicha();
+  }
+
+  /**
+   * Las columnas que se añadieron después de crear la tabla `ficha`.
+   *
+   * `CREATE TABLE IF NOT EXISTS` no toca una tabla que ya existe, así que en un
+   * servidor que lleve días funcionando estas columnas no aparecerían y la
+   * siguiente pasada reventaría con "no such column".
+   *
+   * Y al añadirlas se **borra la marca de preguntado**: todo lo que hubiera se
+   * averiguó sin ellas, así que hay que volver a pasar. Va aquí dentro y no
+   * fuera porque solo ocurre la vez que la columna se crea; puesto fuera, cada
+   * arranque mandaría a repreguntar el catálogo entero.
+   */
+  #migrarFicha(): void {
+    const existentes = new Set(
+      this.#filas('PRAGMA table_info(ficha)').map((fila) => fila.name as string),
+    );
+
+    const nuevas = [
+      { columna: 'nota', tipo: 'REAL' },
+      { columna: 'votos', tipo: 'INTEGER' },
+      { columna: 'popularidad', tipo: 'REAL' },
+      { columna: 'duracion', tipo: 'INTEGER' },
+    ].filter(({ columna }) => !existentes.has(columna));
+
+    if (nuevas.length === 0) return;
+
+    for (const { columna, tipo } of nuevas) {
+      this.#db.exec(`ALTER TABLE ficha ADD COLUMN ${columna} ${tipo}`);
+      console.log(`[panel] columna añadida: ficha.${columna}`);
+    }
+
+    this.#ejecutar('UPDATE ficha SET completa = 0', []);
+    console.log('[panel] las fichas se vuelven a preguntar: les falta la nota de TMDb');
   }
 
   cerrar(): void {
@@ -218,10 +366,19 @@ export class Panel {
       db = new DatabaseSync(join(this.#carpeta, `grupo-${grupoId}.sqlite`));
       db.exec('PRAGMA journal_mode = WAL');
       db.exec(SCHEMA_PERFILES_SQL);
+
+      // Las columnas añadidas después de la primera versión: en una base ya
+      // creada no las pone `CREATE TABLE IF NOT EXISTS`.
+      migrarTablasDePerfil({
+        columnas: (tabla) =>
+          (db!.prepare(`PRAGMA table_info(${tabla})`).all() as Array<{ name: string }>).map((fila) => fila.name),
+        ejecutar: (sql) => db!.exec(sql),
+      });
+
       for (const indice of INDICES_TRAS_MIGRAR_SQL) {
         // Los índices del catálogo no aplican aquí: solo existen las tablas de
         // perfil, así que se salta lo que hable de otras.
-        if (/ON (profile|progress|favorite|profile_setting) /.test(indice)) db.exec(indice);
+        if (/ON (profile|progress|favorite|profile_setting|affinity) /.test(indice)) db.exec(indice);
       }
       for (const relleno of RELLENOS_SQL) db.exec(relleno);
 
@@ -229,7 +386,9 @@ export class Panel {
       // llegó cada fila, según su propio reloj. Los aparatos piden novedades
       // por aquí y no por la fecha del cambio, que es de quien lo hizo y
       // puede llegar con días de retraso. Está explicado en `Cambio.sello`.
-      for (const tabla of ['profile', 'progress', 'favorite', 'profile_setting']) {
+      // La lista sale del esquema y no está escrita a mano: añadir una tabla
+      // al reparto es una línea en `SINCRONIZADAS`, y aquí no hay que tocar.
+      for (const { tabla } of SINCRONIZADAS) {
         const columnas = (db.prepare(`PRAGMA table_info(${tabla})`).all() as Array<{ name: string }>).map(
           (fila) => fila.name,
         );
@@ -385,6 +544,18 @@ export class Panel {
    * que dentro de tres meses sepas qué era "el que revoqué en agosto". Y sin
    * token, no vuelve a entrar.
    */
+  /**
+   * Le cambia el nombre a un aparato.
+   *
+   * El nombre no es decoración: es lo que ve la gente cuando la aplicación
+   * dice "se ha parado porque has empezado a ver algo en TV Salón". Sin poder
+   * cambiarlo, un aparato aprobado con prisa se queda para siempre llamándose
+   * como su código de emparejamiento.
+   */
+  renombrarAparato(id: string, nombre: string): void {
+    this.#ejecutar('UPDATE aparato SET nombre = ? WHERE id = ?', [nombre.trim() || 'Aparato', id]);
+  }
+
   revocar(id: string): void {
     this.#ejecutar("UPDATE aparato SET estado = 'revocado', token = NULL, espera = NULL WHERE id = ?", [id]);
   }
@@ -409,6 +580,233 @@ export class Panel {
     } catch {
       return null;
     }
+  }
+
+  // --- Parrilla del directo -------------------------------------------------
+
+  /**
+   * Guarda la parrilla de una lista, reemplazando la que hubiera.
+   *
+   * Se borra y se vuelve a escribir entera en una transacción: no hay nada que
+   * fusionar —el panel manda la verdad completa cada vez— y así no quedan
+   * programas viejos de un canal que ya no venga. Esto **no** es el historial:
+   * aquí no hay lápidas que valgan, es una copia de lo que dice el panel.
+   */
+  guardarParrilla(listaId: string, programas: ProgramaGuardado[]): void {
+    // BEGIN y COMMIT no llevan parámetros y `prepare` los rechaza: van por
+    // `exec`, como en `comoBaseSQL`.
+    this.#db.exec('BEGIN');
+    try {
+      this.#ejecutar('DELETE FROM programa WHERE lista_id = ?', [listaId]);
+      for (const uno of programas) {
+        this.#ejecutar(
+          'INSERT INTO programa (lista_id, canal, desde, hasta, titulo, sinopsis) VALUES (?, ?, ?, ?, ?, ?)',
+          [listaId, uno.canal, uno.desde, uno.hasta, uno.titulo, uno.sinopsis],
+        );
+      }
+      const canales = new Set(programas.map((uno) => uno.canal)).size;
+      this.#ejecutar(
+        `INSERT INTO parrilla (lista_id, generado, canales, programas) VALUES (?, ?, ?, ?)
+         ON CONFLICT(lista_id) DO UPDATE SET generado = excluded.generado,
+           canales = excluded.canales, programas = excluded.programas`,
+        [listaId, ahora(), canales, programas.length],
+      );
+      this.#db.exec('COMMIT');
+    } catch (fallo) {
+      this.#db.exec('ROLLBACK');
+      throw fallo;
+    }
+  }
+
+  /** Cuándo se trajo la parrilla de una lista, o `null` si nunca. */
+  parrillaDe(listaId: string): { generado: string; canales: number; programas: number } | null {
+    const fila = this.#filas('SELECT generado, canales, programas FROM parrilla WHERE lista_id = ?', [
+      listaId,
+    ])[0];
+    if (!fila) return null;
+    return {
+      generado: fila.generado as string,
+      canales: Number(fila.canales),
+      programas: Number(fila.programas),
+    };
+  }
+
+  /**
+   * Lo que echan ahora en cada canal de una lista, y lo que viene después.
+   *
+   * Dos filas por canal y no la parrilla entera: es lo que cabe en la ficha de
+   * un canal, y lo que hace que la respuesta sean decenas de kilobytes en vez
+   * de megas. Lo que ya terminó no se manda: para eso está la hora.
+   */
+  loQueEchan(listaId: string, desde: string, porCanal = 2): ProgramaGuardado[] {
+    const filas = this.#filas(
+      `SELECT canal, desde, hasta, titulo, sinopsis FROM programa
+       WHERE lista_id = ? AND hasta > ?
+       ORDER BY canal, desde`,
+      [listaId, desde],
+    );
+
+    // El recorte por canal se hace aquí y no en SQL: SQLite no tiene funciones
+    // de ventana en todas las compilaciones y esto son unos cientos de filas.
+    const salida: ProgramaGuardado[] = [];
+    let canal = '';
+    let cuantos = 0;
+    for (const fila of filas) {
+      if (fila.canal !== canal) {
+        canal = fila.canal as string;
+        cuantos = 0;
+      }
+      if (cuantos >= porCanal) continue;
+      cuantos += 1;
+      salida.push({
+        canal: fila.canal as string,
+        desde: fila.desde as string,
+        hasta: fila.hasta as string,
+        titulo: fila.titulo as string,
+        sinopsis: (fila.sinopsis ?? null) as string | null,
+      });
+    }
+    return salida;
+  }
+
+  // --- Géneros ---------------------------------------------------------------
+
+  /** Lo ya preguntado de una lista, con género o sin él. */
+  fichasConocidas(listaId: string): Set<string> {
+    return new Set(
+      this.#filas('SELECT item_id FROM ficha WHERE lista_id = ? AND completa = 1', [listaId]).map(
+        (fila) => fila.item_id as string,
+      ),
+    );
+  }
+
+  /**
+   * Guarda lo averiguado. Todo lo de una pasada comparte sello.
+   *
+   * Al aparato le da igual el orden dentro de una tanda: lo que necesita es
+   * poder decir "dame lo posterior a esto", y para eso basta un número por
+   * pasada.
+   */
+  guardarFichas(listaId: string, fichas: FichaGuardada[], sello = Date.now()): void {
+    if (fichas.length === 0) return;
+
+    this.#db.exec('BEGIN');
+    try {
+      for (const [puesto, ficha] of fichas.entries()) {
+        /*
+          Lo que venga vacío **no borra lo que ya había**. Una fila puede traer
+          el género del panel de una pasada anterior y que TMDb no conozca la
+          película: quedarse sin género por haber preguntado otra vez sería ir
+          para atrás.
+        */
+        this.#ejecutar(
+          `INSERT INTO ficha
+                (lista_id, item_id, clase, genero, sinopsis, reparto, fondo, trailer,
+                 nota, votos, popularidad, duracion, completa, sello)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+           ON CONFLICT(lista_id, item_id) DO UPDATE SET
+             clase    = excluded.clase,
+             genero   = CASE WHEN excluded.genero <> '' THEN excluded.genero ELSE ficha.genero END,
+             sinopsis = COALESCE(excluded.sinopsis, ficha.sinopsis),
+             reparto  = COALESCE(excluded.reparto, ficha.reparto),
+             fondo    = COALESCE(excluded.fondo, ficha.fondo),
+             trailer  = COALESCE(excluded.trailer, ficha.trailer),
+             nota     = COALESCE(excluded.nota, ficha.nota),
+             votos    = COALESCE(excluded.votos, ficha.votos),
+             popularidad = COALESCE(excluded.popularidad, ficha.popularidad),
+             duracion = COALESCE(excluded.duracion, ficha.duracion),
+             completa = 1,
+             sello    = excluded.sello`,
+          [
+            listaId,
+            ficha.id,
+            ficha.clase,
+            ficha.genero,
+            ficha.sinopsis ?? null,
+            ficha.reparto ?? null,
+            ficha.fondo ?? null,
+            ficha.trailer ?? null,
+            ficha.nota ?? null,
+            ficha.votos ?? null,
+            ficha.popularidad ?? null,
+            ficha.duracion ?? null,
+            /*
+              **Un sello por fila, no uno por pasada.** El aparato pide "lo
+              posterior a este sello" y se lleva mil de una vez: con el sello
+              compartido, al pedir lo siguiente se saltaba **todas** las de esa
+              pasada, incluidas las mil que aún no se había llevado. Medido
+              contra el servidor real: se traía 2.000 de las 3.873 que había y
+              se paraba tan tranquilo.
+
+              Sumar el puesto basta y no se pisa con la pasada siguiente, que
+              va una hora después y son milisegundos.
+            */
+            sello + puesto,
+          ],
+        );
+      }
+      this.#db.exec('COMMIT');
+    } catch (fallo) {
+      this.#db.exec('ROLLBACK');
+      throw fallo;
+    }
+  }
+
+  /**
+   * Cuántas se han preguntado ya y cuándo fue la última pasada.
+   *
+   * Lo de "cuándo" sale del propio sello, que es la hora en milisegundos: por
+   * eso no hace falta una tabla aparte para llevar la cuenta del trabajo.
+   */
+  cuantasFichas(listaId: string): { preguntadas: number; conGenero: number; ultima: number } {
+    const fila = this.#filas(
+      `SELECT SUM(completa) AS todas,
+              SUM(CASE WHEN genero <> '' THEN 1 ELSE 0 END) AS llenas,
+              MAX(sello) AS ultima
+         FROM ficha WHERE lista_id = ?`,
+      [listaId],
+    )[0];
+    return {
+      preguntadas: Number(fila?.todas ?? 0),
+      conGenero: Number(fila?.llenas ?? 0),
+      ultima: Number(fila?.ultima ?? 0),
+    };
+  }
+
+  /**
+   * Lo averiguado después de un sello, para que el aparato pida solo lo nuevo.
+   *
+   * Solo lo que trae algo: lo que nadie supo contestar se guarda aquí para no
+   * volver a preguntarlo, pero al aparato no le sirve de nada.
+   */
+  fichasDesde(listaId: string, desde: number, limite: number): { fichas: FichaGuardada[]; hasta: number } {
+    const filas = this.#filas(
+      `SELECT item_id, clase, genero, sinopsis, reparto, fondo, trailer, nota, votos, popularidad,
+              duracion, sello
+         FROM ficha
+        WHERE lista_id = ? AND sello > ?
+          AND (genero <> '' OR sinopsis IS NOT NULL OR fondo IS NOT NULL OR trailer IS NOT NULL
+               OR nota IS NOT NULL OR duracion IS NOT NULL)
+        ORDER BY sello, item_id LIMIT ?`,
+      [listaId, desde, limite],
+    );
+
+    return {
+      fichas: filas.map((fila) => ({
+        id: fila.item_id as string,
+        clase: fila.clase as FichaGuardada['clase'],
+        genero: fila.genero as string,
+        sinopsis: (fila.sinopsis as string | null) ?? undefined,
+        reparto: (fila.reparto as string | null) ?? undefined,
+        fondo: (fila.fondo as string | null) ?? undefined,
+        trailer: (fila.trailer as string | null) ?? undefined,
+        nota: (fila.nota as number | null) ?? undefined,
+        votos: (fila.votos as number | null) ?? undefined,
+        popularidad: (fila.popularidad as number | null) ?? undefined,
+        duracion: (fila.duracion as number | null) ?? undefined,
+      })),
+      hasta: filas.reduce((alto, fila) => Math.max(alto, Number(fila.sello)), desde),
+    };
   }
 
   /** Todas las listas del servidor, para el trabajo diario. */

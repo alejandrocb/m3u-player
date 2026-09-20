@@ -20,6 +20,13 @@ export interface EstadoSync {
   token: string;
   grupo: { id: string; nombre: string } | null;
   /**
+   * Cómo se llama este aparato en la casa: "TV Salón".
+   *
+   * Se lo pone quien lo aprueba en la web, y hace falta para poder decir en
+   * los demás **dónde** ha empezado a ver algo esta persona.
+   */
+  aparato?: string;
+  /**
    * Hasta dónde se ha subido, en fechas de cambio **de este aparato**.
    *
    * Son dos marcas y no una porque están en escalas distintas: lo que queda
@@ -30,6 +37,16 @@ export interface EstadoSync {
   subida: string;
   /** Hasta dónde se ha bajado, en sellos del servidor. */
   bajada: string;
+  /**
+   * Recién emparejado: este aparato todavía tiene que adoptar los perfiles
+   * de la casa.
+   *
+   * Se pone al aprobar el alta y lo quita la aplicación cuando ya ha vaciado
+   * los suyos. Va en el estado y no en una variable porque entre una cosa y
+   * otra puede cerrarse la aplicación: emparejar se hace en la pantalla de
+   * listas y los perfiles no se abren hasta conectar con una.
+   */
+  adoptar?: boolean;
 }
 
 export interface AlmacenSync {
@@ -125,6 +142,54 @@ export interface Preparado {
   generos: GeneroRemoto[];
 }
 
+/**
+ * La ficha larga que prepara el servidor, para el catálogo entero.
+ *
+ * Es lo mismo que da `get_vod_info` del panel, pero averiguado una vez por
+ * casa y no una vez por aparato y arranque: género, sinopsis, reparto, la
+ * imagen apaisada y el identificador del tráiler de YouTube.
+ *
+ * Todo puede faltar. Lo que llegue vacío no pisa lo que el aparato ya tuviera.
+ */
+export interface FichaRemota {
+  id: string;
+  clase: 'pelicula' | 'serie';
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  fondo?: string;
+  trailer?: string;
+  /** La nota de TMDb y cuántos la han votado. La del panel está inflada. */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
+}
+
+/** Lo que el servidor lleva averiguado desde la última vez que se preguntó. */
+export interface FichasNuevas {
+  fichas: FichaRemota[];
+  /** Hasta dónde se ha leído. Se guarda y se manda en la siguiente. */
+  hasta: number;
+}
+
+/**
+ * Un programa de la parrilla que prepara el servidor.
+ *
+ * El canal es el `tvg-id`, que es el identificador con el que el aparato tiene
+ * guardado ese canal: comprobado contra la lista real, los del EPG del panel
+ * casan 191 de 191. Las horas vienen en ISO y en UTC, y las convierte a la
+ * hora local quien las pinta.
+ */
+export interface ProgramaRemoto {
+  canal: string;
+  desde: string;
+  hasta: string;
+  titulo: string;
+  sinopsis: string | null;
+}
+
 export class ClienteSync {
   #almacen: AlmacenSync;
   #perfiles: FuenteDeCambios;
@@ -179,6 +244,7 @@ export class ClienteSync {
     const datos = (await respuesta.json()) as {
       estado?: string;
       token?: string;
+      aparato?: { id: string; nombre: string | null };
       grupo?: { id: string; nombre: string } | null;
       listas?: ListaRemota[];
     };
@@ -188,10 +254,13 @@ export class ClienteSync {
       servidor: limpiar(servidor),
       token: datos.token,
       grupo: datos.grupo ?? null,
+      aparato: datos.aparato?.nombre ?? undefined,
       // Desde cero las dos: un aparato recién emparejado se trae todo lo que
-      // haya en su casa y sube todo lo que tuviera guardado.
+      // haya en su casa.
       subida: '',
       bajada: '',
+      // Y lo suyo lo tira: los perfiles son de la casa.
+      adoptar: true,
     });
 
     return { estado: 'aprobado', grupo: datos.grupo ?? null, listas: datos.listas ?? [] };
@@ -221,7 +290,7 @@ export class ClienteSync {
     }
     if (!respuesta.ok) throw new Error(`el servidor respondió ${respuesta.status}`);
 
-    const datos = (await respuesta.json()) as { cambios?: Cambio[]; marca?: string };
+    const datos = (await respuesta.json()) as { cambios?: Cambio[]; marca?: string; aparato?: string | null };
     const suyos = datos.cambios ?? [];
     if (suyos.length > 0) await this.#perfiles.aplicarCambios(suyos);
 
@@ -231,6 +300,9 @@ export class ClienteSync {
       // respuesta: son escalas distintas.
       subida: marcaTras(estado.subida, mios),
       bajada: datos.marca ?? marcaTras(estado.bajada, suyos),
+      // El servidor recuerda en cada vuelta cómo se llama este aparato: así
+      // lo aprenden también los que se emparejaron antes de que hiciera falta.
+      aparato: datos.aparato ?? estado.aparato,
     });
 
     return { subidos: mios.length, bajados: suyos.length };
@@ -283,6 +355,78 @@ export class ClienteSync {
       // Sin red, el inicio sale igual. Que esto no impida arrancar.
       return vacio;
     }
+  }
+
+  /**
+   * Las fichas que el servidor ha ido averiguando, desde una marca de agua.
+   *
+   * El catálogo del panel no trae ni el género ni la sinopsis, y preguntarlo
+   * es una petición por título: el servidor lo va rellenando y aquí se recoge.
+   * Por eso se pide "lo posterior a esto" y no todo, y por eso quien llama
+   * vuelve a pedir mientras las respuestas lleguen llenas: con la sinopsis
+   * dentro, las 24.000 no caben en una.
+   *
+   * Como el resto de lo que prepara el servidor, esto acelera y no sostiene:
+   * sin respuesta, las fichas salen con lo que traiga el catálogo y ya está.
+   */
+  async fichas(desde: number): Promise<FichasNuevas> {
+    const vacio: FichasNuevas = { fichas: [], hasta: desde };
+    const estado = await this.#almacen.leer();
+    if (!estado) return vacio;
+
+    try {
+      const respuesta = await this.#buscar(`${estado.servidor}/api/fichas?desde=${desde}`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${estado.token}` },
+      });
+      if (!respuesta.ok) return vacio;
+
+      const datos = (await respuesta.json()) as Partial<FichasNuevas>;
+      return {
+        fichas: Array.isArray(datos.fichas) ? datos.fichas : [],
+        hasta: Number(datos.hasta) || desde,
+      };
+    } catch {
+      return vacio;
+    }
+  }
+
+  /**
+   * Lo que echan ahora en el directo, según la parrilla del servidor.
+   *
+   * El servidor se trae el EPG entero del panel —5,5 MB, una petición al
+   * día— y de ahí manda solo el resumen: dos programas por canal, el de ahora
+   * y el siguiente. Al aparato le llegan decenas de kilobytes en una sola
+   * petición, en vez de una por canal cada vez que el foco se para.
+   *
+   * Como todo lo que prepara el servidor, es un acelerador y no un requisito:
+   * sin respuesta se devuelve vacío y la programación se pide al panel canal a
+   * canal, que es lo que se hacía antes de que existiera esto.
+   */
+  async epg(): Promise<ProgramaRemoto[]> {
+    const estado = await this.#almacen.leer();
+    if (!estado) return [];
+
+    try {
+      const respuesta = await this.#buscar(`${estado.servidor}/api/epg`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${estado.token}` },
+      });
+      if (!respuesta.ok) return [];
+
+      const datos = (await respuesta.json()) as { programas?: ProgramaRemoto[] };
+      return Array.isArray(datos.programas) ? datos.programas : [];
+    } catch {
+      // Sin red, el directo sigue funcionando: solo se queda sin parrilla.
+      return [];
+    }
+  }
+
+  /** Ya se han vaciado los perfiles locales: no hay que volver a hacerlo. */
+  async adoptado(): Promise<void> {
+    const estado = await this.#almacen.leer();
+    if (!estado?.adoptar) return;
+    await this.#almacen.guardar({ ...estado, adoptar: false });
   }
 
   /** Deja de sincronizar. Lo guardado en el aparato se queda como está. */

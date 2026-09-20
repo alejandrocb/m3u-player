@@ -12,6 +12,7 @@
     "node": ">=22.18"
   },
   "scripts": {
+    "postinstall": "node tools/sello.mjs",
     "probe": "node tools/probe/src/index.ts",
     "test": "node --test packages/*/test/*.test.ts apps/sync/test/*.test.ts",
     "typecheck": "tsc -p tsconfig.json",

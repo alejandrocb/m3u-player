@@ -17,10 +17,20 @@
 import { buildLibrary, parseM3U } from '@m3u/core';
 import { XtreamClient, construirCatalogo, credentialsFromUrl, fichaDeSerie, temporadasDeSerie } from '@m3u/core/xtream';
 import type { Library } from '@m3u/core';
-import type { AlmacenPerfiles, Biblioteca, Cuenta, FichaLarga, Programacion } from '@m3u/ui';
+import type {
+  AlmacenDescargas,
+  AlmacenPerfiles,
+  Biblioteca,
+  Cuenta,
+  FichaLarga,
+  FichasNuevas,
+  Programacion,
+  ProgramaRemoto,
+} from '@m3u/ui';
 
-import { abrirBase, estadoGuardado, guardarCatalogo } from './basedatos';
+import { abrirBase, estadoGuardado, guardarCatalogo, meta, ponerMeta } from './basedatos';
 import { bibliotecaEnBase } from './biblioteca-base';
+import { descargasEnBase } from './descargas-base';
 import { perfilesEnBase } from './perfiles-base';
 import { programacionDelPanel } from './programacion';
 
@@ -38,12 +48,26 @@ export interface Medicion {
   peliculas: number;
   series: number;
   entradas: number;
+  /**
+   * Cuántas conexiones simultáneas admite la cuenta, según el panel.
+   *
+   * No se supone: la primera cuenta del proveedor daba 1 y la segunda, 3. Es
+   * lo que reparte el árbitro. `null` si el panel no contestó.
+   */
+  conexiones: number | null;
 }
 
 export interface Cargada {
   biblioteca: Biblioteca;
   /** Perfiles, historial y favoritos: viven en la misma base. */
   perfiles: AlmacenPerfiles;
+  /**
+   * La cola de descargas, que también vive en la misma base.
+   *
+   * Es del aparato y no del perfil ni de la casa: el fichero está en **este**
+   * disco, así que no se sincroniza con nadie.
+   */
+  descargas: AlmacenDescargas;
   /** La parrilla del directo, que se pide al panel y no se guarda. */
   programacion: Programacion;
   medicion: Medicion;
@@ -58,6 +82,77 @@ export interface Avance {
 export interface OpcionesCarga {
   /** El botón de actualizar: reimporta aunque lo guardado esté fresco. */
   forzar?: boolean;
+  /**
+   * La parrilla que prepara el servidor de la casa.
+   *
+   * Es opcional porque no todas las casas tienen servidor: sin esto, la
+   * programación se le pide al panel canal a canal, como siempre.
+   */
+  parrilla?: () => Promise<ProgramaRemoto[]>;
+  /**
+   * Las fichas largas que el servidor de la casa lleva averiguadas.
+   *
+   * También opcional, y por lo mismo: sin servidor, cada ficha se le pregunta
+   * al panel cuando se abre, que es una petición y 400 ms.
+   */
+  fichas?: (desde: number) => Promise<FichasNuevas>;
+}
+
+/**
+ * Por dónde iba la recogida de fichas. Es la marca de agua del servidor.
+ *
+ * Lleva un 2 detrás porque la primera versión se dejó fichas por el camino:
+ * el servidor sellaba toda una pasada con el mismo número y pedir "lo
+ * posterior" se saltaba la mitad. Cambiarle el nombre a la clave hace que cada
+ * aparato lo recoja todo una vez más, que es lo que hace falta para ponerse al
+ * día.
+ */
+const MARCA_FICHAS = 'fichas:desde2';
+
+/**
+ * Cuántas vueltas se dan como mucho en una recogida.
+ *
+ * El servidor manda mil por respuesta y el catálogo son 24.000, así que la
+ * primera vez hacen falta unas cuantas vueltas. El tope está para que un
+ * servidor que devolviera siempre lo mismo no dejara la aplicación dando
+ * vueltas sin arrancar: lo que falte se recoge en la sesión siguiente.
+ */
+const VUELTAS = 30;
+
+/**
+ * Recoge del servidor las fichas nuevas y las anota en la base.
+ *
+ * Se pide "lo posterior a la última vez" y no todo, y se vuelve a pedir
+ * mientras las respuestas lleguen llenas: es como se sabe que ya no queda
+ * nada. Si algo falla, se queda como estaba: esto adorna la ficha, no sostiene
+ * la pantalla.
+ */
+async function recogerFichas(
+  db: ReturnType<typeof abrirBase>['db'],
+  biblioteca: Biblioteca,
+  pedir: (desde: number) => Promise<FichasNuevas>,
+): Promise<void> {
+  try {
+    let desde = Number(meta(db, MARCA_FICHAS)) || 0;
+    let traidas = 0;
+
+    for (let vuelta = 0; vuelta < VUELTAS; vuelta += 1) {
+      const nuevas = await pedir(desde);
+      if (nuevas.fichas.length === 0) break;
+
+      await biblioteca.guardarFichas(nuevas.fichas);
+      traidas += nuevas.fichas.length;
+
+      // La marca no avanza: sin ella la siguiente vuelta pediría lo mismo.
+      if (nuevas.hasta <= desde) break;
+      desde = nuevas.hasta;
+      ponerMeta(db, MARCA_FICHAS, String(desde));
+    }
+
+    if (traidas > 0) console.log(`[fichas] ${traidas} del servidor, hasta ${desde}`);
+  } catch (fallo) {
+    console.warn('[fichas] no se pudieron recoger', fallo);
+  }
 }
 
 export async function cargarCatalogo(
@@ -82,39 +177,97 @@ export async function cargarCatalogo(
     traerFichaSerie: (panelIds) => (cliente ? fichaDeSerie(cliente, panelIds) : Promise.resolve(null)),
   });
 
+  /*
+    El handshake, solo para saber cuántas conexiones da la cuenta. Es una
+    petición barata y se pide siempre, también cuando el catálogo ya está
+    guardado: el proveedor puede cambiar el límite y el árbitro reparte con lo
+    que diga el panel, no con lo que hubiera la primera vez.
+  */
+  const conexiones = cliente
+    ? await cliente
+        .info()
+        .then(({ user_info }) => Number(user_info.max_connections) || null)
+        .catch(() => null)
+    : null;
+
   const guardado = estadoGuardado(db, cuenta.id);
-  if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) {
+
+  /** Abrir con lo que ya hay en la base, sin preguntarle nada al panel. */
+  const conLoGuardado = async (tiene: NonNullable<typeof guardado>): Promise<Cargada> => {
+    if (opciones.fichas) await recogerFichas(db, biblioteca, opciones.fichas);
     const totales = await biblioteca.totales();
     return {
       biblioteca,
       perfiles,
-      programacion: programacionDelPanel(cliente, biblioteca),
+      descargas: descargasEnBase(db),
+      programacion: programacionDelPanel({ cliente, biblioteca, parrilla: opciones.parrilla }),
       medicion: {
         total: Date.now() - arranque,
         via: 'guardada',
-        importada: guardado.importada,
-        dias: guardado.dias,
+        importada: tiene.importada,
+        dias: tiene.dias,
         canales: totales.canales,
         peliculas: totales.peliculas,
         series: totales.series,
         entradas: totales.canales + totales.peliculas + totales.series,
+        conexiones,
       },
     };
-  }
+  };
 
-  const library = cliente
-    ? await construirCatalogo(cliente, {
-        avance: (hecho, total, seccion) => avisar({ seccion, hecho, total }),
-      })
-    : await descargarM3U(cuenta.url, avisar);
+  if (guardado && guardado.dias < DIAS_FRESCURA && !opciones.forzar) return conLoGuardado(guardado);
+
+  /*
+    **Si el refresco falla y hay catálogo guardado, se entra con el guardado.**
+
+    Un catálogo de cuatro días es perfectamente usable: le faltan los estrenos
+    de esta semana y nada más. Quedarse fuera de la aplicación entera porque el
+    panel ha tardado más de la cuenta en una de las sesenta y seis peticiones
+    es mucho peor, y es lo que pasaba: la pantalla de listas con un "Aborted"
+    en rojo y ninguna forma de seguir.
+
+    Sin nada guardado no hay nada que enseñar, así que ahí el fallo sí sale.
+  */
+  // Por dónde iba cuando se rompa: con sesenta y seis peticiones seguidas, un
+  // fallo sin esto no dice nada de dónde ha ocurrido.
+  let ultima = 'el saludo inicial';
+
+  console.log(`[catalogo] refrescando${guardado ? ` (lo guardado tiene ${guardado.dias} días)` : ' por primera vez'}`);
+
+  let library: Library;
+  try {
+    library = cliente
+      ? await construirCatalogo(cliente, {
+          avance: (hecho, total, seccion) => {
+            ultima = seccion;
+            avisar({ seccion, hecho, total });
+          },
+        })
+      : await descargarM3U(cuenta.url, avisar);
+  } catch (fallo) {
+    if (!guardado) throw fallo;
+    console.warn(`[catalogo] no se pudo refrescar en "${ultima}"; se sigue con lo guardado`, fallo);
+    return conLoGuardado(guardado);
+  }
 
   avisar({ seccion: 'Guardando', hecho: 1, total: 1 });
   guardarCatalogo(db, library, cuenta.id, conBusquedaRapida);
 
+  /*
+    Después de importar, y desde el principio: el catálogo recién traído no
+    lleva ninguna ficha, así que hay que volver a pedirlas todas. Reimportar no
+    es olvidar lo que el servidor sabe.
+  */
+  if (opciones.fichas) {
+    ponerMeta(db, MARCA_FICHAS, '0');
+    await recogerFichas(db, biblioteca, opciones.fichas);
+  }
+
   return {
     biblioteca,
     perfiles,
-    programacion: programacionDelPanel(cliente, biblioteca),
+    descargas: descargasEnBase(db),
+    programacion: programacionDelPanel({ cliente, biblioteca, parrilla: opciones.parrilla }),
     medicion: {
       total: Date.now() - arranque,
       via: cliente ? 'panel' : 'm3u',
@@ -123,6 +276,7 @@ export async function cargarCatalogo(
       canales: library.stats.channels,
       peliculas: library.stats.movies,
       series: library.stats.series,
+      conexiones,
       // Fichas ya fusionadas, para que la cifra sea la misma se venga del
       // panel o de la base. `stats.entries` cuenta entradas del proveedor,
       // que son más porque incluyen las repetidas por calidad.
@@ -173,8 +327,13 @@ async function detalleDePelicula(cliente: XtreamClient, panelIds: number[]): Pro
     // `backdrop_path` llega como lista aunque traiga una sola imagen.
     const fondo = info.backdrop_path?.find((una) => typeof una === 'string' && una.trim()) ?? null;
     const genero = info.genre?.trim() || null;
+    // El tráiler no se reproduce aquí: se abre en YouTube, que además no gasta
+    // conexión del panel.
+    const trailer = info.youtube_trailer?.trim() || null;
 
-    if (sinopsis || reparto || fondo || genero) return { sinopsis, reparto, fondo, genero };
+    if (sinopsis || reparto || fondo || genero || trailer) {
+      return { sinopsis, reparto, fondo, genero, trailer };
+    }
   }
   return null;
 }

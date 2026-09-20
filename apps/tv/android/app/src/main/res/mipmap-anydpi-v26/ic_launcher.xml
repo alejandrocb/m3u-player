@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  El icono adaptable, que es el que usa Android desde la versión 8.
+
+  Va en dos capas porque el sistema las recorta con la máscara que quiera
+  —círculo, cuadrado redondeado, gota— y las mueve un poco al pasar el dedo.
+  Por eso la choza del primer plano se dibuja más pequeña que en el icono de
+  toda la vida: de los 108 del lienzo solo se garantizan los 72 del centro.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

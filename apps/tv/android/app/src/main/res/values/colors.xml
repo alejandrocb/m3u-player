@@ -1,0 +1,4 @@
+<resources>
+    <!-- El fondo del icono adaptable: el mismo negro que la aplicación. -->
+    <color name="ic_launcher_background">#0b0b0c</color>
+</resources>

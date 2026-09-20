@@ -121,6 +121,14 @@ export async function manejarAdmin(
     return true;
   }
 
+  if (ruta === '/aparato/nombre' && req.method === 'POST') {
+    const datos = await leerFormulario(req);
+    const id = datos.get('id');
+    if (id) panel.renombrarAparato(id, datos.get('nombre') ?? '');
+    redirigir(res, '/');
+    return true;
+  }
+
   if (ruta === '/revocar' && req.method === 'POST') {
     const datos = await leerFormulario(req);
     const id = datos.get('id');

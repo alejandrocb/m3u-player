@@ -109,6 +109,38 @@ CREATE TABLE IF NOT EXISTS variant (
   PRIMARY KEY (owner_kind, owner_id, url)
 ) WITHOUT ROWID;
 
+-- Lo que se ha pedido bajar al disco, con por dónde va.
+--
+-- Es del aparato y no del perfil: el fichero está en este disco y no en el de
+-- la tablet, así que **no se sincroniza**. Que dos aparatos de la misma casa
+-- tengan cosas distintas bajadas es lo correcto.
+--
+-- Los bytes se guardan en bruto porque son lo que hace falta para reanudar: al
+-- panel se le pide "Range: bytes=<esto>-" y se sigue por donde iba. El
+-- porcentaje se calcula al pintar.
+CREATE TABLE IF NOT EXISTS download (
+  -- clase:itemId, la misma clave que usa el historial.
+  id       TEXT PRIMARY KEY,
+  kind     TEXT NOT NULL,
+  item_id  TEXT NOT NULL,
+  title    TEXT NOT NULL,
+  series_id TEXT,
+  url      TEXT NOT NULL,
+  file     TEXT NOT NULL,
+  state    TEXT NOT NULL,
+  bytes    INTEGER NOT NULL DEFAULT 0,
+  total    INTEGER,
+  created  TEXT NOT NULL,
+  -- Cuánto dura, en segundos, si se sabe. Es lo que permite decir cuántas
+  -- horas de vídeo hay en el disco, que es lo que uno quiere saber antes de un
+  -- vuelo. De un episodio viene con el catálogo; de una película, del servidor.
+  seconds  INTEGER,
+  -- Cortes seguidos sin avanzar un byte. Un corte suelto no cuenta: en una
+  -- película de dos gigas por un wifi flojo los hay a montones.
+  tries    INTEGER NOT NULL DEFAULT 0,
+  error    TEXT
+) WITHOUT ROWID;
+
 `;
 
 /**
@@ -213,6 +245,22 @@ CREATE TABLE IF NOT EXISTS profile_setting (
   origin     TEXT,
   PRIMARY KEY (profile_id, key)
 ) WITHOUT ROWID;
+
+-- Cuánto usa cada perfil cada categoría, para poder subir al inicio lo que de
+-- verdad ve. Se cuentan **reproducciones**: mirar una carátula no es verla.
+--
+-- Es del perfil, no del aparato, así que viaja como todo lo demás: lo que ves
+-- en la tele ordena también el inicio de la tablet.
+CREATE TABLE IF NOT EXISTS affinity (
+  profile_id TEXT NOT NULL,
+  clave      TEXT NOT NULL,
+  veces      INTEGER NOT NULL DEFAULT 0,
+  updated    TEXT NOT NULL,
+  deleted    INTEGER NOT NULL DEFAULT 0,
+  origin     TEXT,
+  PRIMARY KEY (profile_id, clave)
+) WITHOUT ROWID;
+
 `;
 
 /**
@@ -230,9 +278,18 @@ CREATE TABLE IF NOT EXISTS profile_setting (
  * la misma conclusión en vez de quedarse cada uno con lo suyo.
  */
 export const SINCRONIZADAS: Array<{ tabla: string; clave: string[]; campos: string[] }> = [
-  { tabla: 'profile', clave: ['id'], campos: ['name', 'color', 'created'] },
+  { tabla: 'profile', clave: ['id'], campos: ['name', 'color', 'avatar', 'created'] },
   { tabla: 'progress', clave: ['profile_id', 'kind', 'item_id'], campos: ['seconds', 'duration', 'title'] },
   { tabla: 'favorite', clave: ['profile_id', 'kind', 'item_id'], campos: ['title', 'created'] },
+  /*
+    La afinidad se sincroniza como el resto, con la misma regla: gana el cambio
+    más reciente. Eso quiere decir que **no se suman las cuentas de los dos
+    aparatos**, se queda la última contada. Es lo correcto aquí: cada aparato
+    lleva su cuenta a partir de lo que ya sabía, así que la última es la que
+    más historia tiene detrás, y confundir "sumar" con "fusionar" haría que
+    ver una película en dos sitios contara doble.
+  */
+  { tabla: 'affinity', clave: ['profile_id', 'clave'], campos: ['veces'] },
   { tabla: 'profile_setting', clave: ['profile_id', 'key'], campos: ['value'] },
 ];
 
@@ -289,8 +346,28 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   /** Imagen apaisada, la que luce en la portada. El cartel es vertical. */
   { tabla: 'movie', columna: 'backdrop', tipo: 'TEXT' },
   { tabla: 'movie', columna: 'genre', tipo: 'TEXT' },
+  /** El tráiler de YouTube, que viene en la misma ficha larga. */
+  { tabla: 'movie', columna: 'trailer', tipo: 'TEXT' },
   /** Marca de que ya se preguntó, aunque el panel no contestara nada. */
   { tabla: 'movie', columna: 'detalle_pedido', tipo: 'TEXT' },
+  /*
+    La nota de TMDb, con cuántos la han votado, y su popularidad.
+
+    La del proveedor no vale para ordenar: reparte dieces a mansalva, y un 10
+    no quiere decir que sea buena sino que no la ha valorado nadie. Estas tres
+    vienen de la misma búsqueda con la que se averigua el género, así que no
+    cuestan ni una petición de más, y con los votos delante ya se puede
+    distinguir un 8 de mil personas de un 10 de dos.
+  */
+  /*
+    Cuánto dura, en segundos. No viene con el catálogo —`get_vod_streams` da
+    título, cartel, nota y año— y la pone el servidor con la ficha larga. De
+    los episodios sí viene, y por eso `episode` ya la tenía.
+  */
+  { tabla: 'movie', columna: 'seconds', tipo: 'INTEGER' },
+  { tabla: 'movie', columna: 'nota_tmdb', tipo: 'REAL' },
+  { tabla: 'movie', columna: 'votos_tmdb', tipo: 'INTEGER' },
+  { tabla: 'movie', columna: 'popularidad', tipo: 'REAL' },
   /*
     Y lo mismo para las series, que salen en la portada igual que las
     películas. Aquí la respuesta es `get_series_info`, la misma que trae los
@@ -301,7 +378,12 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'series', columna: 'actors', tipo: 'TEXT' },
   { tabla: 'series', columna: 'backdrop', tipo: 'TEXT' },
   { tabla: 'series', columna: 'genre', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'trailer', tipo: 'TEXT' },
   { tabla: 'series', columna: 'detalle_pedido', tipo: 'TEXT' },
+  { tabla: 'series', columna: 'seconds', tipo: 'INTEGER' },
+  { tabla: 'series', columna: 'nota_tmdb', tipo: 'REAL' },
+  { tabla: 'series', columna: 'votos_tmdb', tipo: 'INTEGER' },
+  { tabla: 'series', columna: 'popularidad', tipo: 'REAL' },
   { tabla: 'episode', columna: 'rating', tipo: 'REAL' },
   { tabla: 'episode', columna: 'year', tipo: 'INTEGER' },
   { tabla: 'episode', columna: 'seconds', tipo: 'INTEGER' },
@@ -309,6 +391,12 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   // añadir una columna obligatoria sin valor por defecto, y el que tocaría
   // —la fecha de ahora— haría que todo lo viejo pareciera recién cambiado y
   // ganara la primera fusión. Se rellenan justo después, en RELLENOS_SQL.
+  /*
+    El retrato del perfil: el nombre de uno de los que trae la aplicación
+    ("gato", "buho"…), no una imagen. Así viaja en una palabra y se pinta
+    igual en los cuatro aparatos, sin subir nada a ninguna parte.
+  */
+  { tabla: 'profile', columna: 'avatar', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'updated', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
   { tabla: 'profile', columna: 'origin', tipo: 'TEXT' },
@@ -321,6 +409,28 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
   { tabla: 'profile_setting', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },
   { tabla: 'profile_setting', columna: 'origin', tipo: 'TEXT' },
 ];
+
+/**
+ * Pone al día las tablas de perfil de una base que ya existía.
+ *
+ * Lo usan el servidor, para la base de cada casa, y los tests. El aparato
+ * tiene su propio recorrido porque además migra las tablas del catálogo.
+ *
+ * Sin esto, añadir una columna a un perfil —el retrato, por ejemplo— tumbaba
+ * la sincronización con un "no such column": quien reparte pide todas las
+ * columnas de la tabla, y de un lado no existían.
+ */
+export function migrarTablasDePerfil(base: {
+  columnas(tabla: string): string[];
+  ejecutar(sql: string): void;
+}): void {
+  const dePerfil = new Set(SINCRONIZADAS.map(({ tabla }) => tabla));
+  for (const { tabla, columna, tipo } of COLUMNAS_MIGRADAS) {
+    if (!dePerfil.has(tabla)) continue;
+    if (base.columnas(tabla).includes(columna)) continue;
+    base.ejecutar(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${tipo}`);
+  }
+}
 
 /**
  * Fecha de las filas que existían antes de que hubiera sincronización.

@@ -146,6 +146,87 @@ export function IconoSubtitulos({ tamano = 18, color = TINTA }: Props) {
   );
 }
 
+/**
+ * "Emitiendo a otra pantalla": la pantalla con las ondas saliendo de la
+ * esquina, el mismo que usa todo el mundo para esto y que se reconoce sin
+ * leer nada.
+ *
+ * La pantalla va en dos piezas —arriba a la izquierda y el resto— para dejar
+ * abierta la esquina de abajo, que es donde nacen las ondas. Cada onda es un
+ * cuarto de anillo: una caja con solo los bordes de arriba y de la derecha y
+ * esa esquina redondeada del todo.
+ */
+export function IconoEmitir({ tamano = 22, color = TINTA }: Props) {
+  const alto = tamano;
+  const ancho = Math.round(tamano * 1.3);
+  const grosor = Math.max(1.6, tamano * 0.09);
+  const radio = tamano * 0.14;
+  const punto = tamano * 0.2;
+  const onda = tamano * 0.42;
+  const ondaGrande = tamano * 0.64;
+  const hueco = tamano * 0.14;
+
+  return (
+    <View style={{ width: ancho, height: alto }}>
+      <View
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: ancho,
+          height: alto - ondaGrande - hueco,
+          borderTopWidth: grosor,
+          borderLeftWidth: grosor,
+          borderTopLeftRadius: radio,
+          borderColor: color,
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: ondaGrande + hueco,
+          width: ancho - ondaGrande - hueco,
+          height: alto,
+          borderTopWidth: grosor,
+          borderRightWidth: grosor,
+          borderBottomWidth: grosor,
+          borderTopRightRadius: radio,
+          borderBottomRightRadius: radio,
+          borderColor: color,
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          left: 0,
+          bottom: 0,
+          width: punto,
+          height: punto,
+          borderTopRightRadius: punto,
+          backgroundColor: color,
+        }}
+      />
+      {[onda, ondaGrande].map((lado) => (
+        <View
+          key={lado}
+          style={{
+            position: 'absolute',
+            left: 0,
+            bottom: 0,
+            width: lado,
+            height: lado,
+            borderTopWidth: grosor,
+            borderRightWidth: grosor,
+            borderTopRightRadius: lado,
+            borderColor: color,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 const estilos = StyleSheet.create({
   fila: {
     alignItems: 'center',

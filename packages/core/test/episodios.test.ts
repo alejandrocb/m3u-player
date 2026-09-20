@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { anioDeFecha, epoch, segundosDeEpisodio, tituloDeEpisodio } from '../src/episodios.ts';
+import { anioDeFecha, claveDeEpisodio, epoch, leerClaveDeEpisodio, segundosDeEpisodio, tituloDeEpisodio } from '../src/episodios.ts';
 
 test('el título sale de lo que va detrás del código del episodio', () => {
   assert.equal(
@@ -56,4 +56,34 @@ test('el epoch descarta el cero y la basura', () => {
   assert.equal(epoch(0), null);
   assert.equal(epoch(''), null);
   assert.equal(epoch(undefined), null);
+});
+
+/*
+  La clave con la que viaja el avance de un capítulo entre aparatos.
+
+  El número de fila no vale: los episodios se piden al abrir cada serie, así
+  que cada aparato reparte los suyos en otro orden. Con el rowid, una serie a
+  medias en la tele no aparecía en la tablet —o aparecía **otro capítulo**—.
+*/
+
+test('la clave de un episodio sale de la serie y del capítulo', () => {
+  assert.equal(claveDeEpisodio('doctor-who-2005', 1, 7), 'doctor-who-2005:s1e7');
+  assert.equal(claveDeEpisodio('the-office-2005', 12, 24), 'the-office-2005:s12e24');
+});
+
+test('y se puede volver a leer tal cual', () => {
+  assert.deepEqual(leerClaveDeEpisodio('doctor-who-2005:s1e7'), {
+    serieId: 'doctor-who-2005',
+    temporada: 1,
+    numero: 7,
+  });
+});
+
+test('lo que no es una clave se reconoce como tal', () => {
+  // Lo que había antes en el historial era el número de fila a secas: hay que
+  // distinguirlo para poder migrarlo sin tocar lo ya convertido.
+  assert.equal(leerClaveDeEpisodio('7'), null);
+  assert.equal(leerClaveDeEpisodio('doctor-who-2005'), null);
+  assert.equal(leerClaveDeEpisodio(':s1e7'), null);
+  assert.equal(leerClaveDeEpisodio('doctor-who-2005:temporada1'), null);
 });

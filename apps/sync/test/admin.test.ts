@@ -186,6 +186,30 @@ test('la cookie de sesión no se la puede leer un script', async () => {
   }
 });
 
+test('a un aparato se le puede cambiar el nombre desde la web', async () => {
+  /*
+    El nombre no es decoración: es lo que se lee cuando la aplicación dice
+    "se ha parado porque has empezado a ver algo en TV Salón". Aprobar con
+    prisa dejaba al aparato llamándose como su código para siempre.
+  */
+  const m = await montar();
+  try {
+    const cookie = await crearAdmin(m);
+    const grupo = m.panel.crearGrupo('Casa Triana');
+    const alta = m.panel.pedirAlta({ apodo: 'Xiaomi Pad' });
+    m.panel.aprobar(alta.codigo, grupo.id, alta.codigo);
+
+    const antes = m.panel.aparatosDe(grupo.id)[0]!;
+    assert.equal(antes.nombre, alta.codigo);
+
+    await enviar(m.url, '/aparato/nombre', { id: antes.id, nombre: 'TV Salón' }, cookie);
+
+    assert.equal(m.panel.aparatosDe(grupo.id)[0]!.nombre, 'TV Salón');
+  } finally {
+    await m.cerrar();
+  }
+});
+
 test('el panel enseña el servidor de una lista, no sus credenciales', async () => {
   const m = await montar();
   try {

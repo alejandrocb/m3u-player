@@ -387,3 +387,190 @@ test('dos tandas seguidas no comparten sello', async () => {
     await m.cerrar();
   }
 });
+
+test('la parrilla del directo llega por /api/epg, y solo la de tu casa', async () => {
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.crearGrupo('Casa Fariones');
+    // Sin `id`, que con él `guardarLista` actualiza en vez de dar de alta.
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    m.panel.guardarLista('casa-fariones', 'Otra', 'http://otro:8080/get.php?username=u&password=p');
+    const deTriana = m.panel.listasDe('casa-triana')[0]!.id;
+    const deFariones = m.panel.listasDe('casa-fariones')[0]!.id;
+
+    const ahora = Date.now();
+    const enHoras = (horas: number): string => new Date(ahora + horas * 3_600_000).toISOString();
+
+    m.panel.guardarParrilla(deTriana, [
+      // Terminado: no tiene que salir, o parecería que lo están echando.
+      { canal: '24h', desde: enHoras(-4), hasta: enHoras(-3), titulo: 'Lo de antes', sinopsis: null },
+      { canal: '24h', desde: enHoras(-1), hasta: enHoras(1), titulo: 'Telediario', sinopsis: 'Noticias' },
+      { canal: '24h', desde: enHoras(1), hasta: enHoras(2), titulo: 'Lo siguiente', sinopsis: null },
+      { canal: '24h', desde: enHoras(2), hasta: enHoras(3), titulo: 'Y lo de después', sinopsis: null },
+    ]);
+    m.panel.guardarParrilla(deFariones, [
+      { canal: 'otro', desde: enHoras(-1), hasta: enHoras(1), titulo: 'De la otra casa', sinopsis: null },
+    ]);
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+    const respuesta = await pedir(m.url, '/api/epg', { metodo: 'GET', token });
+    const programas = respuesta.datos.programas as Array<Record<string, unknown>>;
+
+    assert.equal(respuesta.estado, 200);
+    // Dos por canal —el de ahora y el siguiente— y nada de la otra casa.
+    assert.deepEqual(
+      programas.map((uno) => uno.titulo),
+      ['Telediario', 'Lo siguiente'],
+    );
+    // El identificador es el `tvg-id` pelado: traducirlo al de la biblioteca
+    // (`tvg:24h`) es cosa del aparato.
+    assert.equal(programas[0]!.canal, '24h');
+    assert.ok(respuesta.datos.generado, 'debería decir cuándo se preparó');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('las fichas llegan por marca de agua, y solo las nuevas', async () => {
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.crearGrupo('Casa Fariones');
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    m.panel.guardarLista('casa-fariones', 'Otra', 'http://otro:8080/get.php?username=u&password=p');
+    const deTriana = m.panel.listasDe('casa-triana')[0]!.id;
+    const deFariones = m.panel.listasDe('casa-fariones')[0]!.id;
+
+    // Dos pasadas, con sellos distintos: es lo que separa "lo de siempre" de
+    // "lo nuevo".
+    m.panel.guardarFichas(
+      deTriana,
+      [
+        { id: 'la-vieja-2001', clase: 'pelicula', genero: 'Drama' },
+        // De lo que nadie supo nada se guarda para no repetirlo, pero al
+        // aparato no le sirve de nada: no se le manda.
+        { id: 'la-muda-2020', clase: 'pelicula', genero: '' },
+      ],
+      1000,
+    );
+    m.panel.guardarFichas(
+      deTriana,
+      [{ id: 'la-nueva-2024', clase: 'pelicula', genero: 'Comedia', sinopsis: 'Una comedia.' }],
+      2000,
+    );
+    m.panel.guardarFichas(
+      deFariones,
+      [{ id: 'la-de-la-otra-casa-2024', clase: 'pelicula', genero: 'Terror' }],
+      2000,
+    );
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+
+    const todo = await pedir(m.url, '/api/fichas?desde=0', { metodo: 'GET', token });
+    assert.equal(todo.estado, 200);
+    assert.deepEqual(todo.datos.fichas, [
+      { id: 'la-vieja-2001', clase: 'pelicula', genero: 'Drama' },
+      { id: 'la-nueva-2024', clase: 'pelicula', genero: 'Comedia', sinopsis: 'Una comedia.' },
+    ]);
+    assert.equal(todo.datos.hasta, 2000);
+
+    // Con la marca puesta, la siguiente vez no baja nada.
+    const otra = await pedir(m.url, `/api/fichas?desde=${todo.datos.hasta}`, { metodo: 'GET', token });
+    assert.deepEqual(otra.datos.fichas, []);
+    assert.equal(otra.datos.hasta, 2000, 'la marca no retrocede aunque no haya nada');
+
+    // Y desde la primera pasada, solo la segunda.
+    const nuevas = await pedir(m.url, '/api/fichas?desde=1000', { metodo: 'GET', token });
+    assert.deepEqual(nuevas.datos.fichas, [
+      { id: 'la-nueva-2024', clase: 'pelicula', genero: 'Comedia', sinopsis: 'Una comedia.' },
+    ]);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('la nota de TMDb viaja con la ficha', async () => {
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    const lista = m.panel.listasDe('casa-triana')[0]!.id;
+
+    m.panel.guardarFichas(
+      lista,
+      [{ id: 'el-aviso-2018', clase: 'pelicula', genero: 'Drama', nota: 6.4, votos: 1200, popularidad: 31.2 }],
+      1000,
+    );
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+    const traidas = await pedir(m.url, '/api/fichas?desde=0', { metodo: 'GET', token });
+
+    assert.deepEqual(traidas.datos.fichas, [
+      { id: 'el-aviso-2018', clase: 'pelicula', genero: 'Drama', nota: 6.4, votos: 1200, popularidad: 31.2 },
+    ]);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('una pasada larga se entrega entera, aunque no quepa de una vez', async () => {
+  /*
+    El aparato pide "lo posterior a este sello" y se lleva un puñado. Con un
+    solo sello para toda la pasada, la segunda petición se saltaba **todas**
+    las de esa pasada, incluidas las que aún no se había llevado: contra el
+    servidor real se traía 2.000 de las 3.873 que había y se paraba.
+  */
+  const m = await montar();
+  try {
+    m.panel.crearGrupo('Casa Triana');
+    m.panel.guardarLista('casa-triana', 'Casamar', 'http://panel:8080/get.php?username=u&password=p');
+    const lista = m.panel.listasDe('casa-triana')[0]!.id;
+
+    // Una pasada de 2.500, más de lo que cabe en una respuesta.
+    m.panel.guardarFichas(
+      lista,
+      Array.from({ length: 2_500 }, (_, i) => ({
+        id: `pelicula-${i}`,
+        clase: 'pelicula' as const,
+        genero: 'Drama',
+      })),
+      1_000,
+    );
+
+    const token = await emparejar(m, 'casa-triana', 'TV Salón');
+
+    const vistas = new Set<string>();
+    let desde = 0;
+    for (let vuelta = 0; vuelta < 10; vuelta += 1) {
+      const traidas = await pedir(m.url, `/api/fichas?desde=${desde}`, { metodo: 'GET', token });
+      const fichas = traidas.datos.fichas as Array<{ id: string }>;
+      if (fichas.length === 0) break;
+      for (const ficha of fichas) vistas.add(ficha.id);
+      desde = traidas.datos.hasta as number;
+    }
+
+    assert.equal(vistas.size, 2_500, 'no se queda ninguna por el camino');
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('sin token no se ven las fichas', async () => {
+  const m = await montar();
+  try {
+    assert.equal((await pedir(m.url, '/api/fichas', { metodo: 'GET' })).estado, 401);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('sin token no se ve la parrilla', async () => {
+  const m = await montar();
+  try {
+    const respuesta = await pedir(m.url, '/api/epg', { metodo: 'GET' });
+    assert.equal(respuesta.estado, 401);
+  } finally {
+    await m.cerrar();
+  }
+});

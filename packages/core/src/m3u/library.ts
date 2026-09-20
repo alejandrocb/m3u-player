@@ -14,7 +14,9 @@
  *   - Episodio: temporada + número, dentro de su serie.
  */
 
+import { idDeCanalPorNombre, idDeCanalPorTvg } from '../canales.ts';
 import { classify, parseEpisodeTag, parseSeriesHead } from '../classify.ts';
+import { duplicadasSinAnio } from '../duplicados.ts';
 import type {
   Channel,
   ChannelGroup,
@@ -125,6 +127,21 @@ export function buildLibrary(entries: RawEntry[]): Library {
     [...groups.entries()].map(([name, ids]) => ({ name, channelIds: [...ids] })),
     (grupo) => grupo.name,
   );
+
+  /*
+    La misma película escrita con el año y sin él salía dos veces, con la misma
+    carátula y una al lado de la otra. Se juntan antes de la lista, y solo
+    cuando no hay duda de cuál es cuál.
+  */
+  for (const { suelta, destino } of duplicadasSinAnio(movies.values())) {
+    if (!destino.logo && suelta.logo) destino.logo = suelta.logo;
+    for (const grupo of suelta.groups) destino.groups.add(grupo);
+    for (const etiqueta of suelta.tags) destino.tags.add(etiqueta);
+    for (const variante of suelta.variants) {
+      if (!destino.variants.some((otra) => otra.url === variante.url)) destino.variants.push(variante);
+    }
+    movies.delete(suelta.id);
+  }
 
   const movieList: Movie[] = ordenarPor(
     [...movies.values()].map((draft) => ({
@@ -238,7 +255,7 @@ function addChannel(
   // calidad. Se incluye el grupo en la clave del fallback para no fusionar
   // dos canales distintos que casualmente se llamen igual en secciones
   // diferentes (un "Deportes 1" de fútbol y otro de motor).
-  const id = tvgId ? `tvg:${tvgId}` : `name:${slug(name)}@${slug(group)}`;
+  const id = tvgId ? idDeCanalPorTvg(tvgId) : idDeCanalPorNombre(name, group);
 
   let channel = channels.get(id);
   if (!channel) {

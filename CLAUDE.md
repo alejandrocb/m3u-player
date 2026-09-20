@@ -18,6 +18,7 @@ node --test packages/core/test/classify.test.ts   # una sola suite
 npm run typecheck                         # tsc, sin emitir
 npm run probe -- "<url de get.php>"       # diagnóstico de una lista real
 npm run probe -- --m3u samples/muestra.m3u
+node tools/probe/src/intro.ts "<url>" [serie]   # ¿traen capítulos los ficheros?
 npm run bench -- .probe-cache/<lista>.m3u # medir el almacenamiento
 .\app.cmd                                 # abrir la app de escritorio
 .\app.cmd --sw                            # ídem, con salida de vídeo por software
@@ -26,6 +27,16 @@ npm run bench -- .probe-cache/<lista>.m3u # medir el almacenamiento
 **En PowerShell, `npm` y `npx` fallan** con `UnauthorizedAccess`: la política de
 ejecución de scripts del equipo bloquea `npm.ps1`. Usa `npm.cmd` / `npx.cmd`, o
 los lanzadores directos (`.\app.cmd`, `.\node_modules\.bin\electron.cmd`).
+
+**Y `npm.cmd` parte por el `&` cualquier URL que le pases**, entrecomillada o
+no: es un fichero por lotes, así que el argumento acaba pasando por `cmd.exe`,
+que vuelve a interpretar el `&` como separador de comandos. Al `probe` le
+llegaba `get.php?username=U` a secas y el panel contestaba `403`. Para pasarle
+una URL, llama a Node directamente y sáltate el intermediario:
+
+```bash
+node tools/probe/src/index.ts 'http://servidor:8080/get.php?username=U&password=P&type=m3u_plus'
+```
 
 ## Cómo se ejecuta el TypeScript
 
@@ -62,56 +73,386 @@ plataforma vive fuera.
 - **`apps/desktop`** — Electron + mpv. JavaScript (`.mjs`), sin bundler todavía.
 - **`tools/probe`** — diagnóstico y medición contra la lista real del usuario.
 
-### Las cuatro pantallas tienen la misma forma
+### El inicio es la pantalla, y las pestañas lo filtran
 
-TV en directo, películas, series y el interior de una serie son **la misma
-pantalla**: una barra a la izquierda con los grupos y una rejilla a la derecha
-con lo que haya en el grupo marcado. En una serie los "grupos" son sus
-temporadas y la rejilla son los episodios.
+Arriba hay cinco: **Todo, Películas, Series, TV en directo y Mi Lista**. Las
+cinco pintan lo mismo —filas de fichas— y solo cambian qué filas. **Pulsar la
+pestaña solo filtra**: no hay ninguna otra pantalla detrás a la que entrar.
 
-Antes eran ocho pantallas apiladas de dos en dos (directo → grupo, serie →
-temporada). Con la barra, elegir grupo **reemplaza** la pantalla en vez de
-apilar otra: "atrás" sale de la sección de una vez, en lugar de ir deshaciendo
-las categorías que hayas mirado.
+Las filas de cada pestaña:
+
+- **Películas y series**: novedades, recomendadas y luego **una fila por
+  categoría del proveedor** —acción, comedia, terror—, ocho como mucho.
+- **TV en directo**: una fila por grupo de canales y **todos los canales**. Un
+  grupo de canales es una lista corta y cerrada, así que aquí no se recorta:
+  esconder uno sería esconder un canal.
+- **Mi Lista**: lo marcado, por clases, con su propio selector de tipo.
+
+**El selector de Mi Lista va dentro de la lista, como una fila más**, y no en
+otra barra. Así se recorre con el mando igual que las carátulas —arriba,
+abajo, izquierda, derecha— sin inventar otro sitio donde pueda estar el foco.
+Por eso existe la acción `filtrar` junto a `reproducir` y `entrar`.
+
+**El orden de las filas por categoría lo decide el perfil.** Cada
+reproducción suma uno a las categorías de lo que se pone, en la tabla
+`affinity`, que se sincroniza como el resto: lo que ves en la tele ordena
+también el inicio de la tablet. Sin datos todavía, mandan las categorías con
+más contenido. Se cuentan reproducciones y no fichas abiertas: mirar no es
+ver.
+
+**Las filas van por tema, y las categorías del proveedor son el respaldo.** Un
+tema es de qué va la ficha —drama, comedia, documental— y es lo que uno busca.
+La categoría es dónde la ha colocado el proveedor en su lista: dice casi lo
+mismo, a gritos —"PELICULAS ACCION"—, pero no siempre, que también hay
+categorías que son un canal, un año o una promoción. Por eso el rótulo de esas
+se limpia con `nombreDeCategoria` y el del tema se pinta tal cual.
+
+El problema es de dónde sale el tema. **De las series viene con el catálogo**
+(`get_series` trae el género), así que ahí los temas mandan desde el primer
+arranque. **De las películas no**: `get_vod_streams` da título, cartel, nota y
+año, y el género está en `get_vod_info`, que es **una petición por título** y
+hay 18.042. Así que lo va rellenando el servidor de la casa, empezando por lo
+último que ha entrado, que es lo que llena los carruseles.
+
+**Y pregunta a dos sitios, en este orden.** Primero a **TMDb**: no limita
+conexiones y devuelve una **lista cerrada de géneros en español**, que es lo
+que hace que las filas salgan limpias —del panel viene texto libre, y por eso
+existe `contarTemas`—. Lo que no reconozca, **al panel**, que de su propio
+catálogo sabe más que nadie: acierta el 97 % de lo que se le pregunta.
+
+El ritmo sale de eso: con TMDb, dos mil por pasada y una por hora, y el
+catálogo entero cubierto en una tarde; sin token, quinientas al día y de
+madrugada, algo más de un mes. El token se lee de `TMDB_TOKEN` y **no está en
+el repositorio, que es público**: vive en un fichero del VPS. Sin él todo sigue
+funcionando, solo que más despacio.
+
+**Y de paso viene la ficha entera**, no solo el género: sinopsis, reparto,
+imagen apaisada y tráiler, para las 18.000 películas y las 6.500 series. Son
+dos peticiones por título —la búsqueda ya trae género, sinopsis y fondo; la
+ficha añade reparto y tráiler— y se piden juntas, porque quien abre una
+película quiere las dos cosas y volver mañana a por la mitad costaría otra
+búsqueda. El aparato lo guarda en las mismas columnas que llenaría el panel
+(`plot`, `actors`, `backdrop`, `genre`, `trailer`) y **solo donde falte**: lo
+que se preguntó al panel por su cuenta es más de fiar.
+
+**De las series no se le pregunta al panel.** Su ficha está en
+`get_series_info`, que devuelve además la lista entera de episodios: pedirla
+6.500 veces por una sinopsis sería bajarse el catálogo de capítulos completo
+para tirarlo. Su género, además, ya viene con el catálogo.
+
+**Y de la misma búsqueda sale la nota de TMDb**, con cuántos la han votado y
+su popularidad (`nota_tmdb`, `votos_tmdb`, `popularidad`). No cuestan ni una
+petición de más y arreglan lo que la del proveedor no puede: esa está inflada
+—cientos de dieces que solo quieren decir que no la ha votado nadie—, y por eso
+hoy solo sirve para descartar. Con los votos delante sí se distingue un 8 de
+mil personas de un 10 de dos. Una nota con cero votos **no se guarda**: no es
+un cero, es que no hay nota.
+
+Al guardar una ficha del servidor **solo se marca `detalle_pedido` si trae
+sinopsis**. Esa marca quiere decir "ya se preguntó" y evita que la pantalla de
+información vuelva al panel en cada arranque; ponerla con un género suelto
+dejaría la ficha vacía para siempre.
+
+Casar nuestra película con la de TMDb se hace por **título y año**, y ahí el
+sesgo es **el contrario** del que lleva el clasificador: ante la duda, **sin
+género**. Una película sin género sale igual en su fila; una con el género de
+otra ensucia una fila entera del inicio y nadie sabe por qué. Por eso solo se
+acepta un resultado si el título cuadra —comparado con `fold`— o si, buscando
+con año, ha quedado un único candidato.
+
+Mientras tanto el inicio no se queda a medias: si no hay al menos cuatro temas
+que den para una fila entera (`TEMAS_SUFICIENTES`), se usan las categorías del
+proveedor, que están todas desde el primer minuto. El cambio de unas a otros no
+tiene fecha ni interruptor: ocurre solo, en cuanto hay géneros bastantes.
+
+Tres detalles que no son opcionales:
+
+- **Lo que el panel deja en blanco también se apunta**, con el género vacío. Si
+  no, cada pasada volvería sobre las mismas cuatrocientas que el panel no sabe
+  contestar y el recorrido no avanzaría nunca.
+- **Las calidades se juntan antes de repartir el presupuesto**, no después. La
+  misma película viene dos o tres veces con el mismo identificador: contando
+  entradas en vez de películas, la pasada de quinientas se quedaba en la mitad.
+- **La marca de agua es la hora de la pasada**, no un contador. Así vale para
+  las dos listas de una casa —el reloj del servidor es el mismo para todas— y
+  de ahí sale también cuándo fue la última pasada, sin una tabla aparte. El
+  aparato la guarda en `meta` y pide `GET /api/generos?desde=…`; al reimportar
+  el catálogo la pone a cero, porque lo recién traído no lleva ningún género.
+
+**Y lo ya visto tampoco vuelve a salir.** Una película terminada seguía
+apareciendo entre las recomendadas, que es lo contrario de una recomendación.
+Se cae de todas las filas —no solo de "seguir viendo"— sembrando la misma
+lista que evita las repeticiones. Solo las películas: en una serie, terminar un
+capítulo no es terminar la serie, y para eso está el relevo al siguiente.
+
+**Lo visto se pregunta aparte, no sale del historial.** El historial son los
+cuarenta avances **más recientes**, y una película vista hace dos meses no está
+ahí: seguía saliendo en "Novedades" como si fuera nueva. `AlmacenPerfiles.vistas`
+no lleva límite porque solo trae identificadores. Lo mismo vale para
+`seriesEmpezadas`, por el mismo motivo.
+
+### "Nuevos capítulos": series que estaban al día y han sacado más
+
+El aparato **no sabe de los capítulos nuevos** hasta que se abre la serie: los
+episodios se piden uno a uno con `get_series_info` y hay 6.598. Lo que sí llega
+con el catálogo es el `last_modified` de cada serie, que **sube cuando le
+añaden episodios** y se guarda en `series.added`.
+
+De ahí la regla, que no cuesta ni una petición: una serie sale en esa fila si
+este perfil la tenía **al día** —el último capítulo que vio no tiene
+siguiente— y el proveedor la ha tocado **después** de aquello. Con capítulos
+por ver ya está en "seguir viendo", y repetirla sobra.
+
+La contrapartida es que se entera cuando se refresca el catálogo, que es cada
+tres días. Para "han sacado temporada nueva" es de sobra. Y **no hay
+notificaciones del sistema** a propósito: una notificación solo sirve si algo
+comprueba con la aplicación cerrada, y aquí no hay nada corriendo entonces.
+
+Lo que está en "seguir viendo" se siembra también en la lista de lo que no se
+repite: esa fila se añade a mano y no pasa por `anadir`.
+
+**Las filas por tema van con el orden `destacada`, no con `recomendada`.**
+Aquel exige una nota del proveedor entre 7 y 10, y con eso "Ciencia ficción"
+enseñaba **cuatro** películas de las cuatrocientas que dice su rótulo: contar
+cuatrocientas y enseñar cuatro es lo peor de los dos mundos. `destacada` no
+descarta nada salvo las copias de pase de prensa, y ordena por la nota de TMDb
+dejando detrás, por año, lo que aún no la tiene.
+
+**Y nada se repite entre filas.** Una película es "Drama, Romance" y sale de
+las dos consultas; el orden recomendado, además, empieza por lo más reciente,
+así que "Recomendadas" se solapaba casi entera con "Novedades". El inicio
+acababa con la misma carátula tres veces y el catálogo parecía la mitad de
+grande. Manda la fila de más arriba —la que uno ve antes— y cada fila pide
+`CARRUSEL * DE_SOBRA` para poder tirar las repetidas sin quedarse a medias.
+
+Un tema cuenta para la afinidad igual que una categoría: `gruposDe` devuelve
+las dos cosas de cada ficha, y como los nombres no se pisan —"PELICULAS ACCION"
+y "Acción"— caben en la misma tabla. El género del panel viene con varios
+dentro de un solo campo y separados como le parece —"Drama, Romance",
+"Acción / Aventura"—, así que `temasDe` lo parte y `contarTemas` junta las
+escrituras que dicen lo mismo, quedándose con la más frecuente: sin eso,
+"Ciencia ficción" y "CIENCIA FICCION" salían como dos filas medio vacías.
+
+### Cuatro pantallas, y a la cuarta se llega manteniendo pulsado
+
+El **inicio** —que se filtra con las pestañas y no se apila—, **una serie**, el
+**buscador** y la **información** de una película o una serie.
+
+A la información no se llega pulsando: **el toque normal reproduce**, que es lo
+que uno quiere casi siempre. Mantener pulsado abre un menú con las tres cosas
+que se pueden hacer con una ficha —Información, Mi Lista y Descargar—, y es el
+mismo gesto con el dedo y con el OK del mando. Antes ese gesto marcaba en Mi
+Lista directamente; cabía una sola acción y ahora hacen falta tres.
+
+La pantalla de información enseña lo que no cabe en una carátula: el fondo
+apaisado degradado hacia el negro, el cartel, la sinopsis, el reparto y los
+botones. **Los botones son `elementos`**, como las carátulas de una fila: así
+el mando los recorre con el mismo código y no hay otro sitio donde pueda estar
+el foco. Lo que se pinta va aparte, en `EstadoPantalla.ficha`, por lo mismo que
+`inicio`: no es una rejilla.
+
+Un canal no tiene información que enseñar —ni sinopsis, ni reparto, ni
+tráiler—, así que su menú solo trae Mi Lista. Y una serie no se descarga: se
+descargan sus episodios.
+
+**El tráiler lo pone YouTube.** Viene en la ficha larga (`youtube_trailer`), a
+veces como identificador pelado y a veces como URL entera, y se abre fuera con
+`Linking`: montar un reproductor de otra plataforma dentro es mucho trabajo
+para minuto y medio, y además así no gasta una conexión del panel.
+
+Hubo una cuarta forma: la rejilla completa de películas, series y directo, con
+su barra de categorías a la izquierda. Se llegaba a ella pulsando dos veces la
+pestaña que ya estaba puesta, y era **el mismo contenido con otra cara**: uno
+entraba sin querer, veía otra cosa, y al darle a "atrás" aparecía la buena. Se
+quitó entera.
+
+La barra lateral sobrevive en un solo sitio, dentro de una serie, donde los
+"grupos" son sus temporadas y a la derecha van los episodios. Elegir temporada
+**reemplaza** la pantalla en vez de apilar otra: "atrás" sale de la serie de
+una vez, en lugar de ir deshaciendo las temporadas que hayas mirado.
 
 `EstadoPantalla.formato` le dice a la vista cómo dibujar las fichas, porque no
-se deduce del contenido: `carteles` (2:3, películas y series), `canales` (16:9,
-el logotipo manda), `episodios` (fila con fotograma y sinopsis) y `lista`.
+se deduce del contenido: `carteles` (2:3, el buscador), `episodios` (fila con
+fotograma y sinopsis) y `lista`. Las filas del inicio no pasan por ahí: cada
+una lleva su propio `formato` —cartel o canal—.
 
-### La parrilla del directo
+### La parrilla del directo: la trae el servidor de una vez
 
-TV en directo tiene tres columnas: categorías, canales en lista y, a la
-derecha, el canal enfocado con lo que está echando y lo que viene detrás.
+En la ficha de cada canal —la enfocada en el televisor, todas con el dedo— van
+la hora de inicio y el título de lo que están echando, con la barra marcando
+por dónde va. Y dentro del reproductor, donde iría "0:00 / 0:00", lo mismo con
+la hora de fin.
 
-La mitad derecha de la pantalla es esa columna, y ahí se ve **el canal
-reproduciéndose en pequeño**, con su programación debajo. Pulsar sobre el vídeo
-—o aceptar otra vez sobre el canal que ya se está viendo— lo abre entero, y
-"atrás" devuelve a la vista previa.
+De dónde salen esos datos, por este orden:
 
-Con `max_connections` a 1, la vista previa ocupa la única ranura: por eso solo
-arranca cuando el foco lleva **un segundo quieto**, y no mientras se zapea, y
-se para al salir del directo.
+1. **La parrilla que prepara el servidor de la casa.** Se trae el EPG completo
+   (`xmltv.php`) dos veces al día por lista, lo guarda en la tabla `programa` y
+   entrega por `GET /api/epg` **solo el resumen**: dos programas por canal, el
+   de ahora y el siguiente. Son decenas de kilobytes en una sola petición.
+2. **El panel, canal a canal**, para lo que el servidor no tenga: una casa sin
+   servidor, una lista aún sin preparar, o un canal que no salía en el EPG.
+   `get_short_epg` con un retardo de 350 ms desde que el foco se para —el foco
+   se mueve más rápido de lo que responde el panel— y media hora de caché en
+   memoria.
 
-**El vídeo no es hijo de esta columna.** La columna deja el hueco, lo mide y el
-reproductor —que vive en la capa de arriba— se coloca encima. Si colgara de
-aquí, al pasar a pantalla completa cambiaría de sitio en el árbol, React lo
-volvería a montar y ExoPlayer soltaría la conexión: **medio minuto de 403**
-cada vez que se agranda.
+Medido contra la lista real, que es lo que decidió el reparto: `xmltv.php` son
+**5,5 MB en 4,9 s, 191 canales y 11.515 programas**; `get_short_epg` son 3,4 KB
+pero **una petición por canal**, y `get_simple_data_table` 186 KB por canal.
+Para un televisor lo primero es inviable; para el servidor es una descarga que
+aprovechan los tres aparatos, igual que las portadas.
 
-El EPG se pide con `get_short_epg` canal a canal, con un retardo de 350 ms
-desde que el foco se para —el foco se mueve más rápido de lo que responde el
-panel— y se cachea media hora en memoria. Medido: 3,4 KB por canal frente a
-los 186 KB de `get_simple_data_table`, que trae la semana entera.
+Lo que había que comprobar antes de montarlo era **si los identificadores
+casan**: los `channel id` del XMLTV son nuestros `tvg-id`, 191 de 191. Sin eso
+habría hecho falta emparejar por nombre.
 
-En el reproductor de directo eso reemplaza a la línea de tiempo: donde iría
-"0:00 / 0:00" van la hora de inicio, el título del programa y la hora de fin,
-con la barra marcando por dónde va.
+**Y se casa dos veces: primero por identificador y luego por nombre.** El EPG
+trae **una sola "Telecinco HD"** y el catálogo trae tres —FHD, HD y SD, cada
+una con su `tvg-id`—, así que casando estricto dos de las tres se quedan en
+blanco. Por eso hay una segunda vuelta con `claveDeParrilla`, que tira la
+calidad y las mayúsculas: `Telecinco FHD`, `Telecinco HD` y `Telecinco SD` caen
+en `telecinco`, y también `BE MAD` y `Be Mad`, que el proveedor manda como dos
+canales distintos. Es lo que hacen los reproductores comerciales, y es lo que
+hace que las tres calidades enseñen lo mismo. Nunca es el primer intento: el
+identificador no se equivoca, y esto solo entra donde no hay nada.
 
-### Los favoritos son un grupo más
+**El identificador de un canal no es el que lleva la ficha.** Un `Elemento`
+lleva la clase delante —`canal:tvg:24 Horas`— para que dos fichas de la misma
+fila no compartan clave, y el canal de verdad sale de su acción
+(`canalDeElemento`). Y el de la biblioteca lleva a su vez el prefijo `tvg:`,
+que el EPG no usa. Son dos traducciones seguidas, y saltarse cualquiera de las
+dos da el mismo síntoma: la parrilla llega entera del servidor, no casa con un
+solo canal y la fila sale sin programación **sin un solo error por ninguna
+parte**. Pasó con las dos.
 
-Cada perfil tiene los suyos y salen en la barra de las tres secciones, entre
-"todas" y las categorías del proveedor. Se marcan **manteniendo pulsado** sobre
-la ficha —el toque normal ya reproduce o entra— y el corazón se queda puesto.
+Por eso el puerto tiene **dos formas de preguntar**, y no son intercambiables:
+
+- `deCanal(id)` puede acabar en el panel, así que se pide **solo para el canal
+  enfocado**.
+- `deCanales(ids)` devuelve **únicamente lo ya preparado** y no pregunta nada:
+  es lo que permite pintar la fila entera. Si cayera al panel, veinte fichas a
+  la vista serían veinte peticiones.
+
+**272 de los 463 canales no traen `tvg-id`** y no tienen programación por
+ninguno de los dos caminos: son los de eventos —NBA, NFL, jornadas de liga,
+UFC—. La ficha tiene que quedar bien sin ella, y por eso no se reserva hueco
+para lo que falte: sin programa no se pinta nada.
+
+Se probó también el EPG público de davidmuma (`guiatv.xml`), por si cubría a
+los que no tienen: **31,3 MB, 641 canales y 80.704 programas**, pero sus
+identificadores son nombres ("La 1 HD") y no `tvg-id`, así que solo casan 130
+de los 191. Casando además por nombre se llega a 190 canales, uno menos que los
+que ya cubre el panel, y de los 272 sin `tvg-id` rescataría 27. O sea: cuesta
+seis veces más, obliga a emparejar por nombre y aporta veintisiete canales.
+Queda como complemento posible —lo haría el servidor, que no gasta conexiones
+del panel—, no como sustituto.
+
+La vista previa del canal enfocado, que se fue con la rejilla vieja, sigue
+pendiente: depende del árbitro de conexión, porque previsualizar es una
+reproducción más.
+
+### Un perfil es una persona: solo suena en un sitio
+
+Si esta persona empieza algo en la tablet, lo que estuviera sonando en la tele
+**se para**, y la tele explica por qué: "ha empezado a ver algo en Tablet del
+salón". Manda el último que le da a reproducir, que es lo que uno espera.
+
+Va por `profile_setting`, con la clave `reproduciendo`: un ajuste más del
+perfil, así que **viaja con la sincronización sin ninguna tubería nueva**. El
+que empieza escribe el anuncio con el nombre de su aparato; el que lo recibe,
+si está reproduciendo y el anuncio es de otro, corta.
+
+Dos detalles que no son opcionales:
+
+- **Al parar solo se borra el anuncio si sigue siendo el nuestro.** Si lo que
+  nos ha parado es que la persona se fue a otro aparato, el anuncio puesto es
+  el de ese otro: borrarlo sería lo contrario de lo que se quiere.
+- **Mientras algo suena se sincroniza cada doce segundos** en vez de cada dos
+  minutos. Es lo que hace que el otro aparato se calle en segundos y no en
+  minutos; fuera de la reproducción no hace falta, el "seguir viendo" no tiene
+  prisa.
+
+Con `max_connections` a 1 esto además libera la ranura del panel para el
+aparato que acaba de empezar. Lo que falta es que ese espere a que se libere
+de verdad —el panel tarda ~30 s— en vez de comerse un 403: eso es el árbitro
+de conexión, que sigue pendiente.
+
+### El botón de los créditos, y por qué no hay "saltar intro"
+
+Al llegar a los créditos sale **"Siguiente capítulo"**, y para eso no hace falta
+ningún dato de nadie: se toma el mismo umbral con el que se da un capítulo por
+visto (95 %), así que en uno de cincuenta minutos aparece en los últimos dos y
+medio. El error es siempre por defecto —tarde, nunca en mitad de la escena— y
+el aviso se queda puesto aunque los controles se escondan, que es justo el
+momento en que uno mira la pantalla esperando que pase algo.
+
+**Saltar la intro se probó y se quitó.** Queda escrito porque el trabajo de
+medir sí sirve, y para no volver a empezar por el mismo sitio:
+
+- **Los ficheros no lo saben.** Medido con `tools/probe/src/intro.ts` contra la
+  lista real: son MKV y traen marcas de capítulo, pero **sin nombre** —lo
+  escrito es la propia hora, `00:06:16.251`— y repartidas cada cinco o seis
+  minutos, que es un troceado automático del que codificó y no un capitulado
+  que sepa dónde está la careta. No hay forma de decir cuál de las marcas es la
+  intro.
+- **Hay dos clases de serie**, y eso descarta el atajo fácil: en unas la careta
+  empieza siempre en el mismo minuto —se reconocería por su posición— y en
+  otras la serie arranca con una escena y la mete después, en un sitio distinto
+  cada vez. Estas segundas solo se reconocen **por el sonido**.
+- Se llegó a montar el marcado a mano —un botón "La intro acaba aquí" que
+  guardaba el segmento para la temporada y lo repartía por la sincronización— y
+  **se descartó por cómo se usaba**: pedirle al que mira que marque la careta
+  no compensa lo que ahorra.
+
+Lo que quedaría, si algún día se retoma, es la huella de audio: comparar dos
+capítulos y buscar el trozo que se repite, que es lo que hace el plugin de
+Jellyfin y funcionaría con los dos tipos de serie. El coste no es la CPU sino
+la descarga —en un MKV el audio va entrelazado con el vídeo, así que bajarse
+quince minutos de audio es bajarse quince minutos de película, unos 400 MB por
+capítulo—: viable bajo demanda al abrir una serie, impensable para las 6.500
+del catálogo. Y si se hiciera, el formato a guardar es el de Jellyfin —tipo,
+principio y final—, que es lo que permitiría importarlo de un servidor suyo.
+
+### Lo que ya se ha visto se releva, no se queda
+
+Una película se da por vista al **90 %** y un capítulo al **95 %**
+(`FIN_PELICULA` y `FIN_EPISODIO`). Son distintos a propósito: los créditos de
+una película son largos, y encadenar el capítulo siguiente exige más certeza de
+que el anterior ha terminado de verdad.
+
+Y "visto" no significa lo mismo en los dos sitios:
+
+- **Una película vista se cae de "seguir viendo".** Estaba quedándose ahí para
+  siempre, con la barrita al 99 %.
+- **Un capítulo visto da paso al siguiente.** Una serie se ve en orden, así que
+  lo que uno quiere ver es el que viene, no el que acaba de terminar; dejar el
+  terminado obliga a entrar en la serie y buscar. Lo resuelve
+  `Biblioteca.episodioSiguiente`, que salta de temporada si el que se acabó era
+  el último de la suya. Sin siguiente, la serie se ha terminado y sale de la
+  fila.
+
+**La reproducción continua es un ajuste del perfil** (`continua`, encendido por
+defecto), no del aparato: hay a quien le gusta que siga solo y hay a quien le
+parece que le roban la noche. Se cambia desde el menú del perfil y viaja con la
+sincronización como el resto de sus ajustes.
+
+### En "seguir viendo", una fila por serie
+
+Una serie se ve en orden, así que lo que hace falta es **por dónde vas**, no
+la lista de los últimos cuatro capítulos: eso llena la fila con la misma
+carátula repetida y esconde lo demás. El historial viene de lo más reciente a
+lo más viejo, así que el primero de cada serie es el bueno. Por eso quien
+llama pide más avances de los que caben: el recorte por serie se hace después.
+
+### Mi Lista: lo marcado tiene su pestaña
+
+Cada perfil tiene la suya. Se marca **manteniendo pulsado** sobre la ficha —el
+toque normal ya reproduce o entra, y con el mando es el OK largo—, se puede
+hacer **en cualquier sitio**: en la rejilla y en las filas del inicio, sea
+película, serie o canal.
+
+Ya no es un grupo de la barra lateral. Tenerlo en los dos sitios era el mismo
+contenido por dos caminos, y en la barra se mezclaba con las categorías del
+proveedor, que son otra cosa.
 
 Lo que se marca es la película, el canal o **la serie entera**: un episodio
 suelto no, porque lo que uno guarda es la serie.
@@ -189,6 +530,31 @@ grabaciones de pase de prensa, previas al estreno, y se ven mal. Siguen en el
 catálogo —el sesgo del clasificador es no ocultar nada—, solo que no presiden
 el inicio.
 
+**Y encima de eso van dos filas que la nota del panel no podía dar**, con los
+datos de TMDb que rellena el servidor: "Mejor valoradas" ordena por su nota
+**con un mínimo de cien votos** (`VOTOS_MINIMOS`), que es lo que distingue un 8
+de mil personas de un 10 de dos; "Populares ahora" va por su popularidad, que
+mide el mundo de fuera —ni el panel ni nosotros sabemos qué está de moda esta
+semana—. Son los órdenes `mejor` y `popular`, y como los datos llegan poco a
+poco, **la fila no se enseña hasta que haya diez** (`MEDIA_FILA`): media fila
+se lee como una fila, tres carátulas sueltas parecen un error.
+
+Lo que se guarda de la popularidad es **la foto del día en que se preguntó**,
+no un dato vivo: se refresca cuando se vuelva a pasar por esa ficha.
+
+**Y la nota que se enseña es la de TMDb cuando la hay** (`notaSQL`, en el
+adaptador de Android): la del proveedor se queda de respaldo para lo que el
+servidor no haya cubierto. Sin esto quedaba una incoherencia en pantalla —una
+película dentro de "Mejor valoradas" luciendo el 5 del panel— y además el
+número era sencillamente peor: *A la carrera* es un 6,3 en TMDb y un 5 en la
+lista.
+
+La excepción es el orden `recomendada`, que **sigue mirando `rating`**: su
+filtro lo comparten el aparato y el servidor, y el servidor no tiene la nota de
+TMDb cuando prepara las portadas. Si decidieran distinto, la portada cambiaría
+según quién la hubiera calculado, que es justo lo que evita tener el criterio
+en `@m3u/core`.
+
 El criterio vive en `packages/core/src/recomendar.ts` porque lo aplican los
 dos lados: el aparato, cuando saca sus sugerencias por su cuenta, y el
 servidor de la casa, que las prepara una vez al día. Si cada uno usara el
@@ -265,6 +631,23 @@ las cuatro tablas de perfil (`profile`, `progress`, `favorite`,
 contenido**: `lola-pater-2017` es la misma película en los dos aparatos, así
 que sincronizar es mandar filas y no traducir nada.
 
+**Al entrar en una casa, el aparato adopta sus perfiles.** Los perfiles son del
+grupo: al aprobar el alta queda la señal `adoptar` y, al conectar con la lista,
+el aparato vacía los suyos y se trae los del grupo. `vaciarLoLocal` **borra de
+verdad**, y es la única excepción a la regla de no borrar nunca: enterrar sería
+peor, porque las lápidas viajan y el identificador de un perfil sale de su
+nombre, así que enterrar "alejandro" aquí enterraría el de la casa.
+
+**Ojo con el episodio: su número de fila no significa nada fuera del aparato.**
+Los episodios no se importan con el catálogo —se piden al abrir cada serie—,
+así que el `id` que les da SQLite depende de en qué orden haya abierto series
+cada aparato. El historial guardaba ese número y por eso una serie a medias en
+la tele no aparecía en la tablet, y podía aparecer **otro capítulo**: el que
+tuviera ese número allí. El avance viaja con `claveDeEpisodio`
+(`doctor-who-2005:s1e7`), y las URLs se buscan traduciendo esa clave a la fila
+local. Es el mismo principio que el resto: **los identificadores salen del
+contenido**.
+
 Las reglas, que hay que respetar al tocar cualquier escritura de perfil:
 
 - **Gana el cambio más reciente**, fila a fila. No se fusionan contenidos: el
@@ -321,6 +704,19 @@ ordenadas de mejor a peor. Las identidades son:
 | Serie | título limpio + año, **sin** el grupo |
 | Episodio | temporada + número, dentro de su serie |
 
+**Y la misma película escrita con el año y sin él se junta después**
+(`duplicadasSinAnio`): el proveedor manda las dos formas —*He-Man y los Masters
+del Universo* y *He-Man y los Masters del Universo (2021)*— y salían dos fichas
+idénticas, una al lado de la otra. La regla es prudente: solo se junta **si hay
+una sola candidata con año**. Con dos —*Robin Hood (2018)* y *Robin Hood
+(2010)*— no hay forma de saber de cuál es la suelta, y una carátula que lleva a
+otra película es peor que un duplicado, que al menos se ve y se entiende.
+
+Otra fuente de duplicados eran las abreviaturas con puntos: *La captura* y *La
+captura V.O.S.E.* eran dos películas distintas porque los puntos rompen los
+límites de palabra del patrón de etiquetas. Lo arregla `PUNTEADAS`, en
+`normalize.ts`.
+
 La serie no incluye el grupo en su identidad a propósito: el proveedor reparte
 la misma serie entre `TV Series NETFLIX` y `TV Series OTROS`, y debe salir una
 sola ficha.
@@ -345,6 +741,45 @@ Rarezas reales de la lista que el parseo ya contempla: números de episodio de
 cinco cifras (el proveedor cuela el id del stream), el año usado como número de
 temporada (`S2026 E24`), y decoración en los grupos (`== NOTICIAS`).
 
+### El árbitro: quién se queda la conexión
+
+`max_connections` limita cuántas cosas se pueden estar bajando a la vez **de la
+cuenta**, no de este aparato: si la tele está viendo algo y la tablet abre otra
+cosa, la segunda ranura ya está ocupada aunque este aparato no haya hecho nada.
+De ahí que el árbitro (`packages/ui/src/arbitro.ts`) tenga dos mitades.
+
+**Lo que sabe de sí mismo.** Cuántas cosas tiene abiertas este aparato y con
+qué prioridad: `reproducir` > `previa` > `descargar`. Reproducir es lo que
+alguien está mirando y gana siempre; la descarga va la última **porque es la
+única que no pierde nada**, que los ficheros aceptan `Range` y se reanuda donde
+iba. Cuando hace falta sitio, `pedir` devuelve a quién hay que echar: el
+árbitro no conoce reproductores ni descargas, solo reparte.
+
+**Lo que aprende a golpes.** Que la casa esté al tope no se puede saber de
+antemano —`active_cons` del handshake no vale de semáforo, medido—, así que se
+descubre con el `403` del panel. Y entonces **no es un fallo: es una espera**.
+El reproductor lo enseñaba como "El servidor rechazó la conexión (403)", uno
+cerraba y volvía a entrar, y vuelta a empezar; ahora sale una cuenta atrás y se
+reintenta solo.
+
+Dos números salen de medir el panel, no de elegirlos:
+
+- **El enfriamiento, 30 s.** Es lo que tarda el panel en soltar de verdad una
+  ranura después de cerrar. Lo recién soltado no se puede reusar: pedirlo antes
+  es comerse un 403. Ojo, esto **solo se nota cuando no hay ranuras libres**:
+  con las tres de esta cuenta, zapear sigue siendo instantáneo.
+- **Las ranuras salen del handshake.** No hay ningún número escrito a mano: una
+  cuenta del proveedor da 1 y otra da 3, y `ajustarRanuras` se lo cree.
+
+Lo expulsado **no enfría**: la ranura se la queda quien acaba de entrar sin
+soltarla en el panel. Si enfriara, echar a una descarga para poner una película
+haría esperar treinta segundos a la película, que es lo contrario de lo que se
+busca.
+
+Y al cerrar el reproductor la ranura se suelta **siempre**, que es la mitad que
+fallan los reproductores comerciales: dejan la conexión colgada y la cuenta se
+queda bloqueada hasta que el panel la caduca por su cuenta.
+
 ### Restricciones del proveedor que condicionan el diseño
 
 - **`max_connections` no es siempre 1.** La primera cuenta da 1 y una segunda
@@ -368,6 +803,66 @@ temporada (`S2026 E24`), y decoración en los grupos (`== NOTICIAS`).
 - **La extensión de la URL miente a veces** (un `.mkv` que por dentro es MP4).
   Las descargas deben nombrarse por el contenedor real, leyendo los primeros
   bytes; `tools/probe/src/sniff.mjs` ya identifica contenedores así.
+
+### El mando dentro del reproductor
+
+Las flechas saltan diez segundos y el OK pausa, que es lo que uno espera con un
+mando delante de la tele.
+
+**El recorrido va de arriba abajo, en el orden en que se ven las cosas**: la
+barra de tiempo, la fila de reproducir y la fila de ajustes. El foco entra en
+el círculo de reproducir, que es lo que uno toca casi siempre; subiendo se va a
+la barra y bajando, a audio, subtítulos y el capítulo siguiente. Cada cosa
+donde se ve, sin recorridos que aprender.
+
+Y hay **dos saltos, uno por sitio**: diez segundos en el círculo de reproducir
+—volver a oír una frase— y de medio minuto en adelante en la barra, subiendo
+hasta cinco si se mantiene pulsado, que cruza un capítulo en cuatro
+pulsaciones. Marcarlos los dos a la vez fue un error intermedio: no se sabía
+cuál movían las flechas. **Bajando se entra en la fila de botones** —desde el
+principio, audio, subtítulos, siguiente— y ahí las flechas los recorren; con un
+panel de pistas abierto, el mando es suyo hasta elegir una. Subiendo se vuelve
+al vídeo.
+
+Dos cosas que costaron encontrar, y que valen para cualquier pantalla nueva:
+
+- **`focusable={false}` en todo lo del reproductor.** Con el foco del sistema
+  puesto en los botones, Android le entregaba el OK al botón enfocado y la
+  pulsación **no llegaba nunca** al manejador de teclas: se podía llegar a los
+  botones con el mando pero no activarlos. Es la misma regla que ya seguía la
+  biblioteca, y el síntoma es el contrario del clásico: no es que la pulsación
+  cuente dos veces, es que no cuenta ninguna.
+- **El foco tiene que cantar sobre cualquier fotograma.** El 18 % de blanco que
+  marcaba lo enfocado desaparecía sobre una imagen clara. Va el verde de la
+  marca sobre fondo oscuro, como en el resto de la aplicación.
+- **Y tiene que ser lo único que se vea así.** Había tres cosas compitiendo: el
+  círculo de reproducir con su borde claro parecía enfocado siempre, la pista
+  de audio puesta llevaba fondo verde, y lo enfocado de verdad un borde blanco.
+  Ahora **el aro verde es el foco y nada más**: lo que está puesto se marca con
+  el texto en verde, y el círculo de reproducir tiene el borde muy tenue.
+- **"Atrás" cierra primero lo de dentro.** Estando en la fila de botones o en
+  las pistas, atrás salía del vídeo y devolvía a la serie —dos pantallas de
+  más—. El reproductor registra su propio manejador, que devuelve `false`
+  cuando no hay nada abierto para que siga el de la aplicación: Android los va
+  llamando del último registrado al primero hasta que uno diga que sí.
+
+- **El audio y los subtítulos se recuerdan por serie y por perfil.** Uno ve
+  Friends en inglés con subtítulos en inglés y otro doblada, así que va en
+  `profile_setting` con la clave `pistas:<serie>` y viaja con la
+  sincronización. **Se recuerda el idioma, no el número de pista**: el número
+  depende de cómo empaquetara el fichero quien lo codificó y cambia de un
+  capítulo a otro, así que guardarlo acabaría poniendo el comentario del
+  director. Si el capítulo no trae ese idioma manda lo que venga por defecto,
+  que es mejor oírlo en español que no oírlo. Y apagar los subtítulos también
+  se recuerda: si se guardara como "nada elegido", volverían a salir.
+- **El punto por el que ibas es del capítulo que dejas.** Al encadenar con el
+  siguiente hay que olvidarlo: si no, el que viene arranca donde acabó el
+  anterior —o sea, en los créditos—, se da por terminado en el acto y carga el
+  siguiente, y así hasta el infinito. Un capítulo al que se llega desde el
+  anterior empieza por el principio.
+
+La primera pulsación con los controles escondidos solo los enseña —igual que el
+OK—, así que para entrar en los botones desde el vídeo parado hacen falta dos.
 
 ### Reproducción: mpv, no `<video>`
 
@@ -401,7 +896,234 @@ por `d3d11va` se ve correctamente **debajo** de la interfaz. El plano de
 superposición de hardware, que era el riesgo, no aparece. `.\app.cmd --sw`
 sigue disponible para forzar salida por software si algún equipo da problemas.
 
+### La descarga a disco
+
+Es lo que no hacen los reproductores comerciales y la razón de que esto exista.
+Tres decisiones sostienen lo demás:
+
+- **Una cada vez.** No es un límite técnico: el ancho de banda es el mismo, así
+  que dos a la vez tardan lo mismo que dos seguidas y **ninguna** termina hasta
+  el final. Con una, a los diez minutos hay una película entera en el disco.
+- **La reparte el árbitro y siempre pierde.** Descargar es la prioridad más
+  baja porque es lo único que no pierde nada: se apunta **por qué byte iba** y
+  al reanudar se le pide al panel `Range: bytes=…`. Poner una película echa a
+  la descarga al instante y esta vuelve sola.
+- **Lo bajado se reproduce del disco**, sin tocar el panel: ni petición ni
+  ranura. Ver algo que ya tienes no le quita la conexión a nadie de la casa.
+
+**De un episodio, el título que se guarda lleva la serie, la temporada y el
+número.** "El de George" a secas no dice de qué serie es ni por dónde va, y con
+media temporada bajada son diez títulos que no se distinguen.
+
+**Y se suma cuánto vídeo hay bajado**, que es la pregunta de antes de un vuelo:
+no cuántos ficheros, sino cuántas horas se pueden ver sin red. La duración de
+un episodio viene con el catálogo; la de una película **no** —`get_vod_streams`
+da título, cartel, nota y año— y la pone el servidor con el resto de la ficha:
+de TMDb sale en minutos y del panel en `duration_secs`, que llega a cero en
+bastantes. Lo que no tenga duración conocida **se dice** ("y 3 sin medir") en
+vez de contarlo como cero, que dejaría el total corto sin que nadie sepa por
+qué.
+
+**En la mano se baja más pequeño que en el salón.** El proveedor manda la misma
+película en varias calidades y la mejor son cinco gigas: en una pantalla de
+diez pulgadas 720p no se distingue y ocupa menos de la mitad, mientras que en
+el televisor sí se nota y allí el disco no es el problema. Lo decide
+`varianteParaDescargar` con `TOPE_DE_MANO`, y el tope depende del aparato
+(`Platform.isTV`), no del gusto de nadie.
+
+Dos casos que no son obvios: si **todas** pasan del tope —hay títulos que solo
+están en 1080p— se coge la menos pesada, que es mejor que no ofrecer nada; y
+una calidad que no se reconoce **no cuenta como la más pequeña**, porque su
+rango vale cero y ganaría siempre esa comparación sin que nadie sepa lo que es.
+
+Y para entender los tamaños: nuestros ficheros son ripeos en H.264 con dos o
+tres pistas de audio, y Netflix sirve H.265, VP9 o AV1 codificando plano a
+plano. *Friends* pesa lo que pesa porque su remasterización viene del negativo
+de 35 mm y **el grano es lo más caro de comprimir**; AV1 lo quita antes de
+codificar y lo vuelve a sintetizar al reproducir. Recodificar en el aparato no
+es una opción: horas de CPU por película para un resultado peor.
+
+El fichero va en la **carpeta privada de la aplicación**: sin permisos de
+almacenamiento que pedir, sin mezclarse con las fotos, y se va al desinstalar.
+No se puede sacar por USB, que no es lo que se busca.
+
+La cola (`packages/ui/src/descargas.ts`) no toca ficheros: decide **qué** y
+**cuándo**, y la plataforma mueve los bytes detrás de `Transferencia`. Es lo
+que permite probarla entera sin un Android delante.
+
+Dos cosas que no son opcionales:
+
+- **Al reanudar hay que comprobar que el panel respeta el rango.** Si contesta
+  `200` en vez de `206` está mandando el fichero entero otra vez, y añadirlo a
+  lo que había da un fichero corrupto **que además parece completo**. Se borra
+  y se empieza de cero.
+- **Cancelar no es fallar.** Abortar la petición llega al transporte como un
+  error de red; contarlo como fallo dejaría marcado como roto justo lo que la
+  cola quiere reanudar.
+
+**Un corte no es un fallo.** "Download interrupted" quiere decir que el flujo
+se acabó antes de tiempo, y en una tablet vieja con un wifi flojo eso pasa
+varias veces en una película de dos gigas: lo que toca es seguir por donde
+iba. Solo se da por fallida cuando se corta **cinco veces seguidas sin avanzar
+un byte** (`CORTES_SEGUIDOS`), que es lo que ocurre de verdad cuando el disco
+está lleno o el panel ha dejado de servir ese fichero. El contador se pone a
+cero en cuanto entra un byte nuevo.
+
+**Y a quien el árbitro echa hay que pararlo de verdad.** El árbitro solo
+reparte: devuelve a quién expulsar y quien pide es responsable de cortarlo. El
+reproductor no lo hacía, así que la descarga seguía bajando, el panel acababa
+cortando una de las dos conexiones por su cuenta y salía justo ese "Download
+interrupted".
+
+Y lo que se guarda son **bytes, no porcentaje**: el porcentaje es para pintar,
+lo que hace falta para reanudar es el byte. Al arrancar, lo que quedó como
+"bajando" vuelve a la cola: al cerrar la aplicación no estaba bajando nada.
+
+#### Y sigue con la aplicación al fondo, que es cuando de verdad hace falta
+
+Nadie se queda mirando cómo bajan dos gigas. Uno le da a descargar, bloquea la
+tablet y se va, y hasta ahora eso era exactamente lo que cortaba la descarga.
+
+Android le quita **tres cosas** a una aplicación que no se ve, y hay que
+comprarlas las tres o no sirve de nada comprar una:
+
+1. **Que no maten el proceso.** Un servicio en primer plano es la única forma
+   de decir "esto sigue aunque no se vea". Su precio es el aviso permanente de
+   la barra: no es decoración, **es el permiso**. Ya que está, lleva el título
+   de lo que se baja y por dónde va.
+2. **Que el reloj de JavaScript siga andando.** Esta es la que no se ve venir.
+   React Native **para los temporizadores** al perder el foco
+   (`JavaTimerManager.onHostPause`), y los reanuda solo si hay una **tarea sin
+   interfaz** abierta. La cola los usa justo para lo que pasa de verdad en una
+   tablet vieja: reintentar tras un corte y volver a pedir la ranura cuando el
+   árbitro la ha denegado. Con el proceso vivo y el reloj parado, la descarga
+   se corta una vez y se queda ahí para siempre —y por fuera parece que "va
+   lenta"—.
+3. **Que el aparato no se suspenda.** Con la pantalla apagada el sistema
+   duerme, y dormido tampoco baja nada. El `PARTIAL_WAKE_LOCK` lo coge
+   `HeadlessJsTaskService` por su cuenta.
+
+Por eso el servicio **es** un `HeadlessJsTaskService` en vez de un servicio
+pelado: las tres salen de la misma pieza. La tarea de JavaScript no hace nada
+—**existir es su trabajo**— y se cierra cuando la cola se queda vacía; al
+cerrarse, el servicio se para solo y el aviso desaparece.
+
+Cuatro detalles que no son opcionales:
+
+- **El aviso, lo primero de `onStartCommand` y siempre.** Android da cinco
+  segundos desde que se pide el servicio hasta que aparece, y pasados los cinco
+  mata la aplicación.
+- **Una tarea, no una por cada cambio de texto.** El aviso se refresca llamando
+  otra vez al servicio, y sin un interruptor cada llamada abriría otra tarea.
+- **`START_NOT_STICKY`.** Si el sistema mata el proceso, resucitar el servicio
+  solo no sirve de nada: sin la aplicación no hay cola, ni árbitro, ni nadie
+  que sepa por qué byte iba. Se reanuda al abrir, que es lo que ya hace la cola.
+- **El tipo es `dataSync`, y en Android 15 tiene un tope de seis horas al día.**
+  Al pasarse, el sistema avisa por `onTimeout` y hay que pararse; lo bajado
+  sigue en el disco y se reanuda con `Range`. Ignorarlo acaba con el sistema
+  matando la aplicación.
+
+El permiso de notificaciones (Android 13+) se pide la primera vez que se baja
+algo, y **se sigue sin él**: si se deniega, la descarga funciona igual y lo
+único que se pierde es ver por dónde va.
+
+### "Ver en la tele": se manda la URL, no la imagen
+
+La tele de la cocina es una Samsung con **Tizen** (UE32N5305), y ahí la
+aplicación **no se puede instalar**: es un APK de Android. Una versión para
+Tizen sería otra aplicación entera —la pantalla en web, el reproductor de
+Samsung, otra base de datos y un certificado atado a esa tele—. Duplicar la
+pantalla del teléfono se descartó: recomprime la imagen y obliga a tener el
+móvil encendido y delante.
+
+Lo que se hace es lo de Netflix y YouTube: el teléfono le pasa a la tele **la
+dirección del vídeo** y la tele se lo pide al panel por su cuenta, en calidad
+original. El teléfono queda de mando y se puede bloquear. Va por **DLNA**, que
+traen casi todas las teles conectadas desde hace una década: un servidor HTTP
+en la tele que acepta órdenes SOAP.
+
+Medido en la Samsung antes de escribir nada: su ficha está en
+`http://<tele>:9197/dmr`, tiene **AVTransport** —el servicio de "reproduce
+esto"— y dice aceptar `video/x-mkv`, AVI, MP4 y MPEG-TS, que son los formatos
+del panel.
+
+Las piezas, repartidas como el resto:
+
+- **`packages/core/src/dlna.ts`**: leer la ficha de una tele (`leerTele`) y el
+  mando (`MandoDeTele`: poner, reproducir, pausar, parar, saltar y preguntar
+  por dónde va). Sin nada de plataforma: el `fetch` se pasa desde fuera, como
+  en `XtreamClient`, y se prueba en el portátil con una tele de mentira.
+- **`ModuloDeTeles.kt`**: encontrar las teles, que es SSDP por UDP multicast y
+  JavaScript no lo sabe hacer en Android. Coge un `MulticastLock`: sin él,
+  muchos Android tiran esos paquetes para ahorrar batería y la búsqueda vuelve
+  vacía con la tele al lado.
+- **`apps/tv/src/teles.ts`** junta las dos cosas, y el menú de mantener
+  pulsado trae **"Ver en la tele"** en teléfono y tablet (en una tele no:
+  una tele no le manda vídeo a otra).
+
+Cinco detalles que no son opcionales:
+
+- **La ficha del vídeo va escapada dos veces.** Es un XML (DIDL-Lite) que viaja
+  como texto dentro de otro XML (el sobre SOAP). Con una sola vez, el `&` de
+  una URL con parámetros rompe la orden.
+- **Hay que decirle a la tele qué le llega** (`protocolInfo`, por la extensión
+  con `tipoDeVideo`). Las Samsung rechazan la orden si no lo saben.
+- **La tele gasta una ranura del panel**, igual que si se reprodujera aquí,
+  así que se le pide al árbitro como una reproducción más (`RANURA_TELE`): si
+  una descarga la tenía, se echa a la descarga. Y se suelta al parar.
+- **No se salta a donde ibas hasta que la tele suena.** Un `Seek` antes de
+  `PLAYING` se pierde o lo rechaza; lo hace el reloj que pregunta, en cuanto
+  la ve en marcha.
+- **"Parada" quiere decir dos cosas.** Si ya había sonado, se ha terminado (o
+  alguien la paró con el mando de la tele). Si nunca llegó a sonar, la tele no
+  pudo abrir el vídeo; se le dan treinta segundos, que al empezar pasa un
+  momento por `STOPPED`.
+
+**Y la tele no le pide el vídeo al panel: se lo pide al teléfono.** Con la
+URL del panel tal cual, la Samsung se ponía en negro y sacaba "Error
+inesperado", y no era el fichero —H.264 y AC3, servido por rangos y sin
+redirecciones, leído con `codecsDeMatroska`—. Es cómo se hablan: un
+reproductor DLNA pregunta con `HEAD`, quiere cabeceras DLNA y abre varias
+conexiones al mismo fichero, y un panel Xtream no está hecho para eso. Con el
+**puente** (`ModuloDePuente.kt`) el teléfono le contesta a la tele lo que
+espera y al panel le pide como un reproductor cualquiera; funcionó a la
+primera. De paso apunta cada petición de la tele (`adb logcat -s Puente`).
+
+El precio es que **el vídeo pasa por el teléfono**, y eso trae dos cosas:
+
+- **Hace falta un servicio en primer plano** (`ServicioDeTele`, tipo
+  `mediaPlayback`) mientras algo suena en la tele. Sin él, en cuanto la
+  aplicación se iba al fondo MIUI le quitaba el candado de CPU al puente —el
+  registro lo dice tal cual: `disabled: true, procState: 15, reason: Process
+  Priority`— y la tele se quedaba sin vídeo a los pocos segundos. Es el mismo
+  mecanismo que el de las descargas, con la tarea sin interfaz para que el
+  reloj que pregunta a la tele siga andando, y su aviso trae **Pausa y
+  Parar**, que llegan a JavaScript como evento (`ordenDeTele`).
+- **Para saltar hay que decirle a la tele que se puede.** La ficha del vídeo
+  lleva en `protocolInfo` las marcas DLNA (`DLNA.ORG_OP=01`: "se salta por
+  bytes"); sin ellas la Samsung reproducía y rechazaba cualquier `Seek`. Un
+  directo lleva `00`, que no tiene a dónde saltar.
+
+Lo que se ve en el teléfono es **una pantalla como la del reproductor**, con
+el fotograma del capítulo quieto de fondo: pausa, saltos de 30 s y la barra,
+que se toca para ir a ese punto. Si la tele no puede, el porqué se queda en
+esa pantalla con "Reintentar" —un aviso de tres segundos abajo no lo ve nadie,
+que uno está mirando la tele—. Al esconderla queda un **chivato** abajo, con
+el icono de emitir de siempre, que vuelve a ella.
+
+Lo que **no** hace, a propósito o todavía: elegir idioma o subtítulos —DLNA no
+lo deja y la tele pone la pista por defecto— y mandar lo ya descargado, que
+el puente podría servir del disco pero todavía no lo hace.
+
 ## Trampas conocidas
+
+- **Un `403` con una página que dice "Acceso Denegado… ajenas a Vodafone" no
+  es el panel: es el operador.** Pasó con la otra lista, la de la caché de
+  `probe`: la API contestaba bien y los vídeos daban `403` a cualquiera —a la
+  tele, a VLC y a Node—, con una página de Vodafone en vez del JSON del panel.
+  La tele lo traducía como su error DLNA `716` ("Resource not found"), que
+  parece un fallo de la tele y no lo es. Antes de buscar el problema en el
+  código, mirar **el cuerpo** del 403, no solo el código.
 
 - **El EPG del panel viene en UTC y en base64.** Los títulos y las sinopsis van
   codificados, y los tiempos —incluidas las cadenas `start` y `end`, que
@@ -412,6 +1134,13 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
 - **`now_playing` no sirve para saber qué se está emitiendo.** Lo calcula el
   servidor al responder, así que envejece en cuanto la pantalla lleva un rato
   abierta. El programa en curso se decide comparando con la hora del aparato.
+- **React Native para los temporizadores cuando la aplicación no se ve.**
+  `setTimeout` y `setInterval` dejan de dispararse al perder el foco
+  (`JavaTimerManager.onHostPause`) y se reanudan al volver. No hay error, no
+  hay aviso: lo que dependa de un temporizador simplemente se queda quieto y
+  arranca de golpe cuando uno vuelve a abrir la aplicación. La única forma de
+  mantenerlos vivos es una tarea sin interfaz (`HeadlessJsTaskConfig`), que es
+  la mitad no evidente del servicio de descargas.
 - **Hermes no trae `TextDecoder`.** Descodificar base64 con `atob` +
   `TextDecoder` funciona en Node y falla en la tablet, y encima en silencio: la
   parrilla salía escrita en base64 mientras los tests pasaban en el portátil.
@@ -440,6 +1169,14 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   no salen hasta que Metro monta el bundle. Para comprobar la app de Android:
   `cd apps/tv` y `npx.cmd tsc --noEmit -p tsconfig.json`,
   aunque hoy saca ruido de los tipos de React Native contra `packages/core`.
+- **Al renombrar la aplicación hay que tocar `MainActivity` también.**
+  `getMainComponentName()` devuelve el nombre a mano y tiene que ser
+  **exactamente** el `name` de `app.json`, que es el que registra `index.js`.
+  Si no coinciden, la aplicación se cierra nada más abrirse con
+  `"…" has not been registered`. Y lo peor: **no se nota al instalar**, porque
+  mientras Gradle siga sirviendo el bundle de antes todo funciona. Salta en la
+  primera compilación que rehace el bundle, que puede ser dos cambios después,
+  cuando ya no es evidente de dónde viene.
 - **En release, `console.log` sí llega a logcat.** Se puede depurar en la tele
   con `adb logcat -s ReactNativeJS:V`, y los fallos de JavaScript salen
   enteros en `adb logcat -b crash`.
@@ -488,9 +1225,44 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   quedan puestas para siempre. Se deja `BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE`
   a propósito: sin él no habría forma de salir de la aplicación en una tablet
   sin botones físicos.
+- **En directo, `onProgress` avisa una vez y no vuelve**, y `currentTime` llega
+  como `TIME_UNSET`: el `Long.MIN_VALUE` de ExoPlayer, que en JavaScript se ve
+  como −9,2·10¹⁸. Un flujo en directo no tiene posición, así que no hay nada
+  que contar. Por eso un canal **no se anotaba nunca** en el historial —no
+  llegaba al mínimo de treinta segundos— y "seguir viendo" no lo veía por
+  mucho rato que estuviera puesto. Lo que se anota de un directo es cuánto
+  llevas, medido con un reloj propio del reproductor, y sobre todo **cuándo**:
+  es la hora la que decide si el programa que veías sigue echándose.
+- **`memo` no sirve de nada si las props cambian de identidad.** En la tele,
+  cada pulsación del mando tardaba **casi un segundo** en pintarse. Medido con
+  un `console.log` alrededor del manejador: `mover` tardaba **1 ms** y el
+  pintado, **1.100 ms**; el presentador no tenía nada que ver. La cadena de
+  culpables, y hasta que no se quitó la última no bajó de 800 ms:
+  1. `FichaDeFila` y `Carrusel` sin `memo`: el `extraData` de una `FlatList`
+     cambia con el foco y se repintaban las veinte fichas de la fila.
+  2. Cada ficha recibía **dos funciones nuevas por pintado** —`() =>
+     onTocar(index)`—, así que `memo` comparaba props distintas siempre. Se
+     arregla pasando el índice y una función estable.
+  3. La columna se le pasaba **a todas las filas**, no solo a la activa, así
+     que las ocho de la pantalla veían una prop nueva en cada movimiento.
+  4. Y las funciones que bajan desde la pantalla —`onTocar`, `onTurno`— se
+     escribían en línea en el JSX. Esa fue la última, y la que de verdad lo
+     bajó todo: **de 800 ms a 90 ms**.
+
+  La moraleja para la próxima pantalla: envolver en `memo` es la mitad
+  barata; la otra mitad es que **todo lo que baje sea estable**, y eso se
+  comprueba midiendo, no leyendo.
+- **Un foco, y solo uno.** Con el mando en la cabecera, ninguna fila del inicio
+  puede quedarse marcada, y mientras se escribe en el buscador los resultados
+  tampoco. El síntoma es un borde que se queda puesto donde ya no está el
+  mando, y engaña sobre dónde va a caer la próxima pulsación.
 - **Hooks detrás de un `return` temprano cierran la aplicación.** Es el fallo
-  que más veces ha caído aquí: cuatro, en `PantallaPerfiles`, `PantallaListas`
-  y dos en `BibliotecaVista`. React exige el mismo número de hooks en cada
+  que más veces ha caído aquí: **cinco**, en `PantallaPerfiles`,
+  `PantallaListas` y tres en `BibliotecaVista`. **Lo caza el linter** —
+  `react-hooks/rules-of-hooks` está puesto—, así que antes de compilar:
+  `cd apps/tv && npx.cmd eslint App.tsx`. La quinta vez además no se vio en una
+  tablet y sí en la otra: si en el primer pintado ya hay estado, el número de
+  hooks no cambia y la aplicación abre tan tranquila. React exige el mismo número de hooks en cada
   pintado, y `if (!estado) return <Espera/>` se los salta en el primero. El
   síntoma es `Rendered more hooks than during the previous render` y la app
   cerrándose al entrar. **Todo `useState`, `useEffect`, `useCallback` y
@@ -503,6 +1275,12 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   instalar: `adb shell wc -c < /data/local/tmp/app-release.apk`.
 - **Instalar no reinicia la app.** Si estaba abierta, sigue corriendo el
   JavaScript viejo. `adb shell am force-stop com.m3utv` después de instalar.
+- **Para instalar por wifi, hay que dejarlo puesto desde el USB.** Con el
+  aparato enchufado: `adb tcpip 5555`, y desde entonces `adb connect
+  <ip>:5555` hasta que se reinicie —al reiniciar vuelve a modo USB y hay que
+  repetirlo—. La dirección se saca del propio aparato con
+  `adb shell ip -f inet addr show wlan0`. Sin esto, el puerto 5555 está
+  cerrado y no hay forma de instalar sin cable.
 - **En Git Bash, las rutas del aparato se convierten a rutas de Windows.**
   `adb push algo /data/local/tmp/` acaba enviando a `C:/Program Files/Git/data/...`.
   Hace falta `MSYS_NO_PATHCONV=1` delante, o usar PowerShell.
@@ -546,6 +1324,13 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   deja en `never` y `npm run typecheck` falla aunque los tests pasen. Se
   esquiva comparando el resultado de una llamada a función, que no deja
   referencia que estrechar.
+- **Un sello por fila, no uno por pasada.** El aparato recoge las fichas del
+  servidor pidiendo "lo posterior a este sello" y se lleva mil de una vez. Con
+  el sello compartido por toda una pasada, la petición siguiente se saltaba
+  **todas** las de esa pasada, incluidas las que aún no se había llevado. No
+  salta ningún error: simplemente faltan datos. Se vio contra el servidor real
+  —se traía 2.000 de las 3.873 que había y se paraba— y no en los tests, que
+  usaban pasadas más pequeñas que la página.
 - **`node:sqlite` devuelve objetos sin prototipo.** El almacén los convierte a
   objetos normales antes de devolverlos; mantén esa costumbre o `deepEqual`
   fallará en los tests.
@@ -558,8 +1343,9 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
 - **La ficha larga de una película** —sinopsis, reparto e imagen apaisada—
   **no viene con el catálogo**: `get_vod_streams` da título, cartel, nota y
   año. Lo demás está en `get_vod_info`, que es una petición por película:
-  inviable para 18.000, pero se pide para la que preside el inicio y se
-  guarda. Medido contra el panel real: sinopsis, reparto y fondo, los tres.
+  inviable para 18.000 desde un televisor, y por eso lo hace el servidor de la
+  casa una vez para todos. En el aparato se sigue pidiendo al abrir una ficha
+  que el servidor aún no haya cubierto. Medido contra el panel real: sinopsis, reparto y fondo, los tres.
   El identificador de panel de una película **no se guarda al importar**; sale
   del último tramo de la URL de su variante (`/movie/usuario/clave/12345.mkv`).
 - **La media estrella (U+2BE8) no está en la fuente de un televisor** y sale
@@ -583,14 +1369,95 @@ sigue disponible para forzar salida por software si algún equipo da problemas.
   (`idDeAparato`, en la tabla `meta`) y sobrevive a reinicios y
   actualizaciones, no a borrar los datos.
 
+### Los perfiles son de la casa, y su identificador sale del nombre
+
+El identificador de un perfil se calcula del nombre al crearlo
+(`idDePerfil`), igual que el de una película sale de su título. Es lo que
+permite que la tele y la tablet hablen del mismo perfil sin traducir nada.
+
+La contrapartida: **escribir un nombre distinto en cada aparato crea dos
+perfiles distintos**, y como el historial cuelga del perfil, cada uno se queda
+con el suyo aunque la sincronización funcione perfectamente. "Alejandro" y
+"Alejandro 1" no son la misma persona para el sistema.
+
+Y si además los aparatos están en **grupos distintos**, no comparten nada en
+absoluto: el grupo es la frontera de la sincronización. Se reconoce enseguida
+porque cada aparato ve un solo perfil y no el del otro, y porque el trabajo
+diario del servidor prepara la misma lista dos veces, una por grupo.
+
+Al emparejarse, el aparato **adopta los perfiles de la casa** en vez de
+quedarse con el que se creó él solo: queda la señal `adoptar`, y al conectar
+con la lista vacía los suyos y se trae los del grupo.
+
+### La pantalla de perfiles es donde se administra
+
+Logotipo arriba, "¿Quién está viendo?" y los perfiles en **círculos**, como en
+cualquier servicio de estos. Redondos y no cuadrados a propósito: es lo que
+hace que se lean como personas y no como una ficha más de contenido, que en
+esta aplicación son todas rectángulos.
+
+Editar vive aquí y en ningún otro sitio. Antes el nombre y el color se
+cambiaban desde el menú de la biblioteca, a ciegas —"Cambiar color" iba dando
+la vuelta a la paleta—; ahora se entra en "Administrar perfiles", se toca el
+que sea y se ve lo que se está eligiendo. **El borrado avisa**: se lleva por
+delante el historial y la Mi Lista de esa persona, y lo hace en todos los
+aparatos de la casa.
+
+Al pie van **la versión y las conexiones**, y solo aquí: es información de
+mantenimiento, que al entrar se mira un momento y dentro de la biblioteca sería
+ruido sobre las carátulas.
+
+El sello lo genera `tools/sello.mjs`, que lanza Gradle antes de empaquetar el
+JavaScript. Lleva **fecha y commit** porque la versión de `package.json` no
+distingue dos compilaciones del mismo día, que es exactamente lo que hay que
+distinguir: media tarde se ha ido más de una vez en perseguir un fallo que era
+un aparato con el APK de ayer. Un sello que hubiera que actualizar a mano
+acabaría mintiendo justo sobre eso, así que no se toca a mano.
+
+De las conexiones se enseña **lo que tiene este aparato**, no la casa: eso no
+hay forma de saberlo —`active_cons` no vale de semáforo, está medido— y un
+"2 de 3" que incluyera a la tele sería inventado. Las que se están enfriando
+cuentan como ocupadas, porque lo están.
+
+**Con un solo perfil no se pregunta.** La pantalla de "¿quién está viendo?"
+con un único círculo no elige nada: era una pulsación de más en cada arranque.
+Se sigue llegando a ella desde el menú, con el botón "Perfiles".
+
+Y **el menú del círculo empieza por las otras personas**, con su cara y su
+nombre. Había un "Cambiar de perfil" que llevaba a otra pantalla para acabar
+eligiendo lo mismo; ahora se pasa de una a otra en dos pulsaciones. Al volver
+del menú "Perfiles" hay que **releer el perfil** de la base antes de pintar la
+biblioteca: la copia que llevábamos es de antes de editarlo, y sin eso
+cambiabas de retrato y la cabecera seguía con la inicial.
+
+**El retrato es una palabra, no una imagen.** El perfil guarda el nombre de uno
+de los diez que trae la aplicación (`apps/tv/src/retratos/`), así que viaja
+como cualquier otro dato del perfil y no hay nada que subir a ninguna parte.
+Son siluetas en el negro de la aplicación con los huecos transparentes, y se
+pintan **encima del color del perfil**: los diez valen para los cinco colores.
+Un nombre desconocido —de una versión más nueva, llegado por sincronización—
+no rompe nada: se cae en la inicial, que es como empiezan todos.
+
+Al añadir la columna `avatar` se vio que **el servidor no aplicaba
+`COLUMNAS_MIGRADAS`** a la base de cada casa: se creaba con el esquema de la
+primera versión y ahí se quedaba. La sincronización pide todas las columnas de
+la tabla, así que reventaba con "no such column". Ahora eso lo hace
+`migrarTablasDePerfil`, en el propio esquema, y lo usan el servidor y los
+tests. **Añadir una columna a un perfil obliga a redesplegar el VPS**: un
+servidor viejo no se cae —solo escribe los campos que conoce—, pero el dato
+nuevo no llega al otro aparato hasta que se actualiza.
+
 ## Estado y siguiente paso
 
 El README lleva la tabla de estado y las cifras medidas contra la lista real
 (218.662 entradas, ~6 s de importación completa, consultas de 0-1 ms).
 
-Pendiente: el árbitro de conexión, la interfaz y la descarga a disco. Del
-reproductor solo queda decidir qué hacer con el redimensionado de la ventana
-transparente.
+Pendiente: la descarga a disco y la interfaz del escritorio. Del reproductor
+solo queda decidir qué hacer con el redimensionado de la ventana transparente.
+
+El árbitro de conexión ya reparte y el reproductor lo usa; falta **verlo
+esperar contra el panel de verdad**, que exige tener las tres ranuras ocupadas
+a la vez, y engancharle la descarga cuando exista.
 
 Compartir el historial entre aparatos está terminado de punta a punta: el
 modelo, el servidor (`apps/sync`, ver su README), el cliente (`ClienteSync`) y

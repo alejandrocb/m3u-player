@@ -11,6 +11,7 @@
  */
 
 import type { Programa } from '@m3u/core';
+import type { ClaseMedio } from './perfiles.ts';
 
 export interface GrupoFicha {
   nombre: string;
@@ -49,6 +50,15 @@ export interface SerieFicha {
   logo: string | null;
   /** Este sí viene con el catálogo: `get_series` trae el género. */
   genero: string | null;
+  /**
+   * Cuándo tocó el proveedor esta serie por última vez, en segundos de época.
+   *
+   * Es el `last_modified` de `get_series`, y **sube cuando le añaden
+   * episodios**: comparándolo con la última vez que alguien vio un capítulo
+   * se sabe si han sacado más, sin preguntarle nada al panel. De las películas
+   * el equivalente es `added`, que no se mueve.
+   */
+  tocada?: number | null;
 }
 
 /**
@@ -61,14 +71,51 @@ export interface SerieFicha {
  * Todo puede faltar. Cada panel rellena lo que quiere, y la interfaz omite lo
  * que no venga en vez de dejar huecos con etiquetas vacías.
  */
+export interface FichaDelServidor {
+  id: string;
+  clase: 'pelicula' | 'serie';
+  /** Vacío si no se sabe: es lo que distingue "no hay" de "no se preguntó". */
+  genero: string;
+  sinopsis?: string;
+  reparto?: string;
+  /** La imagen apaisada, ya como URL entera. */
+  fondo?: string;
+  /** El identificador de YouTube, para abrirlo fuera. */
+  trailer?: string;
+  /**
+   * La nota de TMDb, cuántos la han votado y su popularidad.
+   *
+   * Van aparte de `valoracion`, que es la del proveedor: esa está inflada
+   * —cientos de dieces que solo quieren decir que no la ha votado nadie— y por
+   * eso solo sirve para descartar. Con los votos delante sí se distingue un 8
+   * de mil personas de un 10 de dos.
+   */
+  nota?: number;
+  votos?: number;
+  popularidad?: number;
+  /** Cuánto dura, en segundos. Para sumar horas bajadas en el aparato. */
+  duracion?: number;
+}
+
 export interface FichaLarga {
   sinopsis: string | null;
+  /** Cuánto dura, en segundos. La pone el servidor con el resto de la ficha. */
+  duracion?: number | null;
   /** Reparto tal y como lo da el panel: nombres separados por comas. */
   reparto: string | null;
   /** Imagen apaisada. La de la carátula es vertical y no sirve de fondo. */
   fondo: string | null;
   /** Géneros tal y como los da el panel: "Comedia, Animación". */
   genero: string | null;
+  /**
+   * El tráiler, tal como lo da el panel: un identificador de YouTube.
+   *
+   * A veces es el identificador pelado —`dQw4w9WgXcQ`— y a veces la URL
+   * entera; quien lo use tiene que aceptar las dos formas. No se reproduce
+   * dentro: se abre en la aplicación de YouTube del aparato, que es la que
+   * sabe hacerlo y no gasta una conexión del panel.
+   */
+  trailer: string | null;
 }
 
 export interface TemporadaFicha {
@@ -78,14 +125,32 @@ export interface TemporadaFicha {
 
 /** Un episodio con lo justo de su serie para poder pintarlo fuera de ella. */
 export interface EpisodioDeSerieFicha {
-  id: number;
+  /**
+   * La clave con la que viaja entre aparatos: `serie:sTeN`.
+   *
+   * Y no el número de fila de la base, que cada aparato reparte a su manera
+   * según en qué orden haya abierto series. Lo cuenta `claveDeEpisodio`.
+   */
+  clave: string;
   serieId: string;
   serieTitulo: string;
   /** Carátula de la serie: es la que se reconoce de un vistazo. */
   serieLogo: string | null;
+  /**
+   * El fotograma del propio capítulo, si el panel lo trae (casi siempre).
+   * Es lo que se enseña cuando el capítulo suena en la tele.
+   */
+  imagen?: string | null;
   temporada: number;
   numero: number;
   titulo: string | null;
+  /**
+   * Duración en segundos, o `null`.
+   *
+   * La usa la descarga para poder decir cuántas horas de vídeo hay en el
+   * disco, que es lo que uno quiere saber antes de un vuelo.
+   */
+  segundos?: number | null;
 }
 
 /**
@@ -129,6 +194,14 @@ export interface Pagina {
    */
   grupo?: string;
   /**
+   * Tema, si se quiere solo ese: "Drama", "Comedia", "Documental".
+   *
+   * No es lo mismo que el grupo. El grupo es dónde ha colocado el proveedor la
+   * ficha en su lista y el tema es de qué va, que es lo que uno busca. Se
+   * excluyen entre sí: pedir los dos no tendría sentido.
+   */
+  tema?: string;
+  /**
    * Cómo ordenar. Por título es lo de siempre; por valoración pone arriba lo
    * mejor puntuado, dejando lo no valorado al final —que no es lo mismo que
    * tener un cero—; por novedades, lo último que entró en el catálogo.
@@ -139,13 +212,20 @@ export interface Pagina {
 /**
  * Cómo se ordena una página del catálogo.
  *
+ * Hay tres que además **filtran**, y los tres dejan fuera las copias de pase
+ * de prensa. `mejor` y `popular` van por los datos de TMDb —la nota con su
+ * recuento de votos y la popularidad—, que es lo que el panel no puede dar: su
+ * nota está inflada. Como los rellena el servidor poco a poco, al principio
+ * devuelven poco o nada, y quien los use tiene que aguantar una fila corta o
+ * no enseñarla.
+ *
  * `recomendada` no es solo un orden: **también filtra**. Deja fuera lo que no
  * merece recomendarse —sin nota, mal valorado, con un 10 de los que reparte
  * el proveedor a mansalva, o copias de pase de prensa— y ordena lo que queda
  * por año, por lo último que entró y por nota. El criterio vive en
  * `@m3u/core` porque el servidor de la casa usa exactamente el mismo.
  */
-export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada';
+export type Orden = 'titulo' | 'valoracion' | 'reciente' | 'recomendada' | 'destacada' | 'mejor' | 'popular';
 
 /** Dónde buscar: en todo, o solo dentro de una sección y su categoría. */
 export interface Ambito {
@@ -172,11 +252,35 @@ export interface Variante {
  * funciona igual pero sin parrilla.
  */
 export interface Programacion {
-  /** Lo que echan ahora y lo que viene, o vacío si el canal no tiene EPG. */
+  /**
+   * Lo que echan ahora y lo que viene, o vacío si el canal no tiene EPG.
+   *
+   * Puede acabar preguntándole al panel, así que se pide **para un canal**:
+   * el que tenga el foco encima.
+   */
   deCanal(canalId: string): Promise<Programa[]>;
+  /**
+   * Lo mismo para varios canales, pero **solo de lo ya preparado**.
+   *
+   * Es lo que permite pintar la programación en una fila entera: con la
+   * parrilla del servidor en memoria, saber qué echan en veinte canales no
+   * cuesta ninguna petición. Los que no estén salen sin nada, y no se le
+   * pregunta al panel por ellos: veinte fichas a la vista serían veinte
+   * peticiones.
+   */
+  deCanales(canalIds: string[]): Promise<Record<string, Programa[]>>;
 }
 
 export interface Biblioteca {
+  /**
+   * El capítulo que va después de uno, por su clave.
+   *
+   * Hace falta para el "seguir viendo": cuando el último capítulo ya está
+   * visto, lo que uno quiere ver no es ese sino el siguiente. Salta de
+   * temporada si el que se acabó era el último de la suya, y devuelve `null`
+   * cuando la serie se termina ahí.
+   */
+  episodioSiguiente(clave: string): Promise<EpisodioDeSerieFicha | null>;
   grupos(): Promise<GrupoFicha[]>;
   canalesDeGrupo(grupo: string): Promise<CanalFicha[]>;
   /**
@@ -200,14 +304,18 @@ export interface Biblioteca {
   peliculasPorId(ids: string[]): Promise<PeliculaFicha[]>;
   seriesPorId(ids: string[]): Promise<SerieFicha[]>;
   /**
-   * Episodios sueltos por su identificador, **con los datos de su serie**.
+   * Episodios sueltos por su clave, **con los datos de su serie**.
    *
-   * Lo pide "seguir viendo": el historial solo guarda el id del episodio, y
+   * Lo pide "seguir viendo": el historial solo guarda la clave del episodio, y
    * con eso no se puede pintar una ficha decente. Lo que uno reconoce es la
    * carátula de la serie y "S01E03", no el título del capítulo, así que hace
    * falta el salto a `series` que aquí ya viene hecho.
+   *
+   * Lo que el aparato no tenga —una serie que aún no ha abierto nunca— no
+   * sale. Es lo mismo que hace con una película que el proveedor haya
+   * quitado del catálogo.
    */
-  episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]>;
+  episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]>;
   /**
    * La ficha larga de una película, pidiéndola al panel la primera vez.
    *
@@ -225,22 +333,49 @@ export interface Biblioteca {
    */
   detalleDeSerie(id: string): Promise<FichaLarga | null>;
   /**
-   * Anota el género de unas cuantas películas, que el catálogo no trae.
+   * Anota las fichas largas que manda el servidor de la casa.
    *
-   * Lo manda el servidor de la casa, que se lo pregunta al panel una vez al
-   * día. Aquí solo se guarda: la próxima consulta ya lo devuelve con la ficha.
+   * Género, sinopsis, reparto, imagen apaisada y tráiler: nada de eso viene
+   * con el catálogo del panel y averiguarlo cuesta una petición por título,
+   * así que lo hace el servidor una vez para toda la casa. Aquí solo se
+   * guarda, y **solo lo que falte**: si esta ficha ya se preguntó por su
+   * cuenta —presidió el inicio—, lo suyo es más completo que esto.
    */
-  guardarGeneros(pares: Array<{ id: string; genero: string }>): Promise<void>;
+  guardarFichas(fichas: FichaDelServidor[]): Promise<void>;
   canalesPorId(ids: string[]): Promise<CanalFicha[]>;
   /**
    * Categorías del proveedor en una sección: "Estrenos", "TV Series NETFLIX".
    * Es lo que se enseña en la barra lateral de películas y series.
    */
   categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]>;
+  /**
+   * Los temas de una sección: drama, comedia, documental, con cuántas fichas
+   * tiene cada uno.
+   *
+   * Es lo que ordena el inicio cuando hay géneros suficientes. De las series
+   * los trae el catálogo del panel; de las películas los va averiguando el
+   * servidor de la casa, poco a poco, así que al principio hay pocos y el
+   * inicio tira de las categorías del proveedor mientras tanto.
+   */
+  temas(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]>;
   /** Busca en todo, o solo dentro de la sección y categoría que se indique. */
   buscar(texto: string, ambito?: Ambito): Promise<Resultado[]>;
+  /**
+   * A qué categorías pertenece una ficha.
+   *
+   * Lo pide la afinidad al reproducir: es lo que se apunta para saber qué
+   * filas subir. De un episodio valen las de su serie, que es lo que uno
+   * elige.
+   */
+  gruposDe(clase: ClaseMedio, id: string): Promise<string[]>;
   /** Cuántas fichas hay en cada sección, para pintar los contadores del inicio. */
   totales(): Promise<{ canales: number; peliculas: number; series: number; episodios: number }>;
-  /** Calidades disponibles, de mejor a peor. La primera es la que se reproduce. */
+  /**
+   * Calidades disponibles, de mejor a peor. La primera es la que se reproduce.
+   *
+   * En un episodio el identificador es su **clave** (`serie:sTeN`), no el
+   * número de fila: es lo que guarda el historial y lo que viaja entre
+   * aparatos.
+   */
   variantes(clase: 'canal' | 'pelicula' | 'episodio', id: string): Promise<Variante[]>;
 }

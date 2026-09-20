@@ -15,10 +15,31 @@
 
 import type { DB } from '@op-engineering/op-sqlite';
 
-import type { Ajustes, AlmacenPerfiles, Avance, Cambio, ClaseMedio, Favorito, Perfil } from '@m3u/ui';
-import { ajustesDesde, claveDeMedio, colorLibre, idDePerfil, proporcionVista } from '@m3u/ui';
+import type {
+  Ajustes,
+  AlmacenPerfiles,
+  Avance,
+  Cambio,
+  ClaseMedio,
+  Favorito,
+  Perfil,
+  Reproduccion,
+  SerieEmpezada,
+} from '@m3u/ui';
+import {
+  CLAVE_REPRODUCCION,
+  FIN_PELICULA,
+  ajustesDesde,
+  claveDeMedio,
+  colorLibre,
+  idDePerfil,
+  proporcionVista,
+  reproduccionDesde,
+} from '@m3u/ui';
 import type { BaseSQL } from '@m3u/storage/sincronizar';
 import { aplicarCambios, cambiosDesde } from '@m3u/storage/sincronizar';
+import { claveDeEpisodio, leerClaveDeEpisodio } from '@m3u/core';
+import { meta, ponerMeta } from './basedatos';
 
 type Fila = Record<string, unknown>;
 
@@ -54,6 +75,7 @@ function aPerfil(fila: Fila): Perfil {
     id: fila.id as string,
     nombre: fila.name as string,
     color: fila.color as string,
+    avatar: (fila.avatar as string) ?? '',
     creado: fila.created as string,
   };
 }
@@ -69,11 +91,104 @@ function aAvance(fila: Fila): Avance {
   };
 }
 
+/**
+ * Pasa el historial de episodios del número de fila a la clave del contenido.
+ *
+ * Los episodios se piden al abrir cada serie, así que el número que les da
+ * SQLite depende de en qué orden haya abierto series **este** aparato. El
+ * historial se guardaba con ese número, y por eso una serie a medias en la
+ * tele no aparecía en la tablet: allí ese número era otro capítulo, o no era
+ * ninguno.
+ *
+ * La conversión solo la puede hacer cada aparato con su propia base, que es
+ * la única que sabe a qué episodio apuntaba cada número. Lo que no se pueda
+ * resolver —una serie que ya no está— se entierra: apuntaba a algo que aquí no
+ * existe y en otro aparato apuntaría a cualquier cosa.
+ *
+ * Se hace una vez y queda anotado en `meta`.
+ */
+function migrarClavesDeEpisodio(db: DB, aparato: string): void {
+  if (meta(db, 'claves-de-episodio') === 'hecho') return;
+
+  const viejas = filas(
+    db,
+    "SELECT profile_id, item_id, seconds, duration, title FROM progress WHERE kind = 'episodio' AND deleted = 0",
+  );
+
+  let convertidas = 0;
+  db.executeSync('BEGIN IMMEDIATE');
+  try {
+    for (const fila of viejas) {
+      const itemId = String(fila.item_id);
+      // Lo que ya es una clave no se toca: la migración tiene que poder
+      // repetirse sin estropear nada.
+      if (leerClaveDeEpisodio(itemId)) continue;
+
+      const episodio = filas(db, 'SELECT series_id, season, episode FROM episode WHERE id = ?', [
+        Number(itemId),
+      ])[0];
+
+      if (episodio) {
+        const clave = claveDeEpisodio(
+          episodio.series_id as string,
+          Number(episodio.season),
+          Number(episodio.episode),
+        );
+        db.executeSync(
+          `INSERT INTO progress (profile_id, kind, item_id, seconds, duration, title, updated, deleted, origin)
+           VALUES (?, 'episodio', ?, ?, ?, ?, ?, 0, ?)
+           ON CONFLICT(profile_id, kind, item_id) DO UPDATE SET
+             seconds = excluded.seconds, duration = excluded.duration, title = excluded.title,
+             updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+          [
+            fila.profile_id as string,
+            clave,
+            Number(fila.seconds ?? 0),
+            Number(fila.duration ?? 0),
+            (fila.title as string) ?? null,
+            ahora(),
+            aparato,
+          ],
+        );
+        convertidas += 1;
+      }
+
+      // La vieja se entierra siempre: como clave no significa nada fuera de
+      // este aparato, dejarla viva solo sirve para confundir a los demás.
+      db.executeSync(
+        `UPDATE progress SET deleted = 1, updated = ?, origin = ?
+          WHERE profile_id = ? AND kind = 'episodio' AND item_id = ?`,
+        [ahora(), aparato, fila.profile_id as string, itemId],
+      );
+    }
+    db.executeSync('COMMIT');
+  } catch (error) {
+    db.executeSync('ROLLBACK');
+    console.warn('[perfiles] no se pudo migrar el historial de episodios', error);
+    return;
+  }
+
+  ponerMeta(db, 'claves-de-episodio', 'hecho');
+  console.log(`[perfiles] historial de episodios: ${convertidas} de ${viejas.length} con clave nueva`);
+}
+
 export function perfilesEnBase(db: DB): AlmacenPerfiles {
   const aparato = idDeAparato(db);
+  migrarClavesDeEpisodio(db, aparato);
 
   const listar = (): Perfil[] =>
-    filas(db, 'SELECT id, name, color, created FROM profile WHERE deleted = 0 ORDER BY created').map(aPerfil);
+    filas(db, 'SELECT id, name, color, avatar, created FROM profile WHERE deleted = 0 ORDER BY created').map(aPerfil);
+
+  /** Escribe un ajuste del perfil, sellando la fila como cualquier otra. */
+  const guardarSetting = (perfilId: string, clave: string, valor: string): void => {
+    db.executeSync(
+      `INSERT INTO profile_setting (profile_id, key, value, updated, deleted, origin)
+       VALUES (?, ?, ?, ?, 0, ?)
+       ON CONFLICT(profile_id, key) DO UPDATE SET
+         value = excluded.value, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+      [perfilId, clave, valor, ahora(), aparato],
+    );
+  };
 
   /** Da de baja una fila sin quitarla de en medio. */
   const enterrar = (tabla: string, donde: string, params: Valor[]): void => {
@@ -95,18 +210,21 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
         id: idDePerfil(nombre, existentes),
         nombre: nombre.trim() || 'Perfil',
         color: color || colorLibre(existentes),
+        // Sin retrato: el círculo empieza con la inicial y se elige después.
+        avatar: '',
         creado: ahora(),
       };
       // Al elegir el identificador solo se miran los perfiles vivos, así que
       // puede tocarle el de uno borrado hace tiempo: se reaprovecha la lápida
       // en vez de chocar con ella.
       db.executeSync(
-        `INSERT INTO profile (id, name, color, created, updated, deleted, origin)
-         VALUES (?, ?, ?, ?, ?, 0, ?)
+        `INSERT INTO profile (id, name, color, avatar, created, updated, deleted, origin)
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?)
          ON CONFLICT(id) DO UPDATE SET
-           name = excluded.name, color = excluded.color, created = excluded.created,
-           updated = excluded.updated, deleted = 0, origin = excluded.origin`,
-        [perfil.id, perfil.nombre, perfil.color, perfil.creado, perfil.creado, aparato],
+           name = excluded.name, color = excluded.color, avatar = excluded.avatar,
+           created = excluded.created, updated = excluded.updated, deleted = 0,
+           origin = excluded.origin`,
+        [perfil.id, perfil.nombre, perfil.color, perfil.avatar, perfil.creado, perfil.creado, aparato],
       );
       return perfil;
     },
@@ -120,6 +238,15 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       ]);
     },
 
+    async ponerRetrato(id: string, avatar: string): Promise<void> {
+      db.executeSync('UPDATE profile SET avatar = ?, updated = ?, origin = ? WHERE id = ?', [
+        avatar,
+        ahora(),
+        aparato,
+        id,
+      ]);
+    },
+
     async recolorear(id: string, color: string): Promise<void> {
       db.executeSync('UPDATE profile SET color = ?, updated = ?, origin = ? WHERE id = ?', [
         color,
@@ -127,6 +254,28 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
         aparato,
         id,
       ]);
+    },
+
+    async vaciarLoLocal(): Promise<void> {
+      /*
+        `DELETE` de verdad, no lápidas: son las cuatro tablas del perfil de
+        este aparato, que se van para dejar sitio a las de la casa.
+
+        Enterrarlas sería peor que no hacer nada. Las lápidas viajan, y el
+        identificador de un perfil sale de su nombre: enterrar "alejandro"
+        aquí enterraría el "alejandro" de la casa en cuanto sincronizara.
+      */
+      db.executeSync('BEGIN IMMEDIATE');
+      try {
+        for (const tabla of ['progress', 'favorite', 'profile_setting', 'profile']) {
+          db.executeSync(`DELETE FROM ${tabla}`);
+        }
+        db.executeSync('COMMIT');
+      } catch (error) {
+        db.executeSync('ROLLBACK');
+        throw error;
+      }
+      console.log('[perfiles] vaciados los locales: este aparato adopta los de su casa');
     },
 
     async borrar(id: string): Promise<void> {
@@ -171,6 +320,50 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       ).map(aAvance);
     },
 
+    async vistas(perfilId: string): Promise<string[]> {
+      /*
+        El umbral se interpola porque es un número nuestro, no algo que venga
+        de fuera, y así el criterio vive en un solo sitio: `FIN_PELICULA`.
+        Sin `duration > 0` entrarían los directos y lo que se anotó sin saber
+        cuánto duraba, que compararía contra cero y saldría todo "visto".
+      */
+      return filas(
+        db,
+        `SELECT item_id FROM progress
+          WHERE profile_id = ? AND kind = 'pelicula' AND deleted = 0
+            AND duration > 0 AND seconds >= duration * ${FIN_PELICULA}`,
+        [perfilId],
+      ).map((fila) => fila.item_id as string);
+    },
+
+    async seriesEmpezadas(perfilId: string): Promise<SerieEmpezada[]> {
+      /*
+        La clave de un capítulo es `serie:sXeY`, y el identificador de una
+        serie nunca lleva dos puntos —sale de `slug`—, así que el primero
+        separa una cosa de la otra.
+
+        Se agrupa aquí y no en SQL: vienen de lo más reciente a lo más viejo,
+        así que la primera de cada serie es la buena, y son unos cientos de
+        filas como mucho.
+      */
+      const porSerie = new Map<string, SerieEmpezada>();
+
+      for (const fila of filas(
+        db,
+        `SELECT item_id, updated FROM progress
+          WHERE profile_id = ? AND kind = 'episodio' AND deleted = 0
+          ORDER BY updated DESC`,
+        [perfilId],
+      )) {
+        const clave = fila.item_id as string;
+        const serieId = leerClaveDeEpisodio(clave)?.serieId;
+        if (!serieId || porSerie.has(serieId)) continue;
+        porSerie.set(serieId, { serieId, ultimaClave: clave, cuando: fila.updated as string });
+      }
+
+      return [...porSerie.values()];
+    },
+
     async avanceDe(perfilId: string, clase: ClaseMedio, itemId: string): Promise<Avance | null> {
       const fila = filas(
         db,
@@ -208,6 +401,29 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       enterrar('progress', 'profile_id = ? AND kind = ? AND item_id = ?', [perfilId, clase, itemId]);
     },
 
+    async anotarUso(perfilId: string, claves: string[]): Promise<void> {
+      if (claves.length === 0) return;
+      for (const clave of claves) {
+        db.executeSync(
+          `INSERT INTO affinity (profile_id, clave, veces, updated, deleted, origin)
+           VALUES (?, ?, 1, ?, 0, ?)
+           ON CONFLICT(profile_id, clave) DO UPDATE SET
+             veces = affinity.veces + 1, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
+          [perfilId, clave, ahora(), aparato],
+        );
+      }
+    },
+
+    async afinidad(perfilId: string): Promise<Record<string, number>> {
+      const cuenta: Record<string, number> = {};
+      for (const fila of filas(db, 'SELECT clave, veces FROM affinity WHERE profile_id = ? AND deleted = 0', [
+        perfilId,
+      ])) {
+        cuenta[fila.clave as string] = Number(fila.veces);
+      }
+      return cuenta;
+    },
+
     async ajustes(perfilId: string): Promise<Ajustes> {
       const guardados: Record<string, string> = {};
       for (const fila of filas(db, 'SELECT key, value FROM profile_setting WHERE profile_id = ? AND deleted = 0', [
@@ -218,14 +434,46 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
       return ajustesDesde(guardados);
     },
 
+    async anunciarReproduccion(
+      perfilId: string,
+      reproduccion: { nombre: string; titulo: string } | null,
+    ): Promise<void> {
+      // El identificador del aparato lo pone el almacén, que es quien lo
+      // sabe: el mismo con el que firma cualquier otra fila.
+      const anuncio: Reproduccion | null = reproduccion
+        ? { aparato, nombre: reproduccion.nombre, titulo: reproduccion.titulo, desde: ahora() }
+        : null;
+
+      // Vacío en vez de lápida: no es una baja, es "aquí ya no suena nada", y
+      // el otro aparato tiene que verlo igual que ve el anuncio.
+      guardarSetting(perfilId, CLAVE_REPRODUCCION, anuncio ? JSON.stringify(anuncio) : '');
+    },
+
+    async reproduccion(perfilId: string): Promise<(Reproduccion & { propia: boolean }) | null> {
+      const fila = filas(db, 'SELECT value FROM profile_setting WHERE profile_id = ? AND key = ? AND deleted = 0', [
+        perfilId,
+        CLAVE_REPRODUCCION,
+      ])[0];
+
+      const anuncio = reproduccionDesde(fila?.value as string | undefined);
+      return anuncio ? { ...anuncio, propia: anuncio.aparato === aparato } : null;
+    },
+
     async guardarAjuste(perfilId: string, clave: string, valor: string): Promise<void> {
-      db.executeSync(
-        `INSERT INTO profile_setting (profile_id, key, value, updated, deleted, origin)
-         VALUES (?, ?, ?, ?, 0, ?)
-         ON CONFLICT(profile_id, key) DO UPDATE SET
-           value = excluded.value, updated = excluded.updated, deleted = 0, origin = excluded.origin`,
-        [perfilId, clave, valor, ahora(), aparato],
-      );
+      guardarSetting(perfilId, clave, valor);
+    },
+
+    async preferencia(perfilId: string, clave: string): Promise<string | null> {
+      const fila = filas(
+        db,
+        'SELECT value FROM profile_setting WHERE profile_id = ? AND key = ? AND deleted = 0',
+        [perfilId, clave],
+      )[0];
+      return fila ? ((fila.value as string) ?? null) : null;
+    },
+
+    async guardarPreferencia(perfilId: string, clave: string, valor: string): Promise<void> {
+      guardarSetting(perfilId, clave, valor);
     },
 
     async favoritos(perfilId: string): Promise<Favorito[]> {

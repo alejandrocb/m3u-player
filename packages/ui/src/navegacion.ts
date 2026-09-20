@@ -16,13 +16,19 @@ export type Pantalla =
   // lo elegido a la derecha. `grupo` es lo que hay marcado en la barra; sin
   // ello, todo. `favoritos` es el grupo propio de cada perfil, que no viene
   // del proveedor y por eso no cabe en `grupo`.
-  | { tipo: 'directo'; grupo?: string; favoritos?: true }
-  | { tipo: 'peliculas'; grupo?: string; favoritos?: true }
-  | { tipo: 'series'; grupo?: string; favoritos?: true }
   // Igual: temporadas a la izquierda, episodios de la marcada a la derecha.
   | { tipo: 'serie'; serieId: string; titulo: string; temporada?: number }
   // El buscador hereda dónde se abrió: en una categoría busca solo ahí.
-  | { tipo: 'buscador'; ambito?: { tipo?: 'canal' | 'pelicula' | 'serie'; grupo?: string }; texto?: string };
+  | { tipo: 'buscador'; ambito?: { tipo?: 'canal' | 'pelicula' | 'serie'; grupo?: string }; texto?: string }
+  /*
+    La ficha de una película o de una serie: carátula, sinopsis, reparto y los
+    botones de lo que se puede hacer con ella.
+
+    Es la única pantalla a la que **no se llega pulsando**: el toque normal
+    reproduce, que es lo que uno quiere el 90 % de las veces. Se llega
+    manteniendo pulsado, desde el menú, junto a Mi Lista y Descargar.
+  */
+  | { tipo: 'ficha'; clase: 'pelicula' | 'serie'; id: string; titulo: string };
 
 /** Lo que la vista debe hacer cuando el usuario pulsa "atrás". */
 export type ResultadoAtras = 'retrocedido' | 'salir';
@@ -100,10 +106,6 @@ export function claveDe(pantalla: Pantalla): string {
   switch (pantalla.tipo) {
     case 'serie':
       return `serie:${pantalla.serieId}:${pantalla.temporada ?? ''}`;
-    case 'directo':
-    case 'peliculas':
-    case 'series':
-      return `${pantalla.tipo}:${pantalla.favoritos ? '♥' : (pantalla.grupo ?? '')}`;
     default:
       return pantalla.tipo;
   }

@@ -10,7 +10,7 @@
  */
 
 import type { Episode, Library, Season, Series } from '@m3u/core';
-import { esRecomendable } from '@m3u/core';
+import { claveDeEpisodio, esRecomendable, leerClaveDeEpisodio } from '@m3u/core';
 
 import type {
   Ambito,
@@ -212,21 +212,53 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         }));
     },
 
-    async episodiosPorId(ids: string[]): Promise<EpisodioDeSerieFicha[]> {
-      // Los episodios ya están numerados en `porId`, que es el equivalente al
-      // rowid que les da SQLite: se busca por ahí y no recorriendo series.
+    async episodioSiguiente(clave: string): Promise<EpisodioDeSerieFicha | null> {
+      const donde = leerClaveDeEpisodio(clave);
+      const serie = donde ? library.series.find((una) => una.id === donde.serieId) : undefined;
+      if (!donde || !serie) return null;
+
+      // Todos los de la serie en orden, y el primero que vaya por delante.
+      const enOrden = serie.seasons
+        .flatMap((temporada) => temporada.episodes.map((uno) => ({ temporada: temporada.number, uno })))
+        .sort((a, b) => a.temporada - b.temporada || a.uno.episode - b.uno.episode);
+
+      const siguiente = enOrden.find(
+        ({ temporada, uno }) =>
+          temporada > donde.temporada || (temporada === donde.temporada && uno.episode > donde.numero),
+      );
+      if (!siguiente) return null;
+
+      return {
+        clave: claveDeEpisodio(serie.id, siguiente.temporada, siguiente.uno.episode),
+        serieId: serie.id,
+        serieTitulo: serie.title,
+        serieLogo: serie.logo ?? null,
+        temporada: siguiente.temporada,
+        numero: siguiente.uno.episode,
+        titulo: siguiente.uno.title ?? null,
+      };
+    },
+
+    async episodiosPorClave(claves: string[]): Promise<EpisodioDeSerieFicha[]> {
       const encontrados: EpisodioDeSerieFicha[] = [];
-      for (const id of ids) {
-        const indexado = porId.get(Number(id));
-        if (!indexado) continue;
+      for (const clave of claves) {
+        const donde = leerClaveDeEpisodio(clave);
+        if (!donde) continue;
+
+        const serie = library.series.find((una) => una.id === donde.serieId);
+        const episodio = serie?.seasons
+          .find((temporada) => temporada.number === donde.temporada)
+          ?.episodes.find((uno) => uno.episode === donde.numero);
+        if (!serie || !episodio) continue;
+
         encontrados.push({
-          id: indexado.id,
-          serieId: indexado.serie.id,
-          serieTitulo: indexado.serie.title,
-          serieLogo: indexado.serie.logo,
-          temporada: indexado.episodio.season,
-          numero: indexado.episodio.episode,
-          titulo: indexado.episodio.title,
+          clave,
+          serieId: serie.id,
+          serieTitulo: serie.title,
+          serieLogo: serie.logo,
+          temporada: episodio.season,
+          numero: episodio.episode,
+          titulo: episodio.title,
         });
       }
       return encontrados;
@@ -237,17 +269,22 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
       if (!pelicula) return null;
       // Aquí no hay panel al que preguntar y el M3U no trae sinopsis: la
       // ficha larga solo existe con un panel Xtream detrás.
-      return { sinopsis: null, reparto: null, fondo: null, genero: null };
+      return { sinopsis: null, reparto: null, fondo: null, genero: null, trailer: null };
     },
 
-    async guardarGeneros(): Promise<void> {
+    async guardarFichas(): Promise<void> {
       // Sin base donde guardarlo: esta biblioteca vive en memoria.
+    },
+
+    async gruposDe(): Promise<string[]> {
+      // Esta biblioteca es para pruebas: no hay categorías que apuntar.
+      return [];
     },
 
     async detalleDeSerie(id: string): Promise<FichaLarga | null> {
       const serie = library.series.find((una) => una.id === id);
       if (!serie) return null;
-      return { sinopsis: null, reparto: null, fondo: null, genero: null };
+      return { sinopsis: null, reparto: null, fondo: null, genero: null, trailer: null };
     },
 
     async seriesPorId(ids: string[]): Promise<SerieFicha[]> {
@@ -271,6 +308,16 @@ export function bibliotecaEnMemoria(library: Library, opciones: OpcionesMemoria 
         .map((id) => porClave.get(id))
         .filter((canal) => canal !== undefined)
         .map((canal) => ({ id: canal.id, nombre: canal.name, grupo: canal.group, logo: canal.logo }));
+    },
+
+    async temas(): Promise<GrupoFicha[]> {
+      /*
+        El género no viene con el M3U ni con el catálogo de películas: lo
+        averigua el servidor de la casa preguntando ficha a ficha, y esto es
+        una biblioteca en memoria que no guarda nada. Sin temas, el inicio se
+        monta con las categorías del proveedor, que es como se hacía antes.
+      */
+      return [];
     },
 
     async categorias(tipo: 'pelicula' | 'serie'): Promise<GrupoFicha[]> {

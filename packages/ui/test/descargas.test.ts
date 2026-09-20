@@ -1,0 +1,400 @@
+/**
+ * La cola de descargas, con un transporte de mentira.
+ *
+ * Lo que hay que dejar clavado es lo que se pierde si se rompe: que **se
+ * reanuda por donde iba** —lo que la hace la única cosa que se puede expulsar
+ * sin coste—, que **el árbitro manda**, y que cerrar la aplicación con algo a
+ * medias no deja una descarga "bajando" que nadie está bajando.
+ */
+
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { Arbitro, ENFRIAMIENTO_MS } from '../src/arbitro.ts';
+import { qualityRank } from '@m3u/core';
+
+import {
+  ColaDeDescargas,
+  TOPE_DE_MANO,
+  claveDeDescarga,
+  ficheroDe,
+  urlSinCredenciales,
+  varianteParaDescargar,
+} from '../src/descargas.ts';
+import type { AlmacenDescargas, Descarga, Transferencia } from '../src/descargas.ts';
+
+/** Un transporte que no toca ficheros: guarda las órdenes para dispararlas a mano. */
+function transporteFalso() {
+  const ordenes: Array<Parameters<Transferencia['empezar']>[0]> = [];
+  const cancelaciones: string[] = [];
+
+  const transferencia: Transferencia = {
+    empezar(orden) {
+      ordenes.push(orden);
+      return () => cancelaciones.push(orden.descarga.id);
+    },
+  };
+
+  return { transferencia, ordenes, cancelaciones, ultima: () => ordenes[ordenes.length - 1]! };
+}
+
+function almacenFalso(inicial: Descarga[] = []) {
+  const filas = new Map(inicial.map((descarga) => [descarga.id, descarga]));
+  const almacen: AlmacenDescargas = {
+    async leer() {
+      return [...filas.values()].map((descarga) => ({ ...descarga }));
+    },
+    async guardar(descarga) {
+      filas.set(descarga.id, { ...descarga });
+    },
+    async borrar(id) {
+      filas.delete(id);
+    },
+  };
+  return { almacen, filas };
+}
+
+function pelicula(id: string, titulo = 'Una película') {
+  return {
+    id: claveDeDescarga('pelicula', id),
+    clase: 'pelicula' as const,
+    itemId: id,
+    titulo,
+    serieId: null,
+    url: `http://panel/movie/u/p/${id}.mkv`,
+    fichero: ficheroDe(claveDeDescarga('pelicula', id), 'mkv'),
+    duracion: 5_400,
+  };
+}
+
+function montar(inicial: Descarga[] = []) {
+  const transporte = transporteFalso();
+  const { almacen, filas } = almacenFalso(inicial);
+  const arbitro = new Arbitro(1);
+  let reloj = 1_000;
+  const esperas: Array<() => void> = [];
+  const borrados: string[] = [];
+  const cola = new ColaDeDescargas({
+    arbitro,
+    transferencia: transporte.transferencia,
+    almacen,
+    ahora: () => reloj,
+    esperar: (hacer) => esperas.push(hacer),
+    borrarFichero: async (descarga) => {
+      borrados.push(descarga.fichero);
+    },
+  });
+
+  /*
+    Soltar una ranura la deja enfriando treinta segundos —lo que tarda el
+    panel en darla por libre—, así que encadenar dos descargas exige pasar ese
+    rato. En la vida real ni se nota: una película tarda minutos.
+  */
+  const pasarElEnfriamiento = async (): Promise<void> => {
+    reloj += ENFRIAMIENTO_MS + 1;
+    // Lo que quedó esperando tras un corte se dispara aquí, sin esperar de
+    // verdad los cinco segundos.
+    const pendientes = [...esperas];
+    esperas.length = 0;
+    for (const hacer of pendientes) hacer();
+    await cola.reintentar();
+  };
+
+  const avanzarReloj = (ms: number): void => {
+    reloj += ms;
+  };
+
+  return { cola, arbitro, transporte, filas, pasarElEnfriamiento, avanzarReloj, borrados };
+}
+
+test('lo añadido arranca solo y se apunta en la base', async () => {
+  const { cola, transporte, filas } = montar();
+  await cola.anadir(pelicula('el-aviso-2018'));
+
+  assert.equal(cola.de('pelicula:el-aviso-2018')?.estado, 'bajando');
+  assert.equal(transporte.ordenes.length, 1);
+  assert.equal(transporte.ultima().desde, 0, 'empieza por el principio');
+  assert.ok(filas.has('pelicula:el-aviso-2018'), 'queda guardada para el próximo arranque');
+});
+
+test('una cada vez: la segunda espera a que acabe la primera', async () => {
+  const { cola, transporte, pasarElEnfriamiento } = montar();
+  await cola.anadir(pelicula('una'));
+  await cola.anadir(pelicula('otra'));
+
+  assert.equal(transporte.ordenes.length, 1);
+  assert.equal(cola.de('pelicula:otra')?.estado, 'en cola');
+
+  transporte.ultima().alTerminar();
+  await new Promise((sigue) => setTimeout(sigue, 0));
+  assert.equal(cola.de('pelicula:una')?.estado, 'hecha');
+
+  await pasarElEnfriamiento();
+  assert.equal(transporte.ordenes.length, 2, 'la siguiente arranca sola');
+  assert.equal(cola.de('pelicula:otra')?.estado, 'bajando');
+});
+
+test('se reanuda por el byte donde iba, no desde el principio', async () => {
+  /*
+    Es lo que permite que la descarga sea la primera a la que se echa cuando
+    hace falta la conexión: no se pierde nada. Los ficheros del panel aceptan
+    `Range`, así que se pide desde donde estaba.
+  */
+  const { cola, transporte, pasarElEnfriamiento } = montar();
+  await cola.anadir(pelicula('a-medias'));
+
+  transporte.ultima().alAvanzar(400_000_000, 1_200_000_000);
+  await cola.pausar('pelicula:a-medias');
+  assert.deepEqual(transporte.cancelaciones, ['pelicula:a-medias']);
+
+  await cola.anadir(pelicula('a-medias'));
+  await pasarElEnfriamiento();
+  assert.equal(transporte.ultima().desde, 400_000_000);
+  assert.equal(cola.de('pelicula:a-medias')?.total, 1_200_000_000, 'el tamaño no se olvida');
+});
+
+test('la conexión la reparte el árbitro: sin ranura no arranca', async () => {
+  const { cola, arbitro, transporte } = montar();
+
+  // La única ranura, ocupada por lo que se está viendo.
+  arbitro.pedir('reproductor', 'reproducir', 1_000);
+
+  await cola.anadir(pelicula('espera'));
+  assert.equal(transporte.ordenes.length, 0, 'no se cuela delante de la película');
+  assert.equal(cola.de('pelicula:espera')?.estado, 'en cola');
+
+  // Al cerrar el reproductor, la ranura queda enfriándose y sigue sin entrar.
+  arbitro.soltar('reproductor', 1_000);
+  await cola.reintentar();
+  assert.equal(transporte.ordenes.length, 0, 'la ranura recién soltada aún enfría');
+});
+
+test('sin ranura, la cola vuelve a preguntar sola', async () => {
+  /*
+    Esto es lo que dejaba una descarga clavada en 0 % para siempre: el árbitro
+    decía que no —la ranura que ella misma acababa de soltar estaba
+    enfriándose— y **nadie volvía a intentarlo nunca**. Por fuera se veía un
+    "en cola" que no se movía y ningún error que mirar.
+  */
+  const { cola, arbitro, transporte, pasarElEnfriamiento } = montar();
+  arbitro.pedir('reproductor', 'reproducir', 1_000);
+
+  await cola.anadir(pelicula('la-paciente'));
+  assert.equal(transporte.ordenes.length, 0);
+
+  // Se cierra el reproductor. Nadie le dice nada a la cola: tiene que
+  // enterarse ella sola cuando le toque.
+  arbitro.soltar('reproductor', 1_000);
+  await pasarElEnfriamiento();
+
+  assert.equal(transporte.ordenes.length, 1, 'ha vuelto a preguntar por su cuenta');
+  assert.equal(cola.de('pelicula:la-paciente')?.estado, 'bajando');
+});
+
+test('expulsada por el árbitro no es fallida: vuelve a la cola', async () => {
+  const { cola, transporte } = montar();
+  await cola.anadir(pelicula('la-que-cede'));
+  transporte.ultima().alAvanzar(100, null);
+
+  cola.expulsar('pelicula:la-que-cede');
+
+  assert.equal(cola.de('pelicula:la-que-cede')?.estado, 'en cola');
+  assert.equal(cola.de('pelicula:la-que-cede')?.error, null, 'ceder la ranura no es un error');
+  assert.deepEqual(transporte.cancelaciones, ['pelicula:la-que-cede']);
+});
+
+test('al arrancar, lo que se quedó bajando vuelve a la cola', async () => {
+  /*
+    Al cerrar la aplicación no queda nada bajando, pero en la base sí quedó
+    escrito "bajando". Sin esto, esa descarga se quedaría para siempre en un
+    estado que no se corresponde con nada y no arrancaría jamás.
+  */
+  const aMedias: Descarga = {
+    ...pelicula('la-de-anoche'),
+    estado: 'bajando',
+    bytes: 900,
+    total: 5_000,
+    creada: '2026-09-05T20:00:00.000Z',
+    intentos: 0,
+    error: null,
+  };
+
+  const { cola, transporte } = montar([aMedias]);
+  await cola.cargar();
+
+  assert.equal(cola.de('pelicula:la-de-anoche')?.estado, 'bajando', 'ha arrancado de nuevo');
+  assert.equal(transporte.ultima().desde, 900, 'y sigue por donde iba');
+});
+
+test('lo hecho no se vuelve a bajar al pedirlo otra vez', async () => {
+  const { cola, transporte } = montar();
+  await cola.anadir(pelicula('ya-esta'));
+  transporte.ultima().alTerminar();
+  await new Promise((sigue) => setTimeout(sigue, 0));
+
+  await cola.anadir(pelicula('ya-esta'));
+  assert.equal(transporte.ordenes.length, 1, 'no se pide otra vez');
+  assert.equal(cola.de('pelicula:ya-esta')?.estado, 'hecha');
+});
+
+test('un corte no es un fallo: se vuelve por donde iba', async () => {
+  /*
+    Una película de dos gigas por un wifi flojo se corta varias veces. Lo
+    único que hay que hacer es seguir: los bytes están apuntados. Marcarla
+    como rota a la primera obligaba a pedirla otra vez a mano, y en la
+    Samsung eso pasaba siempre.
+  */
+  const { cola, transporte, pasarElEnfriamiento } = montar();
+  await cola.anadir(pelicula('la-que-se-corta'));
+
+  transporte.ultima().alAvanzar(500_000, 2_000_000);
+  transporte.ultima().alFallar('Download interrupted.');
+  await new Promise((sigue) => setTimeout(sigue, 0));
+
+  assert.equal(cola.de('pelicula:la-que-se-corta')?.estado, 'en cola', 'no se da por perdida');
+  assert.equal(cola.de('pelicula:la-que-se-corta')?.intentos, 0, 'había avanzado: no cuenta');
+
+  await pasarElEnfriamiento();
+  assert.equal(transporte.ordenes.length, 2, 'vuelve sola');
+  assert.equal(transporte.ultima().desde, 500_000, 'y por donde iba');
+});
+
+test('cortarse una y otra vez sin avanzar sí es un fallo', async () => {
+  // Es lo que pasa cuando el disco está lleno o el panel ha dejado de servir
+  // ese fichero: insistir para siempre sería gastar batería por nada.
+  const { cola, transporte, pasarElEnfriamiento } = montar();
+  await cola.anadir(pelicula('la-imposible'));
+
+  for (let corte = 0; corte < 5; corte += 1) {
+    transporte.ultima().alFallar('Download interrupted.');
+    await new Promise((sigue) => setTimeout(sigue, 0));
+    await pasarElEnfriamiento();
+  }
+
+  assert.equal(cola.de('pelicula:la-imposible')?.estado, 'fallida');
+  assert.equal(cola.de('pelicula:la-imposible')?.intentos, 5);
+
+  // Y pedirla a mano la pone a cero: quizá se ha hecho sitio en el disco.
+  await cola.anadir(pelicula('la-imposible'));
+  assert.equal(cola.de('pelicula:la-imposible')?.intentos, 0);
+  assert.equal(cola.de('pelicula:la-imposible')?.error, null);
+});
+
+test('quitar una borra su fila, su fichero y deja paso a la siguiente', async () => {
+  const { cola, transporte, filas, pasarElEnfriamiento, borrados } = montar();
+  await cola.anadir(pelicula('fuera'));
+  await cola.anadir(pelicula('detras'));
+
+  await cola.quitar('pelicula:fuera');
+  await pasarElEnfriamiento();
+
+  assert.equal(cola.de('pelicula:fuera'), undefined);
+  assert.ok(!filas.has('pelicula:fuera'));
+  assert.equal(cola.de('pelicula:detras')?.estado, 'bajando');
+  assert.deepEqual(transporte.cancelaciones, ['pelicula:fuera']);
+  /*
+    Y el fichero se va con ella: si no, la lista enseña cero descargas y el
+    disco tiene dos gigas ocupados que nadie sabe de dónde salen.
+  */
+  assert.deepEqual(borrados, ['pelicula-fuera.mkv']);
+});
+
+test('la velocidad se mide sobre unos segundos, no sobre el último aviso', async () => {
+  /*
+    El aviso de avance llega dos veces por segundo. Calculando la velocidad
+    entre dos avisos seguidos, el número baila tanto que no se puede leer y el
+    "faltan X minutos" salta de dos a veinte. Se mide sobre una ventana.
+  */
+  const { cola, transporte, avanzarReloj } = montar();
+  await cola.anadir(pelicula('la-que-corre'));
+
+  transporte.ultima().alAvanzar(1_000_000, 100_000_000);
+  assert.equal(cola.marcha().bytesPorSegundo, null, 'sin ventana cumplida no hay número');
+
+  // Diez segundos desde que arrancó, diez megas en el disco: 1 MB/s.
+  avanzarReloj(10_000);
+  transporte.ultima().alAvanzar(10_000_000, 100_000_000);
+
+  const marcha = cola.marcha();
+  assert.equal(Math.round(marcha.bytesPorSegundo ?? 0), 1_000_000);
+  // Faltan 90 MB a un mega por segundo: noventa segundos.
+  assert.equal(Math.round(marcha.quedan ?? 0), 90);
+});
+
+test('sin nada bajando no hay velocidad que enseñar', async () => {
+  const { cola } = montar();
+  assert.deepEqual(cola.marcha(), { bytesPorSegundo: null, quedan: null });
+});
+
+test('en un aparato de mano se baja la mejor que no pase de 720p', () => {
+  /*
+    Una película de 5,3 GB es 1080p con grano y tres pistas de audio. En diez
+    pulgadas 720p no se distingue y ocupa menos de la mitad; en el televisor
+    sí se nota, y allí el disco no es el problema.
+  */
+  const variantes = [
+    { calidad: '1080p', url: 'a' },
+    { calidad: '720p', url: 'b' },
+    { calidad: 'SD', url: 'c' },
+  ];
+
+  assert.equal(varianteParaDescargar(variantes, TOPE_DE_MANO, qualityRank)?.url, 'b');
+  // Sin tope —el televisor— manda la mejor, que es como vienen ordenadas.
+  assert.equal(varianteParaDescargar(variantes, null, qualityRank)?.url, 'a');
+});
+
+test('si todas pasan del tope se coge la menos pesada', () => {
+  // Hay títulos que el proveedor solo manda en 1080p: mejor esa que nada.
+  const variantes = [
+    { calidad: '4K', url: 'a' },
+    { calidad: '1080p', url: 'b' },
+  ];
+
+  assert.equal(varianteParaDescargar(variantes, TOPE_DE_MANO, qualityRank)?.url, 'b');
+});
+
+test('una calidad que no se reconoce no se toma por la más pequeña', () => {
+  /*
+    Sin calidad, el rango vale cero, y eso la haría ganar siempre en la
+    comparación de "la menos pesada" cuando en realidad no se sabe lo que es.
+    Entre algo medido y algo por saber, manda lo medido.
+  */
+  const variantes = [
+    { calidad: null, url: 'a' },
+    { calidad: '720p', url: 'b' },
+  ];
+
+  assert.equal(varianteParaDescargar(variantes, TOPE_DE_MANO, qualityRank)?.url, 'b');
+  assert.equal(varianteParaDescargar([{ calidad: null, url: 'a' }], TOPE_DE_MANO, qualityRank)?.url, 'a');
+});
+
+test('el nombre del fichero no lleva la extensión de la URL', () => {
+  // La extensión de la URL miente: hay `.mkv` que por dentro son MP4. La pone
+  // quien haya mirado los primeros bytes.
+  assert.equal(ficheroDe('pelicula:el-aviso-2018', 'mp4'), 'pelicula-el-aviso-2018.mp4');
+  assert.equal(ficheroDe('episodio:doctor-who-2005:s1e7', '.mkv'), 'episodio-doctor-who-2005-s1e7.mkv');
+});
+
+/**
+ * La redacción de la URL, que se escribe en el registro del sistema.
+ *
+ * Equivocarse aquí deja la contraseña del panel en `adb logcat`, que es
+ * exactamente lo que no puede pasar.
+ */
+test('la URL del registro no lleva usuario ni contraseña', () => {
+  const tapada = urlSinCredenciales('http://panel.ejemplo.com:8080/movie/pepe/s3cr3t0/12345.mkv');
+
+  assert.equal(tapada, 'http://panel.ejemplo.com:8080/movie/***/***/12345.mkv');
+  assert.doesNotMatch(tapada, /pepe|s3cr3t0/);
+});
+
+test('la de un episodio tampoco, que lleva un tramo más', () => {
+  const tapada = urlSinCredenciales('http://panel.ejemplo.com:8080/series/pepe/s3cr3t0/987.mkv');
+
+  assert.doesNotMatch(tapada, /pepe|s3cr3t0/);
+  assert.match(tapada, /987\.mkv$/);
+});
+
+test('una dirección que no se entiende no se enseña a medias', () => {
+  assert.equal(urlSinCredenciales('esto no es una url'), '(url ilegible)');
+});
