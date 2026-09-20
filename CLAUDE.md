@@ -1387,6 +1387,22 @@ el puente podría servir del disco pero todavía no lo hace.
   `resolveRequest` en `metro.config.js`. Al clonar en un equipo nuevo hay que
   crear el local (`cp apps/tv/servidor.ejemplo.js apps/tv/servidor.local.js`) o
   la app pedirá la dirección a mano al emparejar.
+- **El llavero de Android puede corromperse, y entonces no se puede ni leer
+  ni escribir nada.** `react-native-keychain` guarda **todo en un solo
+  fichero** (`files/datastore/RN_KEYCHAIN.preferences_pb`): las listas con sus
+  credenciales y el emparejamiento con la casa. Si ese fichero se estropea,
+  cualquier operación falla con **"Unable to parse preferences proto"**. Pasó
+  en la tablet Xiaomi, y por fuera se veía así: el servidor aprobaba el
+  emparejamiento una y otra vez y el aparato nunca entraba en la casa. Con el
+  fichero ilegible no hay nada que perder, así que `ModuloDeLlavero` lo borra
+  y se empieza de cero —**hay que reabrir la aplicación**, que el almacén ya
+  está montado en memoria con el error dentro—.
+- **Y el token del emparejamiento se entrega una sola vez.** El servidor lo
+  da, marca el aparato como activo y borra el código; a la siguiente pregunta
+  con el mismo secreto contesta "no te conozco". Así que **un fallo al
+  guardarlo no se puede tratar como un corte de red**: reintentar solo quema
+  otro código. Tiene su propio tipo de error (`ErrorDeEmparejamiento`) y la
+  pantalla lo dice y para.
 - **La MAC no sirve para identificar un aparato en Android.**
   `getMacAddress()` devuelve `02:00:00:00:00:00` desde Android 6, leerla de
   `/sys/class/net/` está cerrado desde Android 10, y encima el sistema la

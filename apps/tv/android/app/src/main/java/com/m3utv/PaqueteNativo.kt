@@ -15,11 +15,17 @@ import com.facebook.react.uimanager.ViewManager
  * - `Descargas`: el aviso de la barra que deja seguir bajando al fondo.
  * - `Teles`: buscar en la red las teles a las que mandar un vídeo.
  * - `Puente`: servirle el vídeo a la tele, pidiéndoselo al panel.
+ * - `Llavero`: limpiarlo cuando su fichero se corrompe y no se puede ni leer.
  */
 class PaqueteNativo : ReactPackage {
 
   override fun createNativeModules(contexto: ReactApplicationContext): List<NativeModule> =
-    listOf(ModuloDeDescargas(contexto), ModuloDeTeles(contexto), ModuloDePuente(contexto))
+    listOf(
+      ModuloDeDescargas(contexto),
+      ModuloDeTeles(contexto),
+      ModuloDePuente(contexto),
+      ModuloDeLlavero(contexto),
+    )
 
   override fun createViewManagers(
     contexto: ReactApplicationContext,
