@@ -787,6 +787,67 @@ test('seguir viendo es una fila más del inicio, con su avance', async () => {
   assert.equal(fila?.elementos[1]?.detalle, 'T1 E7 · Episodio 7');
 });
 
+/*
+  El historial es de la casa y el catálogo es de cada aparato.
+
+  Lo empezado en la tele viaja por el servidor y llega aquí como un
+  identificador; el catálogo, en cambio, se lo baja cada aparato del panel y
+  vale tres días. Así que una película puede estar en el historial de todos y
+  en la base de solo algunos, y entonces se caía de la fila **sin decir nada**:
+  por fuera parecía que la sincronización no funcionaba, cuando lo que estaba
+  viejo era el catálogo. Por eso ahora se avisa.
+*/
+test('una película del historial que no está en el catálogo se avisa', async () => {
+  const faltas: number[] = [];
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    seguirViendo: async () => [
+      ...aMedias(),
+      {
+        clase: 'pelicula' as const,
+        itemId: 'la-que-no-esta',
+        titulo: 'La que no está',
+        segundos: 600,
+        duracion: 5400,
+        visto: '2026-08-27T21:00:00.000Z',
+      },
+    ],
+    faltanFichas: (cuantas) => faltas.push(cuantas),
+  });
+  const estado = await presentador.cargar();
+
+  assert.deepEqual(faltas, [1], 'se avisa una sola vez, con cuántas faltan');
+  // Y lo que sí está sigue saliendo: la fila no se cae entera por una.
+  assert.equal(filaDe(estado, 'Seguir viendo')?.elementos.length, 2);
+});
+
+test('un episodio que falta no cuenta: los episodios no vienen con el catálogo', async () => {
+  const faltas: number[] = [];
+  const presentador = new Presentador(
+    {
+      ...bibliotecaFalsa(),
+      // Se piden al abrir cada serie —son 6.598—, así que en un aparato que no
+      // haya entrado en esa serie no están, y eso es lo normal: reimportar el
+      // catálogo no los traería.
+      episodiosPorClave: async () => [],
+    },
+    { seguirViendo: async () => aMedias(), faltanFichas: (cuantas) => faltas.push(cuantas) },
+  );
+  await presentador.cargar();
+
+  assert.deepEqual(faltas, [], 'no se pide rehacer el catálogo por un episodio');
+});
+
+test('sin nada que falte no se avisa', async () => {
+  const faltas: number[] = [];
+  const presentador = new Presentador(bibliotecaFalsa(), {
+    seguirViendo: async () => aMedias(),
+    faltanFichas: (cuantas) => faltas.push(cuantas),
+  });
+  await presentador.cargar();
+
+  assert.deepEqual(faltas, []);
+});
+
 test('lo empezado va justo detrás de la portada', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
   const estado = await presentador.cargar();

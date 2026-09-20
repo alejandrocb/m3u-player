@@ -297,6 +297,45 @@ function Raiz() {
     }
   }, []);
 
+  /** Una sola vez por sesión: si de verdad ya no está, reimportar no la trae. */
+  const catalogoRehecho = useRef(false);
+
+  /**
+   * El historial menciona películas que este catálogo no conoce: se rehace.
+   *
+   * El historial se comparte entre los aparatos de la casa y **el catálogo
+   * no**: aquel viaja por el servidor y este se lo baja cada aparato del
+   * panel, guardándolo tres días. Así que lo empezado en la tele llegaba aquí
+   * como un identificador que la base de aquí no conocía y se caía de "seguir
+   * viendo" sin decir nada, que por fuera parece justo lo contrario de lo que
+   * pasa: que la sincronización no funciona.
+   *
+   * Se hace **al fondo y sin pantalla de carga**: la base es la misma que
+   * está leyendo la biblioteca —`abrirBase` abre el mismo fichero—, así que no
+   * hay nada que intercambiar y basta con volver a montar el inicio cuando
+   * termine. Lo que devuelve `cargarCatalogo` se tira a propósito.
+   *
+   * Y **una sola vez por sesión**: si la película no está porque el proveedor
+   * la ha quitado, reimportar no la va a traer, y sin este tope el inicio
+   * pediría otra importación en cada pintado.
+   */
+  const rehacerCatalogo = useCallback(async (elegida: Cuenta, cuantas: number) => {
+    if (catalogoRehecho.current) return;
+    catalogoRehecho.current = true;
+    console.log(`[catalogo] faltan ${cuantas} fichas del historial; se rehace al fondo`);
+    try {
+      await cargarCatalogo(elegida, () => {}, {
+        forzar: true,
+        parrilla: () => sync.current.epg(),
+        fichas: (desde) => sync.current.fichas(desde),
+      });
+      console.log('[catalogo] rehecho; se repinta el inicio');
+      setSincronizado((n) => n + 1);
+    } catch (fallo) {
+      console.warn('[catalogo] no se pudo rehacer al fondo', fallo);
+    }
+  }, []);
+
   const conectar = useCallback(async (elegida: Cuenta, forzar = false) => {
     setFase({
       tipo: 'conectando',
@@ -570,6 +609,7 @@ function Raiz() {
         setFase({ tipo: 'perfiles', cuenta: fase.cuenta, medicion: fase.medicion, perfil: fase.perfil })
       }
       onActualizar={() => conectar(fase.cuenta, true)}
+      onFaltanFichas={(cuantas) => void rehacerCatalogo(fase.cuenta, cuantas)}
       sincronizado={sincronizado}
       preparado={preparado}
       aparato={nombreAparato}
@@ -604,6 +644,7 @@ function BibliotecaVista({
   onCerrarSesion,
   onCambiarPerfil,
   onActualizar,
+  onFaltanFichas,
   sincronizado,
   preparado,
   aparato,
@@ -628,6 +669,8 @@ function BibliotecaVista({
   onCerrarSesion: () => void;
   onCambiarPerfil: () => void;
   onActualizar: () => void;
+  /** El historial trae fichas que este catálogo no conoce: está viejo. */
+  onFaltanFichas: (cuantas: number) => void;
   /** Sube cuando ha llegado algo de otro aparato: hay que repintar. */
   sincronizado: number;
   /** Pide sincronizar ahora, sin esperar al temporizador. */
@@ -916,6 +959,14 @@ function BibliotecaVista({
     perfiles.ajustes(perfil.id).then(setAjustes);
   }, [perfiles, perfil]);
 
+  /*
+    Por referencia, como `sincronizarAhora`: el presentador se monta en un
+    efecto cuyas dependencias están recortadas a mano, así que una función que
+    entre por props quedaría congelada en la de la primera vuelta.
+  */
+  const avisarDeFaltas = useRef(onFaltanFichas);
+  avisarDeFaltas.current = onFaltanFichas;
+
   useEffect(() => {
     const instancia = new Presentador(biblioteca, {
       columnasRejilla: ajustes.columnas,
@@ -936,6 +987,13 @@ function BibliotecaVista({
         petición por canal cada vez que se pinta el inicio.
       */
       parrilla: (canalIds) => programacion.deCanales(canalIds),
+      /*
+        Y de aquí, que el historial mencione películas que este catálogo no
+        conoce. Pasa porque el historial es de la casa y el catálogo de cada
+        aparato: se rehace al fondo en vez de dejar la fila coja sin explicar
+        por qué.
+      */
+      faltanFichas: (cuantas) => avisarDeFaltas.current(cuantas),
       // Y de aquí el orden de las filas por categoría: primero lo que más ve.
       afinidad: () => perfiles.afinidad(perfil.id),
       // "Ver en la tele" solo con el aparato en la mano: una tele no le manda

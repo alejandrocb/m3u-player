@@ -663,6 +663,28 @@ verdad**, y es la única excepción a la regla de no borrar nunca: enterrar ser�
 peor, porque las lápidas viajan y el identificador de un perfil sale de su
 nombre, así que enterrar "alejandro" aquí enterraría el de la casa.
 
+**Se comparte el historial, no el catálogo, y eso se nota en "seguir
+viendo".** El avance viaja por el servidor —un identificador y un minuto— y el
+catálogo se lo baja cada aparato del panel por su cuenta, guardándolo tres
+días. Así que una película empezada en la tele puede llegar a la tablet como un
+identificador que su base no conoce: sin ficha no hay carátula, ni nota, ni URL
+que reproducir, y se caía de la fila **en silencio**. Por fuera eso parece
+exactamente lo contrario de lo que pasa —que la sincronización está rota—,
+cuando lo que está viejo es el catálogo; y además falta en todas partes, no
+solo en esa fila: en el buscador y en Mi Lista también. Pasó de verdad con
+cuatro aparatos de la misma casa enseñando cuatro filas distintas. Ahora el
+presentador las cuenta y avisa (`faltanFichas`), y la aplicación rehace el
+catálogo al fondo y repinta.
+
+Dos detalles que no son opcionales:
+
+- **Los episodios no cuentan.** No se importan con el catálogo —se piden al
+  abrir cada serie, que son 6.598—, así que uno que falte es lo normal en un
+  aparato que no haya entrado en esa serie, y reimportar no lo traería.
+- **Una sola vez por sesión.** Si la película falta porque el proveedor la ha
+  quitado, reimportar no la va a traer, y sin ese tope el inicio pediría otra
+  importación en cada pintado.
+
 **Ojo con el episodio: su número de fila no significa nada fuera del aparato.**
 Los episodios no se importan con el catálogo —se piden al abrir cada serie—,
 así que el `id` que les da SQLite depende de en qué orden haya abierto series

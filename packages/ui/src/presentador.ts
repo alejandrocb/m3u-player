@@ -549,6 +549,27 @@ export interface OpcionesPresentador {
    * sobra en la ficha.
    */
   conTele?: boolean;
+  /**
+   * El historial menciona fichas que este aparato no tiene en su catálogo.
+   *
+   * El historial se comparte entre los aparatos de la casa y **el catálogo
+   * no**: aquel viaja por el servidor y este se lo baja cada uno del panel,
+   * guardándolo tres días. Así que una película empezada en la tele puede
+   * llegar aquí como un identificador que la base de aquí no conoce, y
+   * entonces no hay carátula, ni título, ni URL que reproducir: se cae de la
+   * fila en silencio.
+   *
+   * Por fuera eso parece que la sincronización no funciona, y funciona: lo
+   * que está viejo es el catálogo. Quien pone esto puede refrescarlo y volver
+   * a pintar, que arregla la causa —también faltan en el buscador y en Mi
+   * Lista— en vez de disimular en esta fila.
+   *
+   * **Solo cuenta lo que el catálogo trae**: películas y canales. Los
+   * episodios no se importan —se piden al abrir cada serie, que son 6.598—,
+   * así que uno que falte no dice nada de la frescura del catálogo y pedir
+   * por él sería reimportar sin arreglar nada.
+   */
+  faltanFichas?: (cuantas: number) => void;
 }
 
 /** Lo que el presentador necesita de los favoritos del perfil. */
@@ -616,6 +637,7 @@ export class Presentador {
   #vistas: OpcionesPresentador['vistas'];
   #seriesEmpezadas: OpcionesPresentador['seriesEmpezadas'];
   #parrilla: OpcionesPresentador['parrilla'];
+  #faltanFichas: OpcionesPresentador['faltanFichas'];
   #favoritos: PuertoFavoritos | undefined;
   #conTele: boolean;
   #afinidad: OpcionesPresentador['afinidad'];
@@ -639,6 +661,7 @@ export class Presentador {
     this.#vistas = opciones.vistas;
     this.#seriesEmpezadas = opciones.seriesEmpezadas;
     this.#parrilla = opciones.parrilla;
+    this.#faltanFichas = opciones.faltanFichas;
     this.#favoritos = opciones.favoritos;
     this.#conTele = opciones.conTele ?? false;
     this.#afinidad = opciones.afinidad;
@@ -919,6 +942,14 @@ export class Presentador {
 
     const ahora = new Date();
     const elementos: Elemento[] = [];
+    /*
+      Cuántas se caen por no estar en el catálogo de este aparato.
+
+      Solo de lo que el catálogo trae —películas y canales—: los episodios se
+      piden al abrir cada serie, así que uno que falte es lo normal y no dice
+      nada de si el catálogo está viejo.
+    */
+    let sinFicha = 0;
     for (const { avance, relevo } of alDia) {
       // Con relevo, el capítulo es otro y empieza de cero: la barrita del que
       // ya se vio no dice nada del que viene.
@@ -926,9 +957,20 @@ export class Presentador {
 
       if (avance.clase === 'pelicula') {
         const ficha = porPelicula.get(avance.itemId);
-        // Lo que ya no está en el catálogo se calla: el proveedor quita cosas,
-        // y una ficha sin carátula ni título no le sirve a nadie.
-        if (!ficha) continue;
+        /*
+          Lo que no está en el catálogo se calla: sin ficha no hay carátula, ni
+          nota, ni URL que reproducir, y media carátula no le sirve a nadie.
+
+          Pero se **cuenta**, que es la diferencia con antes: el historial
+          viene de toda la casa y el catálogo es de este aparato, así que esto
+          casi siempre quiere decir que el catálogo se ha quedado viejo, no que
+          el proveedor haya quitado la película. Quien escuche `faltanFichas`
+          puede refrescarlo y volver a pintar.
+        */
+        if (!ficha) {
+          sinFicha += 1;
+          continue;
+        }
         elementos.push({
           id: `continuar:pelicula:${ficha.id}`,
           titulo: ficha.titulo,
@@ -946,7 +988,12 @@ export class Presentador {
 
       if (avance.clase === 'canal') {
         const ficha = porCanal.get(avance.itemId);
-        if (!ficha) continue;
+        // Los canales también vienen con el catálogo, así que uno que falte
+        // cuenta igual que una película.
+        if (!ficha) {
+          sinFicha += 1;
+          continue;
+        }
 
         /*
           Un canal caduca con el programa que se estaba viendo.
@@ -1009,6 +1056,8 @@ export class Presentador {
         });
       }
     }
+
+    if (sinFicha > 0) this.#faltanFichas?.(sinFicha);
 
     return elementos.length > 0 ? { tipo: 'carrusel', titulo: 'Seguir viendo', elementos } : null;
   }
