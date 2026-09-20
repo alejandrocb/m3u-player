@@ -678,9 +678,17 @@ catálogo al fondo y repinta.
 
 Dos detalles que no son opcionales:
 
-- **Los episodios no cuentan.** No se importan con el catálogo —se piden al
-  abrir cada serie, que son 6.598—, así que uno que falte es lo normal en un
-  aparato que no haya entrado en esa serie, y reimportar no lo traería.
+- **Los episodios no cuentan, y además no se esconden.** No se importan con el
+  catálogo —se piden al abrir cada serie, que son 6.598—, así que uno que falte
+  es lo normal en un aparato que no haya entrado en esa serie, y reimportar no
+  lo traería. Pero **de un capítulo se enseña la carátula y el título de su
+  serie**, no los suyos, y la serie sí viene con el catálogo; la temporada y el
+  número están dentro de la propia clave (`la-casa-de-papel:s2e3`). Así que se
+  pinta igual. Lo único que cambia es a dónde lleva: sin la fila del episodio
+  no hay URL que reproducir, así que **se entra en la serie por su temporada**
+  y desde ahí se pone, y al abrirla se piden sus capítulos al panel, de modo
+  que la siguiente vez ya se reproduce de un toque. Si falta **la serie**, eso
+  sí cuenta: esa viene con el catálogo.
 - **Una sola vez por sesión.** Si la película falta porque el proveedor la ha
   quitado, reimportar no la va a traer, y sin ese tope el inicio pediría otra
   importación en cada pintado.

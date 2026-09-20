@@ -820,21 +820,43 @@ test('una película del historial que no está en el catálogo se avisa', async 
   assert.equal(filaDe(estado, 'Seguir viendo')?.elementos.length, 2);
 });
 
-test('un episodio que falta no cuenta: los episodios no vienen con el catálogo', async () => {
+/*
+  Un capítulo empezado en otro aparato se pinta igual, con lo de la serie.
+
+  Los episodios no se importan —se piden al abrir cada serie, que son 6.598—,
+  así que en una tablet que nunca haya entrado en esa serie no están. Y no hay
+  por qué esconderlo: de un capítulo se enseña **la carátula y el título de la
+  serie**, que sí viene con el catálogo, y la temporada y el número están en la
+  propia clave.
+*/
+test('un capítulo que no está se pinta con la carátula de su serie', async () => {
   const faltas: number[] = [];
   const presentador = new Presentador(
-    {
-      ...bibliotecaFalsa(),
-      // Se piden al abrir cada serie —son 6.598—, así que en un aparato que no
-      // haya entrado en esa serie no están, y eso es lo normal: reimportar el
-      // catálogo no los traería.
-      episodiosPorClave: async () => [],
-    },
+    { ...bibliotecaFalsa(), episodiosPorClave: async () => [] },
+    { seguirViendo: async () => aMedias(), faltanFichas: (cuantas) => faltas.push(cuantas) },
+  );
+  const estado = await presentador.cargar();
+
+  const fila = filaDe(estado, 'Seguir viendo');
+  assert.equal(fila?.elementos.length, 2, 'no se cae de la fila');
+  assert.equal(fila?.elementos[1]?.titulo, 'Doctor Who');
+  assert.equal(fila?.elementos[1]?.detalle, 'T1 E7');
+  // Sin la fila del episodio no hay URL: se entra en la serie, por su
+  // temporada, y al abrirla se piden sus capítulos al panel.
+  assert.equal(fila?.elementos[1]?.accion.tipo, 'entrar');
+  assert.deepEqual(faltas, [], 'y no se pide rehacer el catálogo por un episodio');
+});
+
+test('si tampoco está la serie, el catálogo está viejo y se avisa', async () => {
+  const faltas: number[] = [];
+  const presentador = new Presentador(
+    // La serie sí viene con el catálogo, así que si falta es que está viejo.
+    { ...bibliotecaFalsa(), episodiosPorClave: async () => [], seriesPorId: async () => [] },
     { seguirViendo: async () => aMedias(), faltanFichas: (cuantas) => faltas.push(cuantas) },
   );
   await presentador.cargar();
 
-  assert.deepEqual(faltas, [], 'no se pide rehacer el catálogo por un episodio');
+  assert.deepEqual(faltas, [1]);
 });
 
 test('sin nada que falte no se avisa', async () => {

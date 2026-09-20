@@ -933,6 +933,36 @@ export class Presentador {
     const porCanal = new Map(canales.map((ficha) => [ficha.id, ficha]));
 
     /*
+      Los capítulos empezados en otro aparato, que aquí no están.
+
+      Los episodios no se importan con el catálogo —se piden al abrir cada
+      serie, que son 6.598—, así que un capítulo que alguien dejó a medias en
+      la tele llega por la sincronización a una tablet que nunca ha abierto esa
+      serie. Y eso no es motivo para esconderlo: **la ficha de un capítulo se
+      pinta con la carátula y el título de la serie**, no con los suyos, y la
+      serie sí viene con el catálogo. La temporada y el número están dentro de
+      la propia clave (`la-casa-de-papel:s2e3`).
+
+      Lo único que cambia es a dónde lleva: sin la fila del episodio no hay URL
+      que reproducir, así que se entra en la serie —por su temporada— y desde
+      ahí se pone. Al abrirla se piden sus episodios al panel, de modo que la
+      próxima vez ya se reproduce de un toque.
+    */
+    const sinEpisodio = idsDe('episodio').filter((clave) => !porEpisodio.has(clave));
+    const huerfanas = [
+      ...new Set(
+        sinEpisodio
+          .map((clave) => leerClaveDeEpisodio(clave)?.serieId)
+          .filter((id): id is string => id !== undefined),
+      ),
+    ];
+    const porSerie = new Map(
+      (huerfanas.length > 0 ? await this.#biblioteca.seriesPorId(huerfanas) : []).map(
+        (ficha) => [ficha.id, ficha] as const,
+      ),
+    );
+
+    /*
       Lo que echan ahora en esos canales, para saber cuáles siguen valiendo.
       Solo de lo preparado: preguntar al panel canal a canal por una fila del
       inicio sería una petición por canal cada vez que se pinta.
@@ -1034,8 +1064,42 @@ export class Presentador {
       }
 
       if (avance.clase === 'episodio') {
-        const ficha = porEpisodio.get(relevo ?? avance.itemId);
-        if (!ficha) continue;
+        const clave = relevo ?? avance.itemId;
+        const ficha = porEpisodio.get(clave);
+        if (!ficha) {
+          // Sin la fila del episodio se pinta igual, con lo de la serie: es
+          // justo lo que se enseña de un capítulo.
+          const partes = leerClaveDeEpisodio(clave);
+          const serie = partes ? porSerie.get(partes.serieId) : undefined;
+          // Sin la serie tampoco, y esa sí viene con el catálogo: está viejo.
+          if (!partes || !serie) {
+            sinFicha += 1;
+            continue;
+          }
+          elementos.push({
+            id: `continuar:episodio:${clave}`,
+            titulo: serie.titulo,
+            // El título del capítulo está en la fila que no tenemos, así que
+            // queda el código, que es lo que dice por dónde vas.
+            detalle: `T${partes.temporada} E${partes.numero}`,
+            valoracion: null,
+            anio: null,
+            resumen: null,
+            logo: serie.logo,
+            avance: visto,
+            favorito: false,
+            accion: {
+              tipo: 'entrar',
+              pantalla: {
+                tipo: 'serie',
+                serieId: serie.id,
+                titulo: serie.titulo,
+                temporada: partes.temporada,
+              },
+            },
+          });
+          continue;
+        }
         const codigo = `T${ficha.temporada} E${ficha.numero}`;
         elementos.push({
           id: `continuar:episodio:${ficha.clave}`,
