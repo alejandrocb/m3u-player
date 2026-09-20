@@ -259,6 +259,30 @@ test('un corte no es un fallo: se vuelve por donde iba', async () => {
   assert.equal(transporte.ultima().desde, 500_000, 'y por donde iba');
 });
 
+test('un "no cabe" no se reintenta, aunque hubiera avanzado', async () => {
+  /*
+    Un corte se reintenta; un "no" no. El tamaño de una película solo se sabe
+    cuando contesta el panel, así que la negativa llega **con la descarga ya
+    empezada y avanzando**, que es justo el caso en el que el contador de
+    cortes se pone a cero y se volvería a intentar para siempre. Y cada
+    intento vuelve a llenar el disco hasta el tope antes de morir: es lo que
+    dejó la tele de casa al 91 %.
+  */
+  const { cola, transporte, pasarElEnfriamiento } = montar();
+  await cola.anadir(pelicula('la-que-no-cabe'));
+
+  transporte.ultima().alAvanzar(500_000, 9_000_000_000);
+  transporte.ultima().alFallar('no cabe: faltan 8,5 GB y quedan 1,1 GB libres', true);
+  await new Promise((sigue) => setTimeout(sigue, 0));
+
+  const suya = cola.de('pelicula:la-que-no-cabe');
+  assert.equal(suya?.estado, 'fallida', 'se acata a la primera');
+  assert.match(suya?.error ?? '', /no cabe/, 'y se dice por qué');
+
+  await pasarElEnfriamiento();
+  assert.equal(transporte.ordenes.length, 1, 'no vuelve a intentarlo');
+});
+
 test('cortarse una y otra vez sin avanzar sí es un fallo', async () => {
   // Es lo que pasa cuando el disco está lleno o el panel ha dejado de servir
   // ese fichero: insistir para siempre sería gastar batería por nada.

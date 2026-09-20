@@ -1511,6 +1511,15 @@ el puente podría servir del disco pero todavía no lo hace.
   Y es además la que importa, porque es lo que se le pide al panel con `Range`
   al reanudar. El vigía del atasco se rearma con eso mismo.
 
+- **Lo que no cabe no se empieza, y no se reintenta.** El tamaño solo se sabe
+  cuando contesta el panel, así que la comprobación va en el primer aviso que
+  trae un total, y deja un margen (`MARGEN_DE_DISCO`): el catálogo, las
+  carátulas y la base viven en ese mismo disco. Y el "no cabe" es
+  **definitivo** —`alFallar(razon, true)`—, porque llega con la descarga ya
+  avanzando, que es justo cuando el contador de cortes se pone a cero: sin eso
+  volvería a intentarlo para siempre, llenando el disco hasta el tope en cada
+  vuelta.
+
 - **Un fichero a medias sin fila no se puede borrar desde la aplicación**: no
   sale en la lista, así que no hay botón que lo quite. `limpiarHuerfanos` pasa
   al abrir, **después** de cargar la cola —hay que saber qué reclama alguien

@@ -46,6 +46,15 @@ const SIN_UN_BYTE_MS = 45_000;
  */
 const MIRAR_CADA_MS = 2_000;
 
+/**
+ * Lo que se deja libre en el disco pase lo que pase.
+ *
+ * Llenarlo del todo no es solo quedarse sin descargas: el catálogo, las
+ * carátulas y la propia base viven en el mismo sitio, y un Android sin hueco
+ * empieza a fallar por todas partes mucho antes de llegar a cero.
+ */
+const MARGEN_DE_DISCO = 500_000_000;
+
 /** La ruta completa de una descarga, que es lo que se le pasa al reproductor. */
 export function rutaDe(descarga: Descarga): string {
   return `${CARPETA}/${descarga.fichero}`;
@@ -315,10 +324,38 @@ export function transferenciaDeAndroid(): Transferencia {
         mirarElFichero();
 
         let ultimoAviso = 0;
+        let medido = false;
         tarea.progress({ interval: 500 }, (recibidos, total) => {
           if (cancelada) return;
           const hechos = Number(recibidos) || 0;
           const cuanto = Number(total) || 0;
+
+          /*
+            **Lo que no cabe no se empieza.**
+
+            El tamaño solo se sabe cuando contesta el panel, así que se mira
+            aquí, en el primer aviso que trae un total. Sin esto una película
+            de nueve gigas en una tablet con uno libre baja hasta llenar el
+            disco y muere ahí, dejando el aparato sin sitio para nada —ni para
+            el catálogo, ni para las carátulas— y sin decir por qué. Pasó: la
+            tele acabó al 91 % con una sola película a medias.
+
+            Se deja un margen: un disco lleno del todo da problemas mucho antes
+            de llegar a cero.
+          */
+          if (!medido && cuanto > 0) {
+            medido = true;
+            void espacio().then(({ libre }) => {
+              if (cancelada) return;
+              const pendiente = cuanto - hechos;
+              if (libre >= pendiente + MARGEN_DE_DISCO) return;
+              cancelada = true;
+              guardarVigia();
+              tarea?.cancel();
+              const gigas = (cuantos: number): string => `${(cuantos / 1_000_000_000).toFixed(1)} GB`;
+              alFallar(`no cabe: faltan ${gigas(pendiente)} y quedan ${gigas(libre)} libres`, true);
+            });
+          }
           // Una línea cada diez megas: suficiente para ver si avanza y para
           // saber por dónde iba cuando se corte.
           if (hechos - ultimoAviso >= 10_000_000) {

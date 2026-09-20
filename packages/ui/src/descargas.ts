@@ -76,7 +76,15 @@ export interface Transferencia {
     desde: number;
     alAvanzar: (bytes: number, total: number | null) => void;
     alTerminar: () => void;
-    alFallar: (razon: string) => void;
+    /**
+     * Algo ha ido mal.
+     *
+     * `definitivo` distingue **un corte de un no** : un corte de red es lo
+     * normal en una tablet vieja y hay que reintentar, pero "esta película no
+     * cabe en el disco" no mejora insistiendo —y cada intento vuelve a llenar
+     * el disco hasta el tope antes de morir—.
+     */
+    alFallar: (razon: string, definitivo?: boolean) => void;
   }): () => void;
 }
 
@@ -404,7 +412,7 @@ export class ColaDeDescargas {
         void this.#apuntar(siguiente).then(() => this.#avisar());
         void this.#seguir();
       },
-      alFallar: (razon) => {
+      alFallar: (razon, definitivo = false) => {
         /*
           **Un corte no es un fallo.** Una película de dos gigas por un wifi
           flojo se corta varias veces, y lo único que hay que hacer es seguir
@@ -414,7 +422,8 @@ export class ColaDeDescargas {
         */
         siguiente.intentos = siguiente.bytes > arrancoEn ? 0 : siguiente.intentos + 1;
         siguiente.error = razon;
-        siguiente.estado = siguiente.intentos >= CORTES_SEGUIDOS ? 'fallida' : 'en cola';
+        // Un "no" se acata: insistir no lo arregla y cada intento cuesta.
+        siguiente.estado = definitivo || siguiente.intentos >= CORTES_SEGUIDOS ? 'fallida' : 'en cola';
 
         this.#parar();
         void this.#apuntar(siguiente).then(() => this.#avisar());
