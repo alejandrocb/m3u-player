@@ -708,6 +708,22 @@ function BibliotecaVista({
   const [verAjustes, setVerAjustes] = useState(false);
   /** La lista de descargas, que cuelga del menú del perfil. */
   const [verDescargas, setVerDescargas] = useState(false);
+  /**
+   * Dónde está el mando dentro del panel de descargas.
+   *
+   * Este panel se escribió para el dedo: sus botones son `Pressable` con
+   * `onPress` y nada más, así que en el televisor **el foco no llegaba
+   * nunca a Pausar ni a Eliminar** y no había forma de borrar una descarga.
+   * Con el disco lleno eso no es un detalle de comodidad: es quedarse sin
+   * sitio y sin manera de hacer hueco.
+   *
+   * Va por fila y botón —arriba y abajo cambian de descarga, izquierda y
+   * derecha de botón— que es como se ven en pantalla.
+   */
+  const [focoDescarga, setFocoDescarga] = useState({ fila: 0, boton: 0 });
+  /** Dónde empieza cada fila, para poder traerla a la vista con el mando. */
+  const altoDescargas = useRef<number[]>([]);
+  const listaDescargas = useRef<ScrollView | null>(null);
   /*
     "Ver en la tele": lo que suena en una tele de la casa, mandado desde aquí.
 
@@ -967,6 +983,36 @@ function BibliotecaVista({
     perfiles.ajustes(perfil.id).then(setAjustes);
   }, [perfiles, perfil]);
 
+  /**
+   * Lo que hace cada botón de una descarga: 0 es el de la izquierda y 1,
+   * Eliminar.
+   *
+   * Vive aquí y no dentro del `onPress` porque lo usan dos manos: el dedo, que
+   * toca el botón, y el mando, que lo activa desde el manejador de teclas. Con
+   * la lógica escrita en el JSX, el mando habría tenido que repetirla, y dos
+   * copias de esto acaban separándose.
+   */
+  const tocarDescarga = useCallback(
+    (una: (typeof descargas)[number], boton: number) => {
+      if (boton === 1) {
+        void cola?.quitar(una.id);
+        return;
+      }
+      if (una.estado === 'hecha') {
+        setVerDescargas(false);
+        setReproduciendo({ clase: una.clase, id: una.itemId, titulo: una.titulo });
+        setAPantallaCompleta(true);
+        return;
+      }
+      if (una.estado === 'pausada' || una.estado === 'fallida') {
+        void cola?.anadir(una);
+        return;
+      }
+      void cola?.pausar(una.id);
+    },
+    [cola],
+  );
+
   /*
     Por referencia, como `sincronizarAhora`: el presentador se monta en un
     efecto cuyas dependencias están recortadas a mano, así que una función que
@@ -1183,6 +1229,21 @@ function BibliotecaVista({
       onSincronizar();
     }
   }, [reproduciendo, onSincronizar]);
+
+  /*
+    La descarga enfocada, a la vista.
+
+    Va en un efecto y no dentro del manejador de teclas porque las posiciones
+    las apunta `onLayout` al pintar: en el momento de la pulsación, la de una
+    fila que todavía no se ha visto puede no estar.
+  */
+  useEffect(() => {
+    if (!verDescargas) return;
+    const y = altoDescargas.current[focoDescarga.fila];
+    if (y === undefined) return;
+    // Un poco por encima, que se vea que hay algo antes.
+    listaDescargas.current?.scrollTo({ y: Math.max(0, y - 40), animated: true });
+  }, [verDescargas, focoDescarga.fila]);
 
   /** Ha llegado algo de otro aparato: se repinta con los datos nuevos. */
   useEffect(() => {
@@ -2007,6 +2068,29 @@ function BibliotecaVista({
         // bajando. Sin esto, en un televisor no hay forma de llegar a buscar
         // ni a los ajustes, porque no hay dedo que los toque.
         // Igual que el del perfil: mientras está abierto, el menú manda.
+        /*
+          El panel de descargas, mientras está abierto, se queda con las
+          teclas. Arriba y abajo cambian de descarga; izquierda y derecha, de
+          botón. Sin esto el mando no llegaba a Pausar ni a Eliminar y no
+          había forma de hacer sitio en el disco desde el televisor.
+        */
+        if (verDescargas) {
+          if (descargas.length === 0) return;
+          if (evento.eventType === 'up') {
+            setFocoDescarga((actual) => ({ fila: Math.max(0, actual.fila - 1), boton: actual.boton }));
+          } else if (evento.eventType === 'down') {
+            setFocoDescarga((actual) => ({
+              fila: Math.min(descargas.length - 1, actual.fila + 1),
+              boton: actual.boton,
+            }));
+          } else if (evento.eventType === 'left') {
+            setFocoDescarga((actual) => ({ fila: actual.fila, boton: 0 }));
+          } else {
+            setFocoDescarga((actual) => ({ fila: actual.fila, boton: 1 }));
+          }
+          return;
+        }
+
         if (menuFicha) {
           if (evento.eventType === 'up') setFocoFicha((actual) => Math.max(0, actual - 1));
           else if (evento.eventType === 'down') {
@@ -2102,6 +2186,11 @@ function BibliotecaVista({
         return;
 
       case 'select':
+        if (verDescargas) {
+          const una = descargas[focoDescarga.fila];
+          if (una) tocarDescarga(una, focoDescarga.boton);
+          return;
+        }
         if (menuFicha) {
           const opcion = opcionesFicha[focoFicha];
           setMenuFicha(null);
@@ -2368,7 +2457,15 @@ function BibliotecaVista({
       onPress: () => void alternarContinua(),
     },
     ...(descargas.length > 0
-      ? [{ texto: `Descargas (${descargas.length})`, onPress: () => setVerDescargas(true) }]
+      ? [
+          {
+            texto: `Descargas (${descargas.length})`,
+            onPress: () => {
+              setFocoDescarga({ fila: 0, boton: 0 });
+              setVerDescargas(true);
+            },
+          },
+        ]
       : []),
     { texto: 'Perfiles', onPress: onCambiarPerfil },
     { texto: 'Actualizar catálogo', onPress: onActualizar },
@@ -2717,15 +2814,24 @@ function BibliotecaVista({
             ) : null}
           </View>
 
-          <ScrollView style={estilos.descargaLista}>
+          <ScrollView style={estilos.descargaLista} ref={listaDescargas}>
             {descargas.length === 0 ? (
               <Text style={estilos.descargaAyuda}>
                 Todavía no has descargado nada. Mantén pulsada una película y elige Descargar.
               </Text>
             ) : null}
 
-            {descargas.map((una) => (
-              <View key={una.id} style={estilos.descargaFila}>
+            {descargas.map((una, indice) => (
+              <View
+                key={una.id}
+                style={estilos.descargaFila}
+                // Dónde empieza cada fila, para poder traerla a la vista: con
+                // seis descargas, las últimas quedan fuera de la pantalla y el
+                // foco se movería a ciegas.
+                onLayout={(evento) => {
+                  altoDescargas.current[indice] = evento.nativeEvent.layout.y;
+                }}
+              >
                 <Text style={estilos.menuOpcionTexto} numberOfLines={1}>
                   {una.titulo}
                 </Text>
@@ -2747,20 +2853,15 @@ function BibliotecaVista({
                 <View style={estilos.descargaBotones}>
                   <Pressable
                     focusable={false}
-                    style={estilos.descargaBoton}
-                    onPress={() => {
-                      if (una.estado === 'hecha') {
-                        setVerDescargas(false);
-                        setReproduciendo({ clase: una.clase, id: una.itemId, titulo: una.titulo });
-                        setAPantallaCompleta(true);
-                        return;
-                      }
-                      if (una.estado === 'pausada' || una.estado === 'fallida') {
-                        void cola?.anadir(una);
-                        return;
-                      }
-                      void cola?.pausar(una.id);
-                    }}
+                    style={[
+                      estilos.descargaBoton,
+                      DESPLAZA_EL_DEDO ||
+                      focoDescarga.fila !== indice ||
+                      focoDescarga.boton !== 0
+                        ? null
+                        : estilos.descargaBotonEnfocado,
+                    ]}
+                    onPress={() => tocarDescarga(una, 0)}
                   >
                     <Text style={estilos.descargaBotonTexto}>
                       {una.estado === 'hecha'
@@ -2773,8 +2874,15 @@ function BibliotecaVista({
 
                   <Pressable
                     focusable={false}
-                    style={estilos.descargaBoton}
-                    onPress={() => void cola?.quitar(una.id)}
+                    style={[
+                      estilos.descargaBoton,
+                      DESPLAZA_EL_DEDO ||
+                      focoDescarga.fila !== indice ||
+                      focoDescarga.boton !== 1
+                        ? null
+                        : estilos.descargaBotonEnfocado,
+                    ]}
+                    onPress={() => tocarDescarga(una, 1)}
                   >
                     <Text style={estilos.descargaBotonTexto}>Eliminar</Text>
                   </Pressable>
@@ -4831,6 +4939,11 @@ const estilos = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
+  },
+  descargaBotonEnfocado: {
+    backgroundColor: 'rgba(53,208,127,0.2)',
+    borderColor: VERDE,
+    borderWidth: 2,
   },
   descargaBotonTexto: {
     color: TINTA,

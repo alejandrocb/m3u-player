@@ -1114,6 +1114,18 @@ Cuatro detalles que no son opcionales:
   sigue en el disco y se reanuda con `Range`. Ignorarlo acaba con el sistema
   matando la aplicación.
 
+**Y el panel de descargas tiene que recorrerse con el mando.** Se escribió
+para el dedo —`Pressable` con `onPress` y nada más—, así que en el televisor el
+foco no llegaba nunca a Pausar ni a Eliminar: se podían ver las descargas y no
+se podía tocar ninguna. Con el disco lleno eso no es incomodidad, es quedarse
+sin sitio y sin forma de hacer hueco, y es lo que llenó los 11 GB de la tele.
+Ahora el panel se queda con las teclas mientras está abierto, como el menú de
+la ficha y el del perfil: arriba y abajo cambian de descarga, izquierda y
+derecha de botón, y la fila enfocada se trae a la vista con lo que apunta
+`onLayout`. La regla general, para cualquier capa nueva que se abra encima:
+**si se abre sobre la biblioteca, tiene que declarar qué hace con las cuatro
+flechas y con el OK**, o en la tele no existe.
+
 El permiso de notificaciones (Android 13+) se pide la primera vez que se baja
 algo, y **se sigue sin él**: si se deniega, la descarga funciona igual y lo
 único que se pierde es ver por dónde va.
