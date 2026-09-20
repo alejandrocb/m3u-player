@@ -28,7 +28,17 @@ export type Pantalla =
     reproduce, que es lo que uno quiere el 90 % de las veces. Se llega
     manteniendo pulsado, desde el menú, junto a Mi Lista y Descargar.
   */
-  | { tipo: 'ficha'; clase: 'pelicula' | 'serie'; id: string; titulo: string };
+  | { tipo: 'ficha'; clase: 'pelicula' | 'serie'; id: string; titulo: string }
+  /*
+    Todo lo de un género o de una categoría: "todas las de terror".
+
+    Las filas del inicio enseñan veinte, y detrás de "Ciencia ficción" hay
+    cuatrocientas. Aquí no hay recorte: se piden por páginas según baja uno.
+
+    `tema` y `grupo` se excluyen: el tema es de qué va la ficha —lo que uno
+    busca— y el grupo es dónde la ha colocado el proveedor en su lista.
+  */
+  | { tipo: 'grupo'; clase: 'pelicula' | 'serie'; tema?: string; grupo?: string; titulo: string };
 
 /** Lo que la vista debe hacer cuando el usuario pulsa "atrás". */
 export type ResultadoAtras = 'retrocedido' | 'salir';

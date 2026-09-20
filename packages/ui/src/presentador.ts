@@ -147,7 +147,20 @@ export type Formato = 'lista' | 'carteles' | 'canales' | 'episodios' | 'ficha';
  */
 export type FilaInicio =
   | { tipo: 'destacado'; elementos: Elemento[] }
-  | { tipo: 'carrusel'; titulo: string; elementos: Elemento[]; formato?: FormatoFila }
+  | {
+      tipo: 'carrusel';
+      titulo: string;
+      elementos: Elemento[];
+      formato?: FormatoFila;
+      /**
+       * Dónde se ve la fila entera, si tiene sentido verla entera.
+       *
+       * Una fila enseña veinte y detrás de "Ciencia ficción" hay
+       * cuatrocientas. Lo lleva la fila —y no solo la última ficha— para que
+       * el rótulo también pueda llevar ahí con el dedo.
+       */
+      todo?: Pantalla;
+    }
   /**
    * Los filtros de Mi Lista, que son una fila más.
    *
@@ -658,6 +671,7 @@ export class Presentador {
       // vistazo hace falta el cartel, y para eso ya está el mismo formato que
       // usan Películas y Series.
       case 'buscador':
+      case 'grupo':
         return 'carteles';
       default:
         return 'lista';
@@ -1079,6 +1093,8 @@ export class Presentador {
       titulo: string,
       fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
       clase: 'pelicula' | 'serie',
+      minimo?: number,
+      todo?: Pantalla,
     ) => Promise<void>,
   ): Promise<void> {
     const clase = modo === 'series' ? 'serie' : 'pelicula';
@@ -1110,8 +1126,28 @@ export class Presentador {
 
     const elegidas = ordenarCategorias(elegibles, cuenta).slice(0, CATEGORIAS_EN_INICIO);
 
-    for (const categoria of elegidas) {
-      const donde = porTema ? { tema: categoria.nombre } : { grupo: categoria.nombre };
+    /*
+      **Las ocho consultas van a la vez, no una detrás de otra.**
+
+      Eran ocho viajes seguidos a la base, cada uno con su filtro de género
+      sobre dieciocho mil películas, y sumaban la mayor parte de lo que se
+      tardaba en cambiar de pestaña: seis segundos en la tablet y en la tele.
+      Son independientes entre sí, así que esperarlas juntas cuesta lo que la
+      más lenta. Lo que sí sigue siendo en orden es **añadirlas**: cada fila
+      descarta lo que ya salió más arriba, y eso depende de quién va antes.
+    */
+    const pedidas = await Promise.all(
+      elegidas.map(async (categoria) => {
+        const donde = porTema ? { tema: categoria.nombre } : { grupo: categoria.nombre };
+        const fichas =
+          clase === 'pelicula'
+            ? await this.#biblioteca.peliculas({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'destacada', ...donde })
+            : await this.#biblioteca.series({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'destacada', ...donde });
+        return { categoria, donde, fichas };
+      }),
+    );
+
+    for (const { categoria, donde, fichas } of pedidas) {
       /*
         Se piden más de las que caben porque `anadir` va a tirar las que ya
         estén puestas más arriba: una película con tres géneros sale de tres
@@ -1122,14 +1158,10 @@ export class Presentador {
         proveedor entre 7 y 10, y con eso la fila de "Ciencia ficción" enseñaba
         cuatro películas de las cuatrocientas que dice su rótulo.
       */
-      const fichas =
-        clase === 'pelicula'
-          ? await this.#biblioteca.peliculas({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'destacada', ...donde })
-          : await this.#biblioteca.series({ limite: CARRUSEL * DE_SOBRA, desde: 0, orden: 'destacada', ...donde });
-
       // El tema ya viene presentable; la categoría del proveedor viene a
       // gritos y con la sección delante.
-      await anadir(porTema ? categoria.nombre : nombreDeCategoria(categoria.nombre), fichas, clase);
+      const titulo = porTema ? categoria.nombre : nombreDeCategoria(categoria.nombre);
+      await anadir(titulo, fichas, clase, 1, { tipo: 'grupo', clase, ...donde, titulo });
     }
   }
 
@@ -1421,6 +1453,7 @@ export class Presentador {
       fichas: Array<{ id: string; titulo: string; anio: number | null; valoracion: number | null; logo: string | null }>,
       clase: 'pelicula' | 'serie',
       minimo = 1,
+      todo?: Pantalla,
     ): Promise<void> => {
       const nuevas = fichas.filter((ficha) => !puestas.has(ficha.id)).slice(0, CARRUSEL);
       if (nuevas.length < minimo) return;
@@ -1428,8 +1461,32 @@ export class Presentador {
       const elementos = await this.#aCarrusel(nuevas, clase);
       if (elementos.length === 0) return;
 
+      /*
+        La última ficha de la fila es la puerta a verlas todas.
+
+        Va como una ficha más y no como un rótulo aparte porque es lo único
+        que sabe recorrer un mando: con el dedo se puede tocar el título, pero
+        en un televisor no hay dedo, y una fila se recorre hacia la derecha
+        hasta el final. Quien llega al final es justo quien quiere más.
+      */
+      if (todo) {
+        elementos.push({
+          id: `todo:${titulo}`,
+          titulo: 'Ver todo',
+          detalle: null,
+          genero: null,
+          valoracion: null,
+          anio: null,
+          resumen: null,
+          logo: null,
+          avance: null,
+          favorito: false,
+          accion: { tipo: 'entrar', pantalla: todo },
+        });
+      }
+
       for (const ficha of nuevas) puestas.add(ficha.id);
-      filas.push({ tipo: 'carrusel', titulo, elementos });
+      filas.push({ tipo: 'carrusel', titulo, elementos, todo });
     };
 
     await anadir(modo === 'peliculas' ? 'Novedades' : 'Películas recién llegadas', novedades, 'pelicula');
@@ -1488,6 +1545,15 @@ export class Presentador {
    * peor que empezar de nuevo.
    */
   async elegirModo(modo: ModoInicio): Promise<EstadoPantalla> {
+    const empezo = Date.now();
+    const estado = await this.#elegirModo(modo);
+    // Cambiar de pestaña llegó a tardar seis segundos en la tablet: si vuelve
+    // a irse de las manos, esta línea lo dice sin tener que instrumentar nada.
+    console.log(`[inicio] ${modo} en ${Date.now() - empezo} ms`);
+    return estado;
+  }
+
+  async #elegirModo(modo: ModoInicio): Promise<EstadoPantalla> {
     // La pestaña **solo filtra**. Antes, pulsarla estando ya puesta entraba en
     // una rejilla con barra de categorías, que era el mismo contenido con otra
     // cara: dos formas de ver lo mismo y ninguna manera de saber en cuál
@@ -1675,6 +1741,15 @@ export class Presentador {
    * No se llega pulsando —el toque normal reproduce— sino desde el menú de
    * mantener pulsado, que es donde están también Mi Lista y Descargar.
    */
+  /**
+   * Entra en una pantalla ya montada: la usa el rótulo de una fila para
+   * enseñarla entera.
+   */
+  async abrirPantalla(pantalla: Pantalla): Promise<EstadoPantalla> {
+    this.#navegador.entrar(pantalla, 0);
+    return this.cargar();
+  }
+
   async abrirFicha(clase: 'pelicula' | 'serie', id: string, titulo: string): Promise<EstadoPantalla> {
     this.#navegador.entrar({ tipo: 'ficha', clase, id, titulo });
     return this.cargar();
@@ -2217,6 +2292,40 @@ export class Presentador {
               },
             };
           }),
+        };
+      }
+
+      /*
+        Todo lo de un género, por páginas.
+
+        Con el mismo orden que su fila del inicio (`destacada`): lo mejor
+        valorado primero y, detrás y por año, lo que aún no tiene nota de
+        nadie. Ordenarlo por título dejaría arriba las que empiezan por número.
+      */
+      case 'grupo': {
+        const donde = pantalla.tema ? { tema: pantalla.tema } : { grupo: pantalla.grupo };
+        const fichas =
+          pantalla.clase === 'serie'
+            ? await this.#biblioteca.series({ ...pagina, orden: 'destacada', ...donde })
+            : await this.#biblioteca.peliculas({ ...pagina, orden: 'destacada', ...donde });
+
+        return {
+          titulo: pantalla.titulo,
+          // Si viene una página entera, puede que haya más: se pide al bajar.
+          hayMas: fichas.length >= this.#tamanoPagina,
+          elementos: fichas.map((ficha) => ({
+            id: `${pantalla.clase}:${ficha.id}`,
+            titulo: ficha.titulo,
+            detalle: null,
+            genero: null,
+            valoracion: ficha.valoracion,
+            anio: ficha.anio,
+            resumen: null,
+            logo: ficha.logo,
+            avance: null,
+            favorito: false,
+            accion: verLaFicha(pantalla.clase, ficha.id, ficha.titulo),
+          })),
         };
       }
 

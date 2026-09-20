@@ -1697,6 +1697,11 @@ function BibliotecaVista({
     );
   }, [enLaTele]);
 
+  /** El rótulo de una fila: enseña esa categoría entera, sin recortar. */
+  const verTodoDe = useCallback((pantalla: Parameters<Presentador['abrirPantalla']>[0]) => {
+    void presentador.current?.abrirPantalla(pantalla).then(setEstado);
+  }, []);
+
   const atras = useCallback((): boolean => {
     const instancia = presentador.current;
     if (!instancia) return false;
@@ -3049,6 +3054,7 @@ function BibliotecaVista({
           onMantener={mantenerEnInicio}
           onTurno={turnarDestacado}
           onTocar={tocarEnInicio}
+          onVerTodo={verTodoDe}
         />
       ) : null}
 
@@ -3254,6 +3260,7 @@ function PantallaInicio({
   onTocar,
   onMantener,
   onTurno,
+  onVerTodo,
 }: {
   /** El mando está arriba, en la lupa o el perfil. */
   enCabecera: boolean;
@@ -3267,6 +3274,8 @@ function PantallaInicio({
   onMantener: (fila: number, columna: number) => void;
   /** La portada pasa a la siguiente sugerencia. */
   onTurno: (siguiente: number) => void;
+  /** El rótulo de una fila lleva a verla entera. */
+  onVerTodo: (pantalla: NonNullable<Extract<FilaInicio, { tipo: 'carrusel' }>['todo']>) => void;
 }) {
   const lista = useRef<FlatList<FilaInicio>>(null);
   const { height: alto } = useWindowDimensions();
@@ -3380,6 +3389,7 @@ function PantallaInicio({
             sello={sello}
             onTocar={onTocar}
             onMantener={onMantener}
+            onVerTodo={item.todo ? () => onVerTodo(item.todo!) : undefined}
           />
         );
       }}
@@ -3947,6 +3957,7 @@ const Carrusel = memo(function Carrusel({
   elementos,
   formato,
   activa,
+  onVerTodo,
   columna,
   programas,
   sello,
@@ -3966,6 +3977,8 @@ const Carrusel = memo(function Carrusel({
   sello: number;
   onTocar: (fila: number, columna: number) => void;
   onMantener: (fila: number, columna: number) => void;
+  /** Adónde lleva el rótulo: la fila entera. Sin esto, no se puede tocar. */
+  onVerTodo?: () => void;
 }) {
   const lista = useRef<FlatList<Elemento>>(null);
 
@@ -3985,7 +3998,18 @@ const Carrusel = memo(function Carrusel({
 
   return (
     <View style={estilos.filaZona}>
-      <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo}</Text>
+      {/*
+        El rótulo lleva a la fila entera, si la hay. Con el dedo es lo natural
+        —uno toca "Terror" para ver todo el terror—; con el mando se llega por
+        la última ficha de la fila, que es la que dice "Ver todo".
+      */}
+      {onVerTodo ? (
+        <Pressable focusable={false} onPress={onVerTodo}>
+          <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo} ›</Text>
+        </Pressable>
+      ) : (
+        <Text style={[estilos.filaTitulo, activa && estilos.filaTituloActivo]}>{titulo}</Text>
+      )}
       <FlatList
         focusable={false}
         isTVSelectable={false}
