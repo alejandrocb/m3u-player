@@ -44,6 +44,8 @@ export interface Marcable {
 export type Accion =
   | { tipo: 'entrar'; pantalla: Pantalla }
   | { tipo: 'reproducir'; medio: Reproducible }
+  /** Mandarlo a una tele de la casa. Solo existe en teléfono y tablet. */
+  | { tipo: 'tele'; medio: Reproducible }
   | { tipo: 'filtrar'; filtro: FiltroLista }
   /** Marcar o desmarcar en Mi Lista, desde el botón de la ficha. */
   | { tipo: 'marcar'; medio: Marcable }
@@ -245,6 +247,11 @@ export function medioDeElemento(elemento: Elemento): Marcable | null {
   }
   if (elemento.accion.tipo === 'entrar' && elemento.accion.pantalla.tipo === 'serie') {
     return { clase: 'serie', id: elemento.accion.pantalla.serieId, titulo: elemento.titulo };
+  }
+  // Y lo que abre su información, que desde que pulsar lleva ahí son casi
+  // todas las carátulas.
+  if (elemento.accion.tipo === 'entrar' && elemento.accion.pantalla.tipo === 'ficha') {
+    return { clase: elemento.accion.pantalla.clase, id: elemento.accion.pantalla.id, titulo: elemento.titulo };
   }
   return null;
 }
@@ -521,6 +528,14 @@ export interface OpcionesPresentador {
    * uno. Sin esto la interfaz funciona igual, solo que sin corazones.
    */
   favoritos?: PuertoFavoritos;
+  /**
+   * Si este aparato puede mandar vídeo a una tele de la casa.
+   *
+   * Lo decide la vista, que es la única que sabe en qué está corriendo: en un
+   * televisor no tiene sentido —una tele no le manda vídeo a otra— y el botón
+   * sobra en la ficha.
+   */
+  conTele?: boolean;
 }
 
 /** Lo que el presentador necesita de los favoritos del perfil. */
@@ -529,6 +544,22 @@ export interface PuertoFavoritos {
   listar(clase: ClaseMedio): Promise<string[]>;
   /** Marca o desmarca, y devuelve cómo queda. */
   alternar(clase: ClaseMedio, id: string, titulo: string): Promise<boolean>;
+}
+
+/**
+ * Lo que pasa al pulsar una ficha de contenido: enseñar de qué va.
+ *
+ * Antes el toque reproducía y la información vivía detrás de mantener
+ * pulsado. Se cambió porque **mantener pulsado no lo descubre nadie**, y
+ * porque lo que uno quiere de una carátula es casi siempre saber qué es:
+ * la sinopsis, el reparto, la nota. Reproducir pasa a ser un botón **dentro**
+ * de esa pantalla, que es donde ya estaban Mi Lista, Descargar y el tráiler.
+ *
+ * Un canal y un episodio no pasan por aquí: no tienen ficha que enseñar y se
+ * reproducen al toque, que es lo que se espera de ellos.
+ */
+function verLaFicha(clase: 'pelicula' | 'serie', id: string, titulo: string): Accion {
+  return { tipo: 'entrar', pantalla: { tipo: 'ficha', clase, id, titulo } };
 }
 
 export class Presentador {
@@ -573,6 +604,7 @@ export class Presentador {
   #seriesEmpezadas: OpcionesPresentador['seriesEmpezadas'];
   #parrilla: OpcionesPresentador['parrilla'];
   #favoritos: PuertoFavoritos | undefined;
+  #conTele: boolean;
   #afinidad: OpcionesPresentador['afinidad'];
   #orden: Orden;
   /**
@@ -595,6 +627,7 @@ export class Presentador {
     this.#seriesEmpezadas = opciones.seriesEmpezadas;
     this.#parrilla = opciones.parrilla;
     this.#favoritos = opciones.favoritos;
+    this.#conTele = opciones.conTele ?? false;
     this.#afinidad = opciones.afinidad;
     this.#orden = opciones.orden ?? 'titulo';
   }
@@ -699,10 +732,7 @@ export class Presentador {
       logo: ficha.logo,
       avance: null,
       favorito: false,
-      accion:
-        clase === 'pelicula'
-          ? { tipo: 'reproducir', medio: { clase: 'pelicula', id: ficha.id, titulo: ficha.titulo } }
-          : { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: ficha.id, titulo: ficha.titulo } },
+      accion: verLaFicha(clase === 'pelicula' ? 'pelicula' : 'serie', ficha.id, ficha.titulo),
     }));
 
     /*
@@ -895,7 +925,7 @@ export class Presentador {
           logo: ficha.logo,
           avance: visto,
           favorito: false,
-          accion: { tipo: 'reproducir', medio: { clase: 'pelicula', id: ficha.id, titulo: ficha.titulo } },
+          accion: verLaFicha('pelicula', ficha.id, ficha.titulo),
         });
         continue;
       }
@@ -1017,10 +1047,7 @@ export class Presentador {
         logo: portada.imagen,
         avance: null,
         favorito: false,
-        accion:
-          portada.clase === 'serie'
-            ? { tipo: 'entrar', pantalla: { tipo: 'serie', serieId: portada.id, titulo: portada.titulo } }
-            : { tipo: 'reproducir', medio: { clase: 'pelicula', id: portada.id, titulo: portada.titulo } },
+        accion: verLaFicha(portada.clase === 'serie' ? 'serie' : 'pelicula', portada.id, portada.titulo),
       }));
 
     return elementos.length > 0 ? { tipo: 'destacado', elementos } : null;
@@ -1339,10 +1366,7 @@ export class Presentador {
           logo: detalle!.fondo,
           avance: null,
           favorito: false,
-          accion:
-            clase === 'serie'
-              ? { tipo: 'entrar' as const, pantalla: { tipo: 'serie' as const, serieId: ficha.id, titulo: ficha.titulo } }
-              : { tipo: 'reproducir' as const, medio: { clase: 'pelicula' as const, id: ficha.id, titulo: ficha.titulo } },
+          accion: verLaFicha(clase === 'serie' ? 'serie' : 'pelicula', ficha.id, ficha.titulo),
         })),
       });
     }
@@ -1716,6 +1740,8 @@ export class Presentador {
     abrir?: string;
     /** Algo que mandar a la cola de descargas. */
     descargar?: Reproducible;
+    /** Algo que mandar a una tele de la casa. */
+    tele?: Reproducible;
   }> {
     // En el inicio, aceptar actúa sobre la ficha enfocada de su fila. Si es
     // una película, reproduce —y el reproductor ya reanuda por donde iba, que
@@ -1771,6 +1797,9 @@ export class Presentador {
     }
     if (elemento.accion.tipo === 'descargar') {
       return { estado: this.estado(), reproducir: null, descargar: elemento.accion.medio };
+    }
+    if (elemento.accion.tipo === 'tele') {
+      return { estado: this.estado(), reproducir: null, tele: elemento.accion.medio };
     }
     if (elemento.accion.tipo === 'enlace') {
       // La vista es quien sabe abrir algo fuera: aquí no hay ni navegador ni
@@ -1942,13 +1971,18 @@ export class Presentador {
   async #conAvances(elementos: Elemento[]): Promise<Elemento[]> {
     if (!this.#avances) return elementos;
 
-    // Solo tiene sentido en lo que se reproduce: un grupo no se ve a medias.
+    /*
+      Solo tiene sentido en lo que se ve entero: un grupo no se ve a medias.
+
+      Cuentan las dos formas: lo que se reproduce al toque —un capítulo, un
+      canal— y lo que abre su información, que desde que pulsar lleva ahí es
+      **la mayoría de las carátulas**. Mirando solo la primera, las películas
+      se quedaron de golpe sin barrita de avance.
+    */
     const medios = elementos
-      .filter((elemento) => elemento.accion.tipo === 'reproducir')
-      .map((elemento) => {
-        const medio = (elemento.accion as { tipo: 'reproducir'; medio: Reproducible }).medio;
-        return { clase: medio.clase as ClaseMedio, id: medio.id };
-      });
+      .map((elemento) => medioDeElemento(elemento))
+      .filter((medio): medio is Marcable => medio !== null)
+      .map((medio) => ({ clase: medio.clase, id: medio.id }));
 
     if (medios.length === 0) return elementos;
 
@@ -1961,9 +1995,9 @@ export class Presentador {
     }
 
     return elementos.map((elemento) => {
-      if (elemento.accion.tipo !== 'reproducir') return elemento;
-      const medio = elemento.accion.medio;
-      const proporcion = vistos[claveDeMedio(medio.clase as ClaseMedio, medio.id)];
+      const medio = medioDeElemento(elemento);
+      if (!medio) return elemento;
+      const proporcion = vistos[claveDeMedio(medio.clase, medio.id)];
       return proporcion ? { ...elemento, avance: proporcion } : elemento;
     });
   }
@@ -2132,6 +2166,9 @@ export class Presentador {
         // descargan sus episodios.
         if (pantalla.clase === 'pelicula') {
           botones.push(boton('descargar', 'Descargar', { tipo: 'descargar', medio }));
+          // Y mandarlo a la tele de casa, que solo tiene sentido con el
+          // aparato en la mano: una tele no le manda vídeo a otra.
+          if (this.#conTele) botones.push(boton('tele', 'Ver en la tele', { tipo: 'tele', medio }));
         }
 
         if (this.#trailer) {
@@ -2391,5 +2428,9 @@ function claseFavorita(elemento: Elemento): { clase: ClaseMedio; id: string } | 
   if (elemento.accion.tipo !== 'entrar') return null;
 
   const destino = elemento.accion.pantalla;
-  return destino.tipo === 'serie' ? { clase: 'serie', id: destino.serieId } : null;
+  if (destino.tipo === 'serie') return { clase: 'serie', id: destino.serieId };
+  // Y lo que abre su información, que desde que pulsar lleva ahí son casi
+  // todas las carátulas: sin esto se quedaron todas sin corazón.
+  if (destino.tipo === 'ficha') return { clase: destino.clase, id: destino.id };
+  return null;
 }

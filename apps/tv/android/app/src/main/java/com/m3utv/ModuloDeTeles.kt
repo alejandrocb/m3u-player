@@ -5,6 +5,8 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
 import android.net.wifi.WifiManager
+import android.app.UiModeManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
@@ -183,5 +185,26 @@ class ModuloDeTeles(contexto: ReactApplicationContext) : ReactContextBaseJavaMod
         Log.w("Teles", "ni los ajustes de la aplicación", otro)
       }
     }
+  }
+
+  /**
+   * Si esto es un televisor, según el propio Android.
+   *
+   * Se mira por tres caminos y basta con que uno diga que sí: el modo de
+   * interfaz, si el aparato trae el lanzador de televisión (leanback) y si
+   * tiene pantalla táctil. `Platform.isTV` de React Native se queda corto —hay
+   * cajas de Android TV donde no lo dice—, y de esto depende que aparezca o no
+   * "Ver en la tele", que en una tele no tiene ningún sentido.
+   */
+  @ReactMethod
+  fun esTelevisor(promesa: Promise) {
+    val contexto = reactApplicationContext
+    val modo = (contexto.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)?.currentModeType
+    val paquetes = contexto.packageManager
+    promesa.resolve(
+      modo == Configuration.UI_MODE_TYPE_TELEVISION ||
+        paquetes.hasSystemFeature("android.software.leanback") ||
+        !paquetes.hasSystemFeature("android.hardware.touchscreen"),
+    )
   }
 }

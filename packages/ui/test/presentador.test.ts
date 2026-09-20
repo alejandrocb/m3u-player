@@ -548,7 +548,14 @@ test('una serie enseña sus temporadas al lado y los episodios en el centro', as
   await presentador.cargar();
   await enPestana(presentador, 'series');
 
-  // La primera ficha de la primera fila es una serie: aceptar entra en ella.
+  /*
+    La primera ficha de la primera fila es una serie. Pulsarla lleva a su
+    información —desde que el toque abre la ficha en vez de reproducir—, y los
+    episodios están a un botón de ahí: "Ver episodios", que es el primero.
+  */
+  await presentador.aceptar();
+  assert.equal(pantallaDe(presentador), 'ficha');
+
   const serie = await presentador.aceptar();
   assert.equal(pantallaDe(presentador), 'serie');
   // Las temporadas van en la barra, que es la única que queda.
@@ -567,7 +574,8 @@ test('el episodio lleva su ficha: fotograma, sinopsis, nota y duración', async 
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
   await enPestana(presentador, 'series');
-  const { estado } = await presentador.aceptar(); // Doctor Who
+  await presentador.aceptar(); // La ficha de Doctor Who
+  const { estado } = await presentador.aceptar(); // Y sus episodios
 
   const episodio = estado.elementos[0]!;
   assert.equal(episodio.logo, 'http://host/1.jpg');
@@ -580,15 +588,18 @@ test('cambiar de temporada no apila pantalla: atrás sale de la serie', async ()
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
   await enPestana(presentador, 'series');
-  await presentador.aceptar(); // Doctor Who
+  await presentador.aceptar(); // La ficha de Doctor Who
+  await presentador.aceptar(); // Y sus episodios
 
   const segunda = await presentador.elegirCategoria('2');
   assert.equal(segunda.titulo, 'Doctor Who · Temporada 2');
 
-  // Atrás sale de la serie de una vez, sin ir deshaciendo temporadas.
+  // Atrás sale de la serie de una vez, sin ir deshaciendo temporadas: vuelve
+  // a la ficha, que es de donde se entró, y de ahí al inicio.
   const vuelta = await presentador.atras();
   assert.equal(vuelta.resultado, 'retrocedido');
-  assert.equal(vuelta.estado.titulo, 'Biblioteca');
+  assert.equal(vuelta.estado.titulo, 'Doctor Who');
+  assert.equal((await presentador.atras()).estado.titulo, 'Biblioteca');
 });
 
 test('tocar una ficha lleva el foco a ella', async () => {
@@ -639,7 +650,8 @@ test('la izquierda entra en la barra de temporadas y la derecha vuelve', async (
   await presentador.cargar();
   await enPestana(presentador, 'series');
   await presentador.mover('abajo');
-  await presentador.aceptar(); // Doctor Who
+  await presentador.aceptar(); // La ficha de Doctor Who
+  await presentador.aceptar(); // Y sus episodios
 
   const dentro = await presentador.mover('izquierda');
   assert.equal(dentro.lateral?.dentro, true);
@@ -993,7 +1005,8 @@ test('las filas son solo del inicio: dentro de una serie no hay', async () => {
 
   // Se enfoca la fila de series, que es la que lleva a una pantalla.
   presentador.enfocarEnInicio(indiceDe(enSeries, 'Novedades'), 0);
-  const { estado } = await presentador.aceptar(); // Doctor Who
+  await presentador.aceptar(); // La ficha de Doctor Who
+  const { estado } = await presentador.aceptar(); // Y sus episodios
   assert.equal(estado.inicio, null);
 });
 
@@ -1043,15 +1056,25 @@ test('al cambiar de fila la columna se recorta a lo que quepa', async () => {
   assert.equal(arriba.inicio?.columna, 1, 'recortada al último hueco de "seguir viendo"');
 });
 
-test('aceptar en una fila reproduce lo que haya debajo del foco', async () => {
+test('aceptar en una fila abre la ficha, y un capítulo se reproduce', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
   const estado = await presentador.cargar();
   const continuar = indiceDe(estado, 'Seguir viendo');
 
+  /*
+    Una película abre su información: lo que uno quiere de una carátula es
+    casi siempre saber qué es, y reproducir es el primer botón de ahí. Un
+    capítulo no tiene ficha que enseñar, así que se reproduce al toque.
+  */
   for (let i = 0; i < continuar; i++) await presentador.mover('abajo');
+  const abierta = await presentador.aceptar();
+  assert.equal(abierta.reproducir, null);
+  assert.equal(pantallaDe(presentador), 'ficha');
+
   const pelicula = await presentador.aceptar();
   assert.deepEqual(pelicula.reproducir, { clase: 'pelicula', id: 'p1', titulo: 'Película 1' });
 
+  await presentador.atras();
   await presentador.mover('derecha');
   const episodio = await presentador.aceptar();
   assert.equal(episodio.reproducir?.clase, 'episodio');
@@ -1067,14 +1090,15 @@ test('un episodio de dentro de la serie también se reproduce por su clave', asy
   await presentador.cargar();
   const enSeries = await enPestana(presentador, 'series');
   presentador.enfocarEnInicio(indiceDe(enSeries, 'Novedades'), 0);
-  await presentador.aceptar(); // Doctor Who
+  await presentador.aceptar(); // La ficha de Doctor Who
+  await presentador.aceptar(); // Y sus episodios
 
   const { reproducir } = await presentador.aceptar();
   assert.equal(reproducir?.clase, 'episodio');
   assert.equal(reproducir?.id, 'dw:s1e1');
 });
 
-test('una serie de un carrusel se abre, no se reproduce', async () => {
+test('una ficha de un carrusel abre su información, no se reproduce', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   const estado = await presentador.cargar();
   const series = indiceDe(estado, 'Series recién llegadas');
@@ -1083,7 +1107,7 @@ test('una serie de un carrusel se abre, no se reproduce', async () => {
   const { reproducir } = await presentador.aceptar();
 
   assert.equal(reproducir, null);
-  assert.equal(pantallaDe(presentador), 'serie');
+  assert.equal(pantallaDe(presentador), 'ficha');
 });
 
 test('lo que ya no está en el catálogo no ensucia la fila', async () => {

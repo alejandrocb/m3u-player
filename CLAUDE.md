@@ -233,16 +233,34 @@ dentro de un solo campo y separados como le parece —"Drama, Romance",
 escrituras que dicen lo mismo, quedándose con la más frecuente: sin eso,
 "Ciencia ficción" y "CIENCIA FICCION" salían como dos filas medio vacías.
 
-### Cuatro pantallas, y a la cuarta se llega manteniendo pulsado
+### Cuatro pantallas, y pulsar lleva a la información
 
 El **inicio** —que se filtra con las pestañas y no se apila—, **una serie**, el
 **buscador** y la **información** de una película o una serie.
 
-A la información no se llega pulsando: **el toque normal reproduce**, que es lo
-que uno quiere casi siempre. Mantener pulsado abre un menú con las tres cosas
-que se pueden hacer con una ficha —Información, Mi Lista y Descargar—, y es el
-mismo gesto con el dedo y con el OK del mando. Antes ese gesto marcaba en Mi
-Lista directamente; cabía una sola acción y ahora hacen falta tres.
+**Pulsar una carátula abre su información**, y reproducir es el primer botón de
+esa pantalla. Antes el toque reproducía y la información vivía detrás de
+mantener pulsado, y se cambió por dos motivos: **mantener pulsado no lo
+descubre nadie**, y lo que uno quiere de una carátula es casi siempre saber qué
+es —la sinopsis, el reparto, la nota— antes de echarle dos horas.
+
+**Un canal y un episodio no pasan por ahí**: no tienen ficha que enseñar y se
+reproducen al toque, que es lo que se espera de ellos.
+
+Mantener pulsado sigue existiendo, pero ya no es la puerta de nada: es el
+atajo para lo que no cabe en otro sitio —marcar un canal en Mi Lista, bajarse
+un capítulo suelto— con el mismo gesto del dedo y del OK del mando.
+
+**Y el botón de la portada dice "Información"**, no "Reproducir": lo que
+preside el inicio es justo lo que uno no conoce —por eso está ahí—, así que lo
+primero que hace falta es saber de qué va.
+
+Dos cosas que se rompieron al cambiarlo, y que hay que respetar al tocar esto:
+**la barrita de lo visto y el corazón de Mi Lista se colgaban de las fichas
+"que se reproducen"** (`medioDeElemento` y `claseFavorita`). Desde que pulsar
+abre la información, esas son casi todas las carátulas, y de golpe se quedaron
+sin barrita y sin corazón. Cualquier cosa que mire `accion.tipo` tiene que
+contar también con `entrar` hacia una ficha.
 
 La pantalla de información enseña lo que no cabe en una carátula: el fondo
 apaisado degradado hacia el negro, el cartel, la sinopsis, el reparto y los
@@ -254,6 +272,13 @@ el foco. Lo que se pinta va aparte, en `EstadoPantalla.ficha`, por lo mismo que
 Un canal no tiene información que enseñar —ni sinopsis, ni reparto, ni
 tráiler—, así que su menú solo trae Mi Lista. Y una serie no se descarga: se
 descargan sus episodios.
+
+**"Ver en la tele" solo existe con el aparato en la mano**, que una tele no le
+manda vídeo a otra. Y quién es una tele lo dice Android, no `Platform.isTV`,
+que se queda corto: hay cajas de Android TV donde no lo dice. Se pregunta por
+el modo de interfaz, por el lanzador de televisión (leanback) y por si hay
+pantalla táctil, y basta con que uno de los tres lo confirme
+(`ModuloDeTeles.esTelevisor`).
 
 **El tráiler lo pone YouTube.** Viene en la ficha larga (`youtube_trailer`), a
 veces como identificador pelado y a veces como URL entera, y se abre fuera con

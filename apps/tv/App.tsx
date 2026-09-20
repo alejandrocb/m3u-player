@@ -102,6 +102,7 @@ import {
   direccionParaLaTele,
   mirarElFichero,
   pedirALaTele,
+  esUnTelevisor,
   pedirSeguirConLaPantallaApagada,
   puedeSeguirConLaPantallaApagada,
 } from './src/teles';
@@ -672,6 +673,12 @@ function BibliotecaVista({
     esperar a que React vuelva a pintar, y con solo el estado leería siempre
     el de hace un pintado.
   */
+  /*
+    Si esto es un televisor. Decide si existe "Ver en la tele", que en una tele
+    no tiene sentido. Se pregunta a Android una vez y, mientras contesta, vale
+    lo que diga React Native.
+  */
+  const [esTelevisor, setEsTelevisor] = useState(Platform.isTV);
   const [enLaTele, setEnLaTele] = useState<EnLaTele | null>(null);
   const teleEnCurso = useRef<EnLaTele | null>(null);
   const mandoTele = useRef<MandoDeTele | null>(null);
@@ -931,6 +938,9 @@ function BibliotecaVista({
       parrilla: (canalIds) => programacion.deCanales(canalIds),
       // Y de aquí el orden de las filas por categoría: primero lo que más ve.
       afinidad: () => perfiles.afinidad(perfil.id),
+      // "Ver en la tele" solo con el aparato en la mano: una tele no le manda
+      // vídeo a otra.
+      conTele: !esTelevisor,
       // Y de aquí los corazones de Mi Lista, que son de cada uno.
       favoritos: {
         listar: async (clase) =>
@@ -971,7 +981,7 @@ function BibliotecaVista({
     // aplica sobre el presentador vivo, no rehaciéndolo. Las columnas sí
     // obligan a rehacerlo porque la rejilla se monta con ellas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [biblioteca, perfiles, perfil, ajustes.columnas, preparado]);
+  }, [biblioteca, perfiles, perfil, ajustes.columnas, preparado, esTelevisor]);
 
   /*
     Un perfil es una persona, y una persona no ve dos cosas a la vez.
@@ -1668,6 +1678,10 @@ function BibliotecaVista({
   */
   useEffect(() => alPulsarElAviso((orden) => ordenALaTele(orden)), [ordenALaTele]);
 
+  useEffect(() => {
+    void esUnTelevisor().then(setEsTelevisor);
+  }, []);
+
   /*
     Y el aviso sigue lo que dice la tele: si alguien la pausa con su propio
     mando, el botón del aviso pasa a "Seguir". No lleva la posición: cambiaría
@@ -1777,7 +1791,7 @@ function BibliotecaVista({
       return;
     }
 
-    instancia.aceptar().then(({ estado: nuevo, reproducir, abrir, descargar }) => {
+    instancia.aceptar().then(({ estado: nuevo, reproducir, abrir, descargar, tele }) => {
       setEstado(nuevo);
       // El tráiler lo pone YouTube: aquí no hay reproductor que valga para él,
       // y además no gasta conexión del panel.
@@ -1789,6 +1803,10 @@ function BibliotecaVista({
         void meterEnCola(descargar);
         return;
       }
+      if (tele) {
+        void mandarALaTele({ clase: tele.clase as MedioParaTele['clase'], id: tele.id, titulo: tele.titulo });
+        return;
+      }
       if (!reproducir) return;
       // Los canales estrenan en la columna; lo demás va a pantalla completa.
       setReproduciendo(reproducir);
@@ -1797,7 +1815,7 @@ function BibliotecaVista({
     // `meterEnCola` va en la lista: cambia cuando aparece la cola de
     // descargas, y sin ella aquí se quedaría la versión de antes de que
     // existiera —la que contesta "las descargas no están listas todavía"—.
-  }, [reproduciendo, aPantallaCompleta, meterEnCola]);
+  }, [reproduciendo, aPantallaCompleta, meterEnCola, mandarALaTele]);
 
   /** Pulsar un botón de la ficha con el dedo: se enfoca y se acepta. */
   const aceptarEn = useCallback(
@@ -2135,17 +2153,12 @@ function BibliotecaVista({
 
   const opcionesFicha: Array<{ texto: string; onPress: () => void }> = menuFicha
     ? [
-        ...(menuFicha.clase === 'pelicula' || menuFicha.clase === 'serie'
-          ? [
-              {
-                texto: 'Información',
-                onPress: () =>
-                  void presentador.current
-                    ?.abrirFicha(menuFicha.clase as 'pelicula' | 'serie', menuFicha.id, menuFicha.titulo)
-                    .then(setEstado),
-              },
-            ]
-          : []),
+        /*
+          "Información" ya no está aquí: se llega pulsando la ficha, que es lo
+          que hace ahora el toque. Lo que queda en este menú es lo que no cabe
+          en ningún otro sitio —marcar un canal, bajarse un capítulo suelto— y
+          los atajos de lo que uno repite.
+        */
         {
           texto: 'Mi Lista',
           onPress: () => {
@@ -2174,7 +2187,7 @@ function BibliotecaVista({
           Solo en la mano: una tele no le manda vídeo a otra tele. Y de una
           serie no, que no se reproduce entera: se manda un capítulo.
         */
-        ...(!Platform.isTV &&
+        ...(!esTelevisor &&
         (menuFicha.clase === 'pelicula' || menuFicha.clase === 'episodio' || menuFicha.clase === 'canal')
           ? [
               {
@@ -3679,16 +3692,21 @@ const Destacado = memo(function Destacado({
           ) : null}
 
           {/*
-            Reproducir es un botón de verdad, y **el único sitio que responde
-            al dedo**: con la portada entera pulsable, en la tablet arrancaba
-            la película al tocar la imagen sin querer.
+            Es un botón de verdad, y **el único sitio que responde al dedo**:
+            con la portada entera pulsable, en la tablet arrancaba la película
+            al tocar la imagen sin querer.
+
+            Y lleva a la información, no a reproducir: lo que preside el inicio
+            es justo lo que uno no conoce —por eso está ahí—, así que lo
+            primero que hace falta es saber de qué va. Reproducir es el primer
+            botón de esa pantalla.
           */}
           <Pressable
             focusable={false}
             onPress={() => onTocar(fila, 0)}
             style={[estilos.destacadoBoton, enfocado && estilos.destacadoBotonEnfocado]}
           >
-            <Text style={estilos.destacadoBotonTexto}>▶  Reproducir</Text>
+            <Text style={estilos.destacadoBotonTexto}>Información</Text>
           </Pressable>
         </View>
 

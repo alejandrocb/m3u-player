@@ -6,7 +6,7 @@
  * `leerTele`, de `@m3u/core`, que es lo mismo que se prueba en el portátil.
  */
 
-import { DeviceEventEmitter, NativeModules } from 'react-native';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 
 import ReactNativeBlobUtil from 'react-native-blob-util';
 
@@ -27,6 +27,7 @@ interface Nativo {
   callar(): void;
   sinRestricciones(): Promise<boolean>;
   pedirSinRestricciones(): void;
+  esTelevisor(): Promise<boolean>;
 }
 
 /*
@@ -201,6 +202,20 @@ export function tareaDeTele(): Promise<void> {
   return new Promise<void>((listo) => {
     cerrarTarea = listo;
   });
+}
+
+/**
+ * Si esto es un televisor.
+ *
+ * Hace falta para no ofrecer "Ver en la tele" donde no tiene sentido: una tele
+ * no le manda vídeo a otra. `Platform.isTV` de React Native se queda corto
+ * —hay cajas de Android TV donde no lo dice—, así que se le pregunta a Android
+ * por tres caminos: el modo de interfaz, si trae el lanzador de televisión y
+ * si tiene pantalla táctil. Lo que diga el sistema, no lo que uno suponga.
+ */
+export async function esUnTelevisor(): Promise<boolean> {
+  if (!nativo?.esTelevisor) return Platform.isTV;
+  return nativo.esTelevisor().catch(() => Platform.isTV);
 }
 
 /**
