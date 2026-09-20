@@ -775,6 +775,14 @@ function BibliotecaVista({
    * gesto: información, Mi Lista y descargar.
    */
   const [menuFicha, setMenuFicha] = useState<Marcable | null>(null);
+  /**
+   * Si la ficha del menú venía de "Seguir viendo".
+   *
+   * Solo entonces se ofrece quitarla de ahí: en una carátula cualquiera,
+   * "Quitar de Seguir viendo" no significa nada. Se mira por el
+   * identificador del elemento, que esa fila marca con `continuar:`.
+   */
+  const [menuEnCurso, setMenuEnCurso] = useState(false);
   const [focoFicha, setFocoFicha] = useState(0);
   /** Un aviso corto abajo, para lo que no abre pantalla: "Añadido a Mi Lista". */
   const [aviso, setAviso] = useState<string | null>(null);
@@ -996,6 +1004,9 @@ function BibliotecaVista({
       faltanFichas: (cuantas) => avisarDeFaltas.current(cuantas),
       // Y de aquí el orden de las filas por categoría: primero lo que más ve.
       afinidad: () => perfiles.afinidad(perfil.id),
+      // Y de aquí lo marcado con "no me interesa", que se cae de todo lo que
+      // sugiere y solo se recupera buscándolo por su nombre.
+      descartados: () => perfiles.descartados(perfil.id),
       // "Ver en la tele" solo con el aparato en la mano: una tele no le manda
       // vídeo a otra.
       conTele: !esTelevisor,
@@ -1923,6 +1934,7 @@ function BibliotecaVista({
       const medio = elemento ? medioDeElemento(elemento) : null;
       if (!medio) return;
       setFocoFicha(0);
+      setMenuEnCurso(elemento!.id.startsWith('continuar:'));
       setMenuFicha(medio);
     },
     [reproduciendo],
@@ -1958,6 +1970,7 @@ function BibliotecaVista({
       const medio = elemento ? medioDeElemento(elemento) : null;
       if (!medio) return;
       setFocoFicha(0);
+      setMenuEnCurso(elemento!.id.startsWith('continuar:'));
       setMenuFicha(medio);
     },
     [reproduciendo],
@@ -2214,25 +2227,86 @@ function BibliotecaVista({
    * a `react-native-video` le da igual—.
    */
 
+  /**
+   * Lo que se puede hacer con una ficha desde el menú de mantener pulsado.
+   *
+   * **En una película o una serie este menú ya no repite lo que hay en su
+   * ficha.** Información, Mi Lista y "Ver en la tele" están todas ahí dentro
+   * desde que pulsar una carátula abre la información, y tenerlas también aquí
+   * era el mismo botón por dos caminos. Lo que queda son las dos cosas que no
+   * caben en ningún otro sitio: sacar algo de "Seguir viendo" y descartarlo.
+   *
+   * **Un canal y un episodio no tienen ficha**, así que ahí el menú sigue
+   * entero: es el único sitio donde se puede marcar un canal en Mi Lista o
+   * bajarse un capítulo suelto.
+   */
+  const conFicha = menuFicha?.clase === 'pelicula' || menuFicha?.clase === 'serie';
+
   const opcionesFicha: Array<{ texto: string; onPress: () => void }> = menuFicha
     ? [
         /*
-          "Información" ya no está aquí: se llega pulsando la ficha, que es lo
-          que hace ahora el toque. Lo que queda en este menú es lo que no cabe
-          en ningún otro sitio —marcar un canal, bajarse un capítulo suelto— y
-          los atajos de lo que uno repite.
+          Quitar de "Seguir viendo", solo si venía de ahí.
+
+          Es para lo que pasa de verdad: uno pulsa algo sin querer, se queda
+          con treinta segundos apuntados y esa carátula no se va nunca más. El
+          avance se entierra como cualquier otra baja —`deleted = 1`—, así que
+          desaparece también en los demás aparatos de la casa.
         */
-        {
-          texto: 'Mi Lista',
-          onPress: () => {
-            void presentador.current?.marcar(menuFicha).then(() => {
-              setAviso(`${menuFicha.titulo} · Mi Lista`);
-              // Y se recarga, que el corazón de la carátula tiene que cambiar.
-              void presentador.current?.cargar().then(setEstado);
-            });
-          },
-        },
-        ...(menuFicha.clase === 'pelicula' || menuFicha.clase === 'episodio'
+        ...(menuEnCurso
+          ? [
+              {
+                texto: 'Quitar de Seguir viendo',
+                onPress: () => {
+                  void perfiles
+                    .olvidarAvance(perfil.id, menuFicha.clase, menuFicha.id)
+                    .then(() => {
+                      setAviso(`${menuFicha.titulo} · quitada de Seguir viendo`);
+                      void presentador.current?.cargar().then(setEstado);
+                    })
+                    .catch(() => setAviso('No se pudo quitar'));
+                },
+              },
+            ]
+          : []),
+        /*
+          "No me interesa": se cae de todo lo que sugiere —portada, novedades,
+          recomendadas, filas por tema y la rejilla de un género— y sigue en el
+          buscador, que es como se recupera si uno la descarta sin querer.
+
+          Solo de lo que se sugiere: un canal o un capítulo suelto no salen en
+          esas filas, así que ahí no hay nada que descartar.
+        */
+        ...(conFicha
+          ? [
+              {
+                texto: 'No me interesa',
+                onPress: () => {
+                  void perfiles
+                    .descartar(perfil.id, menuFicha.clase, menuFicha.id, true)
+                    .then(() => {
+                      setAviso(`${menuFicha.titulo} · no volverá a salir`);
+                      void presentador.current?.cargar().then(setEstado);
+                    })
+                    .catch(() => setAviso('No se pudo descartar'));
+                },
+              },
+            ]
+          : []),
+        ...(conFicha
+          ? []
+          : [
+              {
+                texto: 'Mi Lista',
+                onPress: () => {
+                  void presentador.current?.marcar(menuFicha).then(() => {
+                    setAviso(`${menuFicha.titulo} · Mi Lista`);
+                    // Y se recarga, que el corazón de la carátula cambia.
+                    void presentador.current?.cargar().then(setEstado);
+                  });
+                },
+              },
+            ]),
+        ...(menuFicha.clase === 'episodio'
           ? [
               {
                 texto: descargas.some((una) => una.id === claveDeDescarga(menuFicha.clase as 'pelicula', menuFicha.id))
@@ -2250,8 +2324,7 @@ function BibliotecaVista({
           Solo en la mano: una tele no le manda vídeo a otra tele. Y de una
           serie no, que no se reproduce entera: se manda un capítulo.
         */
-        ...(!esTelevisor &&
-        (menuFicha.clase === 'pelicula' || menuFicha.clase === 'episodio' || menuFicha.clase === 'canal')
+        ...(!esTelevisor && (menuFicha.clase === 'episodio' || menuFicha.clase === 'canal')
           ? [
               {
                 texto: 'Ver en la tele',

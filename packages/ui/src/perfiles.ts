@@ -75,6 +75,14 @@ export interface Reproduccion {
 /** La clave con la que se guarda en los ajustes del perfil. */
 export const CLAVE_REPRODUCCION = 'reproduciendo';
 
+/** Lo que llevan delante las claves de "no me interesa" en `profile_setting`. */
+export const PREFIJO_DESCARTE = 'descartado:';
+
+/** La clave de un descarte: `descartado:pelicula:lola-pater-2017`. */
+export function claveDeDescarte(clase: ClaseMedio, itemId: string): string {
+  return `${PREFIJO_DESCARTE}${clase}:${itemId}`;
+}
+
 /** Lee un anuncio guardado, que puede venir de otro aparato o estar vacío. */
 export function reproduccionDesde(valor: string | null | undefined): Reproduccion | null {
   if (!valor) return null;
@@ -210,6 +218,20 @@ export interface AlmacenPerfiles {
    */
   preferencia(perfilId: string, clave: string): Promise<string | null>;
   guardarPreferencia(perfilId: string, clave: string, valor: string): Promise<void>;
+
+  /**
+   * Lo que este perfil ha marcado como "no me interesa", con clave `clase:id`.
+   *
+   * Va en el mismo cajón que las preferencias —`profile_setting`—, **una fila
+   * por ficha descartada** y no una lista dentro de un valor. Es a propósito:
+   * la fusión de la sincronización es fila a fila, así que con la lista en un
+   * solo valor, dos aparatos descartando cosas distintas a la vez perderían
+   * uno de los dos descartes. Con una fila cada uno no se pisan, igual que los
+   * favoritos.
+   */
+  descartados(perfilId: string): Promise<string[]>;
+  /** Marca o desmarca un "no me interesa". */
+  descartar(perfilId: string, clase: ClaseMedio, itemId: string, descartado: boolean): Promise<void>;
 
   favoritos(perfilId: string): Promise<Favorito[]>;
   marcarFavorito(perfilId: string, favorito: Favorito): Promise<void>;

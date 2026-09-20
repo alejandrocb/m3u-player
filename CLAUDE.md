@@ -251,6 +251,42 @@ Mantener pulsado sigue existiendo, pero ya no es la puerta de nada: es el
 atajo para lo que no cabe en otro sitio —marcar un canal en Mi Lista, bajarse
 un capítulo suelto— con el mismo gesto del dedo y del OK del mando.
 
+**Y en una película o una serie no repite lo que hay en su ficha.**
+Información, Mi Lista, Descargar y "Ver en la tele" están todas dentro de la
+pantalla de información desde que pulsar una carátula lleva ahí, así que
+tenerlas también en el menú era el mismo botón por dos caminos. Ahí el menú se
+queda con las dos cosas que no caben en ninguna otra parte:
+
+- **Quitar de "Seguir viendo"**, y solo si la ficha venía de esa fila. Es para
+  lo que pasa de verdad: uno pulsa algo sin querer, se queda con treinta
+  segundos apuntados y esa carátula no se va nunca más. Entierra el avance
+  (`deleted = 1`) como cualquier otra baja, así que se va también de los demás
+  aparatos de la casa.
+- **"No me interesa"**, que se cae de **todo lo que sugiere** —la portada, las
+  novedades, las recomendadas, las filas por tema y la rejilla de un género— y
+  **sigue saliendo en el buscador**. Esa es la puerta de atrás y no es un
+  detalle: sin ella, una carátula descartada sin querer se perdería para
+  siempre. No toca "Seguir viendo" —que tiene su propio quitar, y algo
+  empezado no es algo que no te interese— ni Mi Lista, que es una elección
+  expresa y no una sugerencia de nadie.
+
+**En un canal y en un episodio el menú sigue entero**, porque no tienen ficha:
+es el único sitio donde se puede marcar un canal en Mi Lista, bajarse un
+capítulo suelto o mandarlo a la tele. Quitarles eso los dejaría sin nada.
+
+Dos detalles de cómo se guarda el descarte:
+
+- **Una fila de `profile_setting` por ficha descartada**, con la clave
+  `descartado:<clase>:<id>`, y no una lista dentro de un solo valor. La fusión
+  de la sincronización es fila a fila: con la lista en un valor, dos aparatos
+  descartando cosas distintas a la vez perderían uno de los dos descartes.
+- **Al deshacerlo se entierra, no se borra.** Una fila borrada la volvería a
+  subir el otro aparato en la sincronización siguiente y el descarte
+  reaparecería solo.
+- **En la rejilla de un género, `hayMas` se mira sobre lo que trajo el SQL**,
+  no sobre lo que queda tras filtrar: contando lo filtrado, una página entera
+  de descartadas parecería el final del género y no se pediría la siguiente.
+
 **Y el botón de la portada dice "Información"**, no "Reproducir": lo que
 preside el inicio es justo lo que uno no conoce —por eso está ahí—, así que lo
 primero que hace falta es saber de qué va.

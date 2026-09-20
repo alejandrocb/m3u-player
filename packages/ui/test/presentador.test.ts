@@ -870,6 +870,60 @@ test('sin nada que falte no se avisa', async () => {
   assert.deepEqual(faltas, []);
 });
 
+/*
+  "No me interesa": se cae de todo lo que sugiere, y solo de eso.
+
+  La puerta de atrás es el buscador: una carátula descartada sin querer tiene
+  que poder recuperarse, y escribir su nombre es la única forma que queda.
+*/
+test('lo descartado no sale en ninguna fila del inicio', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(8), {
+    descartados: async () => ['pelicula:p1'],
+  });
+  const estado = await presentador.cargar();
+
+  const todas = (estado.inicio?.filas ?? []).flatMap((fila) =>
+    fila.tipo === 'carrusel' ? fila.elementos : [],
+  );
+  assert.ok(todas.length > 0, 'hay filas que mirar');
+  assert.ok(
+    !todas.some((elemento) => elemento.id.endsWith(':p1') || elemento.id === 'p1'),
+    'p1 no aparece en ninguna fila',
+  );
+  // Y lo que no se ha descartado sigue estando: no se ha vaciado el inicio.
+  assert.ok(todas.some((elemento) => elemento.id.includes('p2')));
+});
+
+test('lo descartado tampoco preside el inicio', async () => {
+  const sinNada = new Presentador(bibliotecaFalsa(8));
+  const antes = await sinNada.cargar();
+  const portada = antes.inicio?.filas[0];
+  const presidia = portada?.tipo === 'destacado' ? portada.elementos[0]?.id : null;
+  assert.ok(presidia, 'hay portada de la que partir');
+
+  // El identificador del elemento es `destacado:<clase>:<id>`, y la clave de
+  // un descarte es `<clase>:<id>`.
+  const [, clase, id] = presidia.split(':');
+  const presentador = new Presentador(bibliotecaFalsa(8), {
+    descartados: async () => [`${clase}:${id}`],
+  });
+  const estado = await presentador.cargar();
+  const nueva = estado.inicio?.filas[0];
+
+  assert.notEqual(nueva?.tipo === 'destacado' ? nueva.elementos[0]?.id : null, presidia);
+});
+
+test('si no se pueden leer los descartes, el inicio se monta igual', async () => {
+  const presentador = new Presentador(bibliotecaFalsa(8), {
+    descartados: async () => {
+      throw new Error('la base no contesta');
+    },
+  });
+  const estado = await presentador.cargar();
+
+  assert.ok((estado.inicio?.filas.length ?? 0) > 0, 'enseñar de más es mejor que no enseñar');
+});
+
 test('lo empezado va justo detrás de la portada', async () => {
   const presentador = new Presentador(bibliotecaFalsa(), { seguirViendo: async () => aMedias() });
   const estado = await presentador.cargar();

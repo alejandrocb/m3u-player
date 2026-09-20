@@ -29,7 +29,9 @@ import type {
 import {
   CLAVE_REPRODUCCION,
   FIN_PELICULA,
+  PREFIJO_DESCARTE,
   ajustesDesde,
+  claveDeDescarte,
   claveDeMedio,
   colorLibre,
   idDePerfil,
@@ -474,6 +476,24 @@ export function perfilesEnBase(db: DB): AlmacenPerfiles {
 
     async guardarPreferencia(perfilId: string, clave: string, valor: string): Promise<void> {
       guardarSetting(perfilId, clave, valor);
+    },
+
+    async descartados(perfilId: string): Promise<string[]> {
+      return filas(
+        db,
+        `SELECT key FROM profile_setting
+          WHERE profile_id = ? AND key LIKE ? AND deleted = 0`,
+        [perfilId, `${PREFIJO_DESCARTE}%`],
+      ).map((fila) => (fila.key as string).slice(PREFIJO_DESCARTE.length));
+    },
+
+    async descartar(perfilId: string, clase: ClaseMedio, itemId: string, descartado: boolean): Promise<void> {
+      const clave = claveDeDescarte(clase, itemId);
+      // Deshacer entierra la fila en vez de borrarla, como todo lo demás: una
+      // fila borrada la volvería a subir el otro aparato en la sincronización
+      // siguiente y el descarte reaparecería solo.
+      if (descartado) guardarSetting(perfilId, clave, '1');
+      else enterrar('profile_setting', 'profile_id = ? AND key = ?', [perfilId, clave]);
     },
 
     async favoritos(perfilId: string): Promise<Favorito[]> {

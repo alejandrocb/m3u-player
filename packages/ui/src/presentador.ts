@@ -570,6 +570,20 @@ export interface OpcionesPresentador {
    * por él sería reimportar sin arreglar nada.
    */
   faltanFichas?: (cuantas: number) => void;
+  /**
+   * Lo que este perfil ha marcado como "no me interesa", con clave `clase:id`.
+   *
+   * Se cae de **todo lo que sugiere**: la portada, las novedades, las
+   * recomendadas, las filas por tema y la rejilla de un género. Sigue estando
+   * en el buscador, que es la puerta de atrás para cuando uno descarta algo
+   * sin querer: sin eso, una carátula tocada por error se perdería para
+   * siempre.
+   *
+   * Lo que **no** toca: "Seguir viendo" —que tiene su propio "quitar", y algo
+   * empezado no es algo que no te interese— ni Mi Lista, que es una elección
+   * expresa y no una sugerencia de nadie.
+   */
+  descartados?: () => Promise<string[]>;
 }
 
 /** Lo que el presentador necesita de los favoritos del perfil. */
@@ -638,6 +652,7 @@ export class Presentador {
   #seriesEmpezadas: OpcionesPresentador['seriesEmpezadas'];
   #parrilla: OpcionesPresentador['parrilla'];
   #faltanFichas: OpcionesPresentador['faltanFichas'];
+  #pedirDescartados: OpcionesPresentador['descartados'];
   #favoritos: PuertoFavoritos | undefined;
   #conTele: boolean;
   #afinidad: OpcionesPresentador['afinidad'];
@@ -662,6 +677,7 @@ export class Presentador {
     this.#seriesEmpezadas = opciones.seriesEmpezadas;
     this.#parrilla = opciones.parrilla;
     this.#faltanFichas = opciones.faltanFichas;
+    this.#pedirDescartados = opciones.descartados;
     this.#favoritos = opciones.favoritos;
     this.#conTele = opciones.conTele ?? false;
     this.#afinidad = opciones.afinidad;
@@ -1127,6 +1143,17 @@ export class Presentador {
   }
 
   /**
+   * Lo descartado de este perfil, con clave `clase:id`.
+   *
+   * Si falla se sigue sin ello: no enseñar el inicio porque no se ha
+   * podido leer una lista de descartes sería mucho peor que enseñar de más.
+   */
+  async #descartadas(): Promise<Set<string>> {
+    const lista = await (this.#pedirDescartados?.() ?? Promise.resolve([])).catch(() => [] as string[]);
+    return new Set(lista);
+  }
+
+  /**
    * Recoge las sugerencias preparadas por el servidor.
    *
    * No repinta nada por sí solo: se llaman antes de cargar, o se vuelve a
@@ -1145,10 +1172,13 @@ export class Presentador {
    * catálogo de aquí puede ser de antes de ayer. Lo que no esté, fuera; sin
    * ficha no hay ni carátula que enseñar ni URL que reproducir.
    */
-  async #portadaDelServidor(modo: ModoInicio): Promise<FilaInicio | null> {
+  async #portadaDelServidor(modo: ModoInicio, descartadas: Set<string>): Promise<FilaInicio | null> {
     const suyas = this.#portadas.filter(
       (portada) =>
-        (modo !== 'series' && portada.clase === 'pelicula') || (modo !== 'peliculas' && portada.clase === 'serie'),
+        ((modo !== 'series' && portada.clase === 'pelicula') ||
+          (modo !== 'peliculas' && portada.clase === 'serie')) &&
+        // Lo descartado no preside el inicio: es lo más visible de todo.
+        !descartadas.has(`${portada.clase}:${portada.id}`),
     );
     if (suyas.length === 0) return null;
 
@@ -1426,6 +1456,8 @@ export class Presentador {
     // Y lo ya visto, que no sale de ahí: el historial son los últimos
     // cuarenta avances y lo visto puede ser de hace meses.
     const vistas = await (this.#vistas?.() ?? Promise.resolve([])).catch(() => [] as string[]);
+    // Y lo marcado como "no me interesa", que se cae de todo lo que sugiere.
+    const descartadas = await this.#descartadas();
 
     const cuantas = CARRUSEL * DE_SOBRA;
     /*
@@ -1462,7 +1494,7 @@ export class Presentador {
       y se cogen las primeras que la traigan; si no la trae ninguna, el inicio
       empieza directamente por "Seguir viendo".
     */
-    const preparada = await this.#portadaDelServidor(modo);
+    const preparada = await this.#portadaDelServidor(modo, descartadas);
     if (preparada) filas.push(preparada);
 
     const candidatas = preparada
@@ -1475,6 +1507,8 @@ export class Presentador {
             ? destacarVarias(series, CANDIDATAS).map((ficha) => ({ ficha, clase: 'serie' as const }))
             : []),
         ]
+          // Ni aquí: la portada de respaldo sugiere igual que la del servidor.
+          .filter(({ ficha, clase }) => !descartadas.has(`${clase}:${ficha.id}`))
           .sort((a, b) => (b.ficha.valoracion ?? 0) - (a.ficha.valoracion ?? 0))
           .slice(0, CANDIDATAS);
 
@@ -1568,7 +1602,9 @@ export class Presentador {
       minimo = 1,
       todo?: Pantalla,
     ): Promise<void> => {
-      const nuevas = fichas.filter((ficha) => !puestas.has(ficha.id)).slice(0, CARRUSEL);
+      const nuevas = fichas
+        .filter((ficha) => !puestas.has(ficha.id) && !descartadas.has(`${clase}:${ficha.id}`))
+        .slice(0, CARRUSEL);
       if (nuevas.length < minimo) return;
 
       const elementos = await this.#aCarrusel(nuevas, clase);
@@ -2417,15 +2453,27 @@ export class Presentador {
       */
       case 'grupo': {
         const donde = pantalla.tema ? { tema: pantalla.tema } : { grupo: pantalla.grupo };
-        const fichas =
+        const traidas =
           pantalla.clase === 'serie'
             ? await this.#biblioteca.series({ ...pagina, orden: 'destacada', ...donde })
             : await this.#biblioteca.peliculas({ ...pagina, orden: 'destacada', ...donde });
 
+        /*
+          Ver un género entero sigue siendo una sugerencia, así que lo
+          descartado tampoco sale aquí.
+
+          **`hayMas` se mira sobre lo traído, no sobre lo que queda.** La
+          paginación cuenta lo que pidió el SQL; si se contara lo filtrado,
+          una página entera de descartadas parecería el final del género y no
+          se pediría la siguiente.
+        */
+        const descartadas = await this.#descartadas();
+        const fichas = traidas.filter((ficha) => !descartadas.has(`${pantalla.clase}:${ficha.id}`));
+
         return {
           titulo: pantalla.titulo,
           // Si viene una página entera, puede que haya más: se pide al bajar.
-          hayMas: fichas.length >= this.#tamanoPagina,
+          hayMas: traidas.length >= this.#tamanoPagina,
           elementos: fichas.map((ficha) => ({
             id: `${pantalla.clase}:${ficha.id}`,
             titulo: ficha.titulo,
