@@ -76,6 +76,9 @@ def enableProguardInReleaseBuilds = false
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+/** Donde vive la clave de firma, fuera del repositorio. */
+def claveDeLaCasa = new File(System.getProperty('user.home'), '.chocitatv/keystore.properties')
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -96,15 +99,38 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        /*
+          La clave de verdad vive **fuera del repositorio**, que es publico:
+          en `~/.chocitatv/keystore.properties`. Aqui solo se lee.
+
+          Android solo acepta una actualizacion firmada con la misma clave,
+          asi que esto es lo que permite que un aparato se actualice solo. Y
+          por eso la de la plantilla no valia: su clave privada la tiene todo
+          el mundo, es la misma en todos los proyectos de React Native.
+
+          **Si se pierde ese fichero no hay mas actualizaciones**: habria que
+          desinstalar la aplicacion en todos los aparatos y empezar de cero.
+        */
+        release {
+            if (claveDeLaCasa.exists()) {
+                def suyo = new Properties()
+                claveDeLaCasa.withInputStream { suyo.load(it) }
+                storeFile file(suyo['storeFile'])
+                storePassword suyo['storePassword']
+                keyAlias suyo['keyAlias']
+                keyPassword suyo['keyPassword']
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Sin la clave de la casa se firma con la de depuracion, para que
+            // un clon recien hecho siga compilando. Lo que sale de ahi no vale
+            // para actualizar los aparatos: la firma no coincide.
+            signingConfig claveDeLaCasa.exists() ? signingConfigs.release : signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
