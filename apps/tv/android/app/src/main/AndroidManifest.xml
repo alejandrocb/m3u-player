@@ -38,6 +38,20 @@
       se queda parada a media película.
     -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!--
+      Instalar una actualizacion desde la propia aplicacion.
+
+      Hasta ahora cada version entraba por `adb`, con el portatil y el cable:
+      en una tablet es incomodo y en la tele del salon es un viaje, asi que los
+      aparatos se quedaban atras unos de otros. El APK lo reparte el servidor
+      de la casa por su API con token, no hay ninguna direccion abierta.
+
+      Instala **el sistema**, no nosotros: esto solo permite pedirselo. Ademas
+      hay que darle permiso de "instalar aplicaciones desconocidas", una vez
+      por aparato, y Android ensena que va a instalar antes de hacerlo.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
  
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.faketouch" android:required="false" />

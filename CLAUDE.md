@@ -1218,6 +1218,47 @@ Lo que **no** hace, a propósito o todavía: elegir idioma o subtítulos —DLNA
 lo deja y la tele pone la pista por defecto— y mandar lo ya descargado, que
 el puente podría servir del disco pero todavía no lo hace.
 
+### Actualizarse sin ordenador: lo reparte el servidor de la casa
+
+Cada versión entraba por `adb`, con el portátil y el cable o la depuración
+inalámbrica. En una tablet es incómodo y en la tele del salón es un viaje, así
+que los aparatos se quedaban atrás unos de otros. Ahora el servidor de la casa
+reparte el APK por su propia API: `GET /api/version` dice qué hay y
+`GET /api/apk` lo entrega, **con el token del emparejamiento**.
+
+Que vaya por ahí y no por una carpeta pública no es casualidad: el servidor ya
+sabe quiénes son de la casa, así que no hay que inventar autenticación nueva ni
+dejar ninguna dirección abierta con el instalable. **FTP se descartó**: Android
+no trae cliente, va en claro y —lo que importa— no resuelve lo difícil, que es
+instalar con un mando delante de la tele.
+
+Cuatro cosas que no son opcionales:
+
+- **La firma tiene que ser la misma.** Android solo acepta una actualización
+  firmada con la clave de lo que ya hay instalado; si no, dice "aplicación no
+  instalada" y no explica más. Hasta el 2026-09-20 el release iba firmado con
+  el `debug.keystore` de la plantilla de React Native, **cuya clave privada
+  está en este repositorio y es la misma en todos los proyectos**. La de verdad
+  vive en `~/.chocitatv/keystore.properties`, fuera del repositorio. Si se
+  pierde, no hay más actualizaciones: habría que desinstalar en todos los
+  aparatos.
+- **Cambiar de clave obliga a desinstalar y reinstalar**, y con ello a volver a
+  emparejar. No duele tanto como parece —la casa devuelve perfiles, historial y
+  listas con sus credenciales— pero el coste solo crece con los aparatos, así
+  que es una decisión de ahora y no de luego.
+- **Se compara la fecha de compilación, no el commit.** Con el commit solo se
+  sabría que es *distinta*, no que sea más nueva, y al volver atrás a propósito
+  la aplicación se ofrecería a sí misma lo que ya tiene.
+- **Instala el sistema, no nosotros.** `REQUEST_INSTALL_PACKAGES` solo permite
+  pedírselo; Android enseña qué va a instalar y hace falta darle permiso de
+  "aplicaciones desconocidas" una vez por aparato. El APK se deja en la caché a
+  propósito: si algo se tuerce, lo borra el sistema y no quedan sesenta megas
+  ocupando sitio.
+
+Publicar es `node tools/publicar.mjs`, que **comprueba la firma antes** —un APK
+de depuración publicado por error deja a toda la casa sin poder actualizar— y
+escribe el `version.json` que se sube junto al APK a la carpeta `APK_DIR`.
+
 ## Trampas conocidas
 
 - **Un `403` con una página que dice "Acceso Denegado… ajenas a Vodafone" no

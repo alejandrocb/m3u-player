@@ -65,6 +65,7 @@ import type {
   Preparado,
   Programacion,
   Reproducible,
+  VersionPublicada,
 } from '@m3u/ui';
 import {
   AJUSTES_POR_DEFECTO,
@@ -98,6 +99,9 @@ import {
   rutaDe,
   transferenciaDeAndroid,
 } from './src/descargas-base';
+import { bajarEInstalar, esMasNueva } from './src/actualizar';
+import type { AvanceDeActualizacion } from './src/actualizar';
+import { COMPILADA } from './src/version';
 import { avisarDeLasDescargas } from './src/aviso-descarga';
 import {
   alPulsarElAviso,
@@ -303,6 +307,30 @@ function Raiz() {
     }
   }, []);
 
+  /**
+   * La versión publicada en el servidor, si es más nueva que esta.
+   *
+   * Se pregunta **una vez al conectar** y no en cada sincronización: una
+   * versión nueva no aparece cada dos minutos, y el que esté viendo algo no
+   * quiere que le interrumpan con esto.
+   */
+  const [nuevaVersion, setNuevaVersion] = useState<VersionPublicada | null>(null);
+  /** Por dónde va la descarga de la actualización, mientras se baja. */
+  const [bajandoVersion, setBajandoVersion] = useState<AvanceDeActualizacion | null>(null);
+
+  const comprobarVersion = useCallback(async () => {
+    try {
+      const publicada = await sync.current.version();
+      setNuevaVersion(esMasNueva(publicada) ? publicada : null);
+      if (publicada) {
+        console.log(`[actualizar] publicada ${publicada.compilada}, aquí ${COMPILADA}`);
+      }
+    } catch (fallo) {
+      // Que no se pueda preguntar no es un problema: se sigue con lo que hay.
+      console.warn('[actualizar] no se pudo preguntar por la versión', fallo);
+    }
+  }, []);
+
   /** Una sola vez por sesión: si de verdad ya no está, reimportar no la trae. */
   const catalogoRehecho = useRef(false);
 
@@ -417,6 +445,9 @@ function Raiz() {
         new Promise<void>((sigue) => setTimeout(() => sigue(), ESPERA_SINCRONIZAR_MS)),
       ]);
 
+      // Y de paso, si hay una versión nueva esperando en el servidor.
+      void comprobarVersion();
+
       /*
         Antes de la biblioteca, quién está viendo: cada perfil tiene su
         historial y sus favoritos.
@@ -436,7 +467,7 @@ function Raiz() {
       biblioteca.current = null;
       setFase({ tipo: 'listas', error: fallo instanceof Error ? fallo.message : String(fallo) });
     }
-  }, [sincronizar]);
+  }, [sincronizar, comprobarVersion]);
 
   useEffect(() => {
     (async () => {
@@ -628,6 +659,23 @@ function Raiz() {
       }
       onActualizar={() => conectar(fase.cuenta, true)}
       onFaltanFichas={(cuantas) => void rehacerCatalogo(fase.cuenta, cuantas)}
+      nuevaVersion={nuevaVersion}
+      bajandoVersion={bajandoVersion}
+      onActualizarApp={() => {
+        if (!nuevaVersion) return;
+        void (async () => {
+          const estado = await sync.current.estado();
+          if (!estado) return;
+          setBajandoVersion({ bytes: 0, total: nuevaVersion.bytes });
+          try {
+            await bajarEInstalar(estado.servidor, estado.token, nuevaVersion, setBajandoVersion);
+          } catch (fallo) {
+            console.warn('[actualizar] no se pudo', fallo);
+          } finally {
+            setBajandoVersion(null);
+          }
+        })();
+      }}
       sincronizado={sincronizado}
       preparado={preparado}
       aparato={nombreAparato}
@@ -663,6 +711,9 @@ function BibliotecaVista({
   onCambiarPerfil,
   onActualizar,
   onFaltanFichas,
+  nuevaVersion,
+  bajandoVersion,
+  onActualizarApp,
   sincronizado,
   preparado,
   aparato,
@@ -689,6 +740,11 @@ function BibliotecaVista({
   onActualizar: () => void;
   /** El historial trae fichas que este catálogo no conoce: está viejo. */
   onFaltanFichas: (cuantas: number) => void;
+  /** Lo que hay publicado en el servidor, si es más nuevo que esto. */
+  nuevaVersion: VersionPublicada | null;
+  /** Por dónde va la descarga de la actualización, mientras se baja. */
+  bajandoVersion: AvanceDeActualizacion | null;
+  onActualizarApp: () => void;
   /** Sube cuando ha llegado algo de otro aparato: hay que repintar. */
   sincronizado: number;
   /** Pide sincronizar ahora, sin esperar al temporizador. */
@@ -2465,6 +2521,21 @@ function BibliotecaVista({
     ...(enLaTele && !verMando
       ? [{ texto: `En la tele: ${enLaTele.medio.titulo}`, onPress: () => setVerMando(true) }]
       : []),
+    /*
+      La actualización, cuando la hay. Es una entrada que **aparece y se va**,
+      así que va aquí y no en una pantalla de ajustes donde nadie la buscaría:
+      lo que pasa es que un día abres el menú y está.
+    */
+    ...(bajandoVersion
+      ? [
+          {
+            texto: `Bajando… ${Math.round((bajandoVersion.bytes / Math.max(1, bajandoVersion.total)) * 100)} %`,
+            onPress: () => {},
+          },
+        ]
+      : nuevaVersion
+        ? [{ texto: `Actualizar a ${nuevaVersion.compilada}`, onPress: onActualizarApp }]
+        : []),
     ...otrosPerfiles.map((otro) => ({
       texto: otro.nombre,
       retrato: otro,

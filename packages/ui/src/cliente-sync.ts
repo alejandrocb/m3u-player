@@ -55,6 +55,22 @@ export interface AlmacenSync {
   olvidar(): Promise<void>;
 }
 
+/**
+ * La versión de la aplicación que hay publicada en el servidor de la casa.
+ *
+ * `compilada` es `YYYY-MM-DD HH:mm`, que es el orden en el que se compara: con
+ * el commit solo se sabría que es **distinta**, no que sea más nueva, y
+ * volviendo atrás en el tiempo la aplicación se ofrecería a sí misma una
+ * actualización que ya tiene.
+ */
+export interface VersionPublicada {
+  version: string;
+  compilada: string;
+  commit: string;
+  bytes: number;
+  sha256: string;
+}
+
 /** Una lista que reparte el servidor, ya con sus credenciales dentro. */
 export interface ListaRemota {
   id: string;
@@ -347,6 +363,35 @@ export class ClienteSync {
   }
 
   /** Las listas del grupo, por si han cambiado desde el emparejamiento. */
+  /**
+   * La versión publicada en el servidor de la casa, si hay alguna.
+   *
+   * Va con el token como todo lo demás: **el instalable no está en ninguna
+   * dirección abierta**, solo lo ven los aparatos emparejados. Devuelve `null`
+   * cuando no hay nada publicado o el servidor no contesta, que no es un
+   * fallo: actualizar es un extra y la aplicación funciona igual sin él.
+   */
+  async version(): Promise<VersionPublicada | null> {
+    const estado = await this.#almacen.leer();
+    if (!estado) return null;
+
+    const respuesta = await this.#buscar(`${estado.servidor}/api/version`, {
+      method: 'GET',
+      headers: { authorization: `Bearer ${estado.token}` },
+    }).catch(() => null);
+    if (!respuesta?.ok) return null;
+
+    const datos = (await respuesta.json()) as Partial<VersionPublicada>;
+    if (!datos.compilada || !datos.commit || !datos.bytes) return null;
+    return {
+      version: datos.version ?? '',
+      compilada: datos.compilada,
+      commit: datos.commit,
+      bytes: datos.bytes,
+      sha256: datos.sha256 ?? '',
+    };
+  }
+
   async listas(): Promise<ListaRemota[]> {
     const estado = await this.#almacen.leer();
     if (!estado) return [];

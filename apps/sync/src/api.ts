@@ -8,11 +8,13 @@
  * navegador—.
  */
 
+import { createReadStream } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { aplicarCambios, cambiosDesde, sellarRecepcion } from '@m3u/storage/sincronizar';
 import { marcaTras } from '@m3u/ui';
 
+import { rutaDelApk, ultimaVersion } from './apk.ts';
 import { json, leerJson, tokenDe } from './http.ts';
 import type { Panel } from './panel.ts';
 
@@ -95,7 +97,9 @@ export async function manejarApi(
       ruta === '/api/listas' ||
       ruta === '/api/portadas' ||
       ruta === '/api/epg' ||
-      ruta === '/api/fichas'
+      ruta === '/api/fichas' ||
+      ruta === '/api/version' ||
+      ruta === '/api/apk'
     ) {
       json(res, 401, { error: 'token no válido' });
       return true;
@@ -129,6 +133,43 @@ export async function manejarApi(
       .sort()[0];
 
     json(res, 200, { generado: generado ?? null, programas });
+    return true;
+  }
+
+  // --- La última versión de la aplicación ----------------------------------
+  /*
+    **Actualizarse no debería exigir un ordenador.** Hasta ahora cada versión
+    entraba por `adb`, con el portátil y el cable o la depuración inalámbrica;
+    en la tele del salón eso es un viaje. El aparato pregunta aquí, compara con
+    su propio sello y se baja el APK por `/api/apk` si hay algo más nuevo.
+
+    Va con el token de siempre, así que **solo los aparatos de la casa lo ven**
+    y no hace falta dejar ninguna dirección abierta con el instalable.
+  */
+  if (ruta === '/api/version' && req.method === 'GET') {
+    const publicada = await ultimaVersion();
+    if (!publicada) {
+      json(res, 404, { error: 'no hay ninguna versión publicada' });
+      return true;
+    }
+    json(res, 200, publicada);
+    return true;
+  }
+
+  if (ruta === '/api/apk' && req.method === 'GET') {
+    const publicada = await ultimaVersion();
+    if (!publicada) {
+      json(res, 404, { error: 'no hay ninguna versión publicada' });
+      return true;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.android.package-archive',
+      'Content-Length': String(publicada.bytes),
+      // El nombre con el que lo guarda quien lo baje a mano desde un navegador.
+      'Content-Disposition': `attachment; filename="chocitatv-${publicada.commit}.apk"`,
+    });
+    createReadStream(rutaDelApk()).pipe(res);
     return true;
   }
 
