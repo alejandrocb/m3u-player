@@ -20,6 +20,32 @@ import type { AlmacenDescargas, Descarga, EstadoDescarga, Transferencia } from '
 /** Dónde viven los ficheros bajados, dentro de lo privado de la aplicación. */
 export const CARPETA = `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/descargas`;
 
+/**
+ * Cuánto se aguanta sin que entre un solo byte antes de dar por atascada la
+ * descarga, soltar la ranura y volver a intentarlo.
+ *
+ * Generoso a propósito: el panel tarda en contestar la primera cabecera y una
+ * tablet vieja con un wifi flojo se queda parada a ratos. Cortar antes sería
+ * cortar descargas que iban bien.
+ *
+ * **Esta constante estuvo sin declarar**, y salió carísimo: `rearmar()` es lo
+ * primero que se llama después de lanzar la petición, así que reventaba con un
+ * `ReferenceError` **antes de registrar `progress` y `then`**. La descarga
+ * arrancaba y escribía en el disco —eso lo hace la librería por su cuenta—
+ * pero ya no había nadie escuchando: ni avance, ni final, ni fallo. Por fuera
+ * se veía como "baja gigas, no termina nunca, no reanuda y llena el disco".
+ * No lo cazó nadie porque **`npm run typecheck` no mira `apps/`**.
+ */
+const SIN_UN_BYTE_MS = 45_000;
+
+/**
+ * Cada cuánto se mira el tamaño del fichero para saber por dónde va.
+ *
+ * Dos segundos es de sobra para una barra que se mueve y no cuesta nada: es
+ * un `stat`, no leer el fichero.
+ */
+const MIRAR_CADA_MS = 2_000;
+
 /** La ruta completa de una descarga, que es lo que se le pasa al reproductor. */
 export function rutaDe(descarga: Descarga): string {
   return `${CARPETA}/${descarga.fichero}`;
@@ -49,6 +75,39 @@ export async function espacio(): Promise<{ ocupado: number; libre: number }> {
     .catch(() => 0);
 
   return { ocupado, libre };
+}
+
+/**
+ * Borra los ficheros de la carpeta que ninguna descarga reclama.
+ *
+ * Un fichero a medias cuya fila no existe **no se puede borrar desde la
+ * aplicación**: no sale en la lista, así que no hay botón que lo quite, y se
+ * queda ocupando sitio para siempre. Los hubo a pares mientras `download` no
+ * podía guardar nada —la descarga bajaba gigas y su fila nunca llegaba a la
+ * base—, y son lo que dejó la tele al 91 %.
+ *
+ * Se pasa al abrir, con lo que diga la cola. Devuelve cuántos bytes ha
+ * recuperado, para poder decirlo.
+ */
+export async function limpiarHuerfanos(conocidos: string[]): Promise<number> {
+  const suyos = new Set(conocidos);
+  const ficheros = await ReactNativeBlobUtil.fs.lstat(CARPETA).catch(() => []);
+
+  let recuperado = 0;
+  for (const uno of ficheros) {
+    if (suyos.has(uno.filename)) continue;
+    const tamano = Number(uno.size) || 0;
+    const fuera = await ReactNativeBlobUtil.fs
+      .unlink(`${CARPETA}/${uno.filename}`)
+      .then(() => true)
+      .catch(() => false);
+    if (fuera) recuperado += tamano;
+  }
+
+  if (recuperado > 0) {
+    console.log(`[descarga] limpiados ${Math.round(recuperado / 1_000_000)} MB sin dueño`);
+  }
+  return recuperado;
 }
 
 type Fila = Record<string, unknown>;
@@ -171,9 +230,53 @@ export function transferenciaDeAndroid(): Transferencia {
           alFallar(`el panel no mandó nada en ${SIN_UN_BYTE_MS / 1000} s`);
         }, SIN_UN_BYTE_MS);
       };
+      /*
+        **Cuánto lleva bajado se mide mirando el fichero, no esperando a que
+        la librería avise.**
+
+        `ReactNativeBlobUtil` tiene su propia llamada de progreso y aquí
+        **no se dispara nunca**: medido en la tablet, con cientos de megas en
+        el disco, la línea que escribe cada diez megas no salió ni una vez. El
+        resultado era que el panel enseñaba "Bajando · 0 MB" mientras el disco
+        se llenaba, que a la base se apuntaba `bytes = 0`, y que al reabrir la
+        aplicación la descarga empezaba otra vez desde el principio. Una
+        película de cinco gigas no terminaba nunca y el disco se llenaba en
+        cada intento.
+
+        El tamaño del fichero es el dato que de verdad importa —es lo que se
+        le pide al panel con `Range` al reanudar—, así que se lee de ahí. Y de
+        paso el vigía del atasco se rearma con lo que **de verdad** ha entrado
+        en el disco y no con lo que diga una librería.
+      */
+      let reloj: ReturnType<typeof setInterval> | null = null;
+      let ultimoVisto = desde;
+      const mirarElFichero = (): void => {
+        reloj = setInterval(() => {
+          if (cancelada) return;
+          void ReactNativeBlobUtil.fs
+            .stat(ruta)
+            .then((medida) => {
+              if (cancelada) return;
+              const bytes = Number(medida.size) || 0;
+              if (bytes <= ultimoVisto) return;
+              ultimoVisto = bytes;
+              // Ha entrado algo de verdad: el vigía vuelve a empezar la cuenta.
+              rearmar();
+              // El total no se sabe desde aquí; lo que ya hubiera se conserva.
+              alAvanzar(bytes, null);
+            })
+            .catch(() => {
+              // Todavía no existe el fichero, o el sistema no deja mirarlo: no
+              // es motivo para cortar nada, ya lo dirá el vigía.
+            });
+        }, MIRAR_CADA_MS);
+      };
+
       const guardarVigia = (): void => {
         if (vigia) clearTimeout(vigia);
         vigia = null;
+        if (reloj) clearInterval(reloj);
+        reloj = null;
       };
 
       void carpetaLista.then((hayCarpeta) => {
@@ -209,6 +312,7 @@ export function transferenciaDeAndroid(): Transferencia {
         });
 
         rearmar();
+        mirarElFichero();
 
         let ultimoAviso = 0;
         tarea.progress({ interval: 500 }, (recibidos, total) => {

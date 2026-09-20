@@ -91,7 +91,13 @@ import {
 } from '@m3u/ui';
 
 import { almacenDeCuentas } from './src/almacen';
-import { borrarFichero, espacio, rutaDe, transferenciaDeAndroid } from './src/descargas-base';
+import {
+  borrarFichero,
+  espacio,
+  limpiarHuerfanos,
+  rutaDe,
+  transferenciaDeAndroid,
+} from './src/descargas-base';
 import { avisarDeLasDescargas } from './src/aviso-descarga';
 import {
   alPulsarElAviso,
@@ -371,8 +377,20 @@ function Raiz() {
         // Quitar una descarga tiene que dejar el disco como estaba.
         borrarFichero,
       });
-      // Lo que quedó a medias anoche sigue por donde iba.
-      void cola.current.cargar();
+      /*
+        Lo que quedó a medias anoche sigue por donde iba, y lo que quedó en
+        el disco sin dueño se va.
+
+        El barrido va **después** de cargar la cola y no antes: hay que saber
+        qué ficheros reclama alguien para no borrar justo lo que se estaba
+        bajando. Lo que no reclama nadie no se puede quitar desde la
+        aplicación —no sale en la lista, así que no hay botón— y se quedaría
+        ocupando sitio para siempre.
+      */
+      void cola.current.cargar().then(() => {
+        const ficheros = cola.current?.todas().map((una) => una.fichero) ?? [];
+        void limpiarHuerfanos(ficheros);
+      });
       // Lo que diga el panel, no lo que supongamos: hay cuentas de 1 y de 3.
       if (medicion.conexiones) arbitro.current.ajustarRanuras(medicion.conexiones);
       await gestor.current?.conectar(elegida.id);

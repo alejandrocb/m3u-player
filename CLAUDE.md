@@ -1493,6 +1493,29 @@ el puente podría servir del disco pero todavía no lo hace.
   tele de casa: 4,8 GB ocupados y la cola vacía. Lo fija
   `packages/storage/test/descargas-migracion.test.ts`.
 
+- **Una constante sin declarar en `apps/` no la caza nadie hasta que explota.**
+  `SIN_UN_BYTE_MS` se quedó sin declarar en `descargas-base.ts`, y `rearmar()`
+  es **lo primero que se llama tras lanzar la petición**: reventaba con un
+  `ReferenceError` antes de registrar `progress` y `then`. La descarga
+  arrancaba y escribía en el disco —eso lo hace la librería por su cuenta—
+  pero ya no escuchaba nadie: ni avance, ni final, ni fallo. Por fuera se veía
+  como "baja gigas, no termina nunca, no reanuda y llena el disco". La causa de
+  fondo es que **`npm run typecheck` no incluye `apps/`**: para la app hay que
+  pasar `cd apps/tv && npx.cmd tsc --noEmit -p tsconfig.json`, y buscar
+  `error TS2304` ("Cannot find name") entre el ruido de tipos de React Native.
+
+- **El avance de una descarga se mide mirando el fichero, no esperando a la
+  librería.** La llamada de progreso de `react-native-blob-util` no se dispara
+  aquí —medido: cientos de megas en el disco y ni una línea—, así que el
+  tamaño del fichero (`fs.stat` cada dos segundos) es la única medida de fiar.
+  Y es además la que importa, porque es lo que se le pide al panel con `Range`
+  al reanudar. El vigía del atasco se rearma con eso mismo.
+
+- **Un fichero a medias sin fila no se puede borrar desde la aplicación**: no
+  sale en la lista, así que no hay botón que lo quite. `limpiarHuerfanos` pasa
+  al abrir, **después** de cargar la cola —hay que saber qué reclama alguien
+  para no borrar lo que se está bajando—.
+
 - **Y un `catch` vacío en una escritura es una trampa, no una precaución.**
   Seguir bajando aunque no se pueda apuntar está bien; callarlo no. Lo que
   parecía "lo peor que pasa es volver a bajar unos megas" era en realidad "no
