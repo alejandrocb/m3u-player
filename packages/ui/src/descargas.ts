@@ -174,6 +174,7 @@ export class ColaDeDescargas {
   /** Lo guardado de la vez anterior. Lo que quedó a medias vuelve a la cola. */
   async cargar(): Promise<void> {
     this.#cola = await this.#almacen.leer();
+    console.log(`[descarga] en la base hay ${this.#cola.length}`);
     /*
       Lo que estaba bajando cuando se cerró la aplicación no está bajando: al
       arrancar no hay nada en marcha. Se deja en cola, que es donde estaba de
@@ -444,9 +445,16 @@ export class ColaDeDescargas {
   async #apuntar(descarga: Descarga): Promise<void> {
     try {
       await this.#almacen.guardar(descarga);
-    } catch {
-      // Que no se pueda apuntar no puede parar la descarga: lo peor que pasa
-      // es que al reanudar se vuelvan a bajar unos megas.
+    } catch (fallo) {
+      /*
+        Que no se pueda apuntar no para la descarga —seguir bajando es mejor
+        que no bajar— **pero se dice**. Callarlo fue un error: una descarga que
+        no se apunta funciona a la vista, con su aviso y sus megas cayendo, y
+        desaparece entera al cerrar la aplicación, sin dejar rastro de por qué.
+        Lo peor que puede pasar no es "volver a bajar unos megas": es no
+        terminar nunca y llenar el disco por el camino.
+      */
+      console.warn('[descarga] no se pudo apuntar en la base', fallo);
     }
   }
 

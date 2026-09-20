@@ -396,6 +396,25 @@ export const COLUMNAS_MIGRADAS: Array<{ tabla: string; columna: string; tipo: st
     ("gato", "buho"…), no una imagen. Así viaja en una palabra y se pinta
     igual en los cuatro aparatos, sin subir nada a ninguna parte.
   */
+  /*
+    Las de `download`, que se quedaron fuera de esta lista y costaron caro.
+
+    `CREATE TABLE IF NOT EXISTS` no añade columnas a una tabla que ya existe,
+    así que en los aparatos donde la tabla se creó antes de que existiera
+    `seconds` —la duración, que es lo que permite decir cuántas horas de vídeo
+    hay bajadas— **cada intento de apuntar una descarga reventaba** con "table
+    download has no column named seconds". Y lo reventado se lo tragaba un
+    `catch` vacío, así que por fuera no se veía nada: la descarga arrancaba,
+    ponía su aviso, bajaba sus gigas… y al cerrar la aplicación no existía.
+    Ni reanudaba ni se podía borrar, y el disco se iba llenando.
+
+    De ahí la regla, que vale para cualquier tabla nueva: **añadir una columna
+    obliga a apuntarla aquí**, y da igual que la tabla no se sincronice.
+  */
+  { tabla: 'download', columna: 'series_id', tipo: 'TEXT' },
+  { tabla: 'download', columna: 'seconds', tipo: 'INTEGER' },
+  { tabla: 'download', columna: 'tries', tipo: 'INTEGER NOT NULL DEFAULT 0' },
+  { tabla: 'download', columna: 'error', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'avatar', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'updated', tipo: 'TEXT' },
   { tabla: 'profile', columna: 'deleted', tipo: 'INTEGER NOT NULL DEFAULT 0' },

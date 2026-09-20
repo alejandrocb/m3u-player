@@ -1481,6 +1481,24 @@ el puente podría servir del disco pero todavía no lo hace.
   guardarlo no se puede tratar como un corte de red**: reintentar solo quema
   otro código. Tiene su propio tipo de error (`ErrorDeEmparejamiento`) y la
   pantalla lo dice y para.
+- **Añadir una columna obliga a apuntarla en `COLUMNAS_MIGRADAS`, también en
+  las tablas que no se sincronizan.** `CREATE TABLE IF NOT EXISTS` no toca una
+  tabla que ya existe, así que en el aparato del usuario la columna nueva no
+  aparece nunca. Pasó con `download.seconds`: **cada intento de apuntar una
+  descarga reventaba** con "table download has no column named seconds", y el
+  fallo se lo tragaba un `catch` vacío. Por fuera no se veía nada —la descarga
+  arrancaba, ponía su aviso y bajaba sus gigas—, pero no existía en la base:
+  al cerrar la aplicación desaparecía de la lista, no reanudaba por donde iba
+  y **no había forma de borrarla**, así que el disco se llenaba solo. En la
+  tele de casa: 4,8 GB ocupados y la cola vacía. Lo fija
+  `packages/storage/test/descargas-migracion.test.ts`.
+
+- **Y un `catch` vacío en una escritura es una trampa, no una precaución.**
+  Seguir bajando aunque no se pueda apuntar está bien; callarlo no. Lo que
+  parecía "lo peor que pasa es volver a bajar unos megas" era en realidad "no
+  termina nunca y llena el disco por el camino", y sin una línea en el
+  registro no había forma de verlo desde fuera.
+
 - **La MAC no sirve para identificar un aparato en Android.**
   `getMacAddress()` devuelve `02:00:00:00:00:00` desde Android 6, leerla de
   `/sys/class/net/` está cerrado desde Android 10, y encima el sistema la
