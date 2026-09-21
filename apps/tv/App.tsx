@@ -2065,6 +2065,19 @@ function BibliotecaVista({
     (indice: number) => {
       const instancia = presentador.current;
       if (!instancia || reproduciendo) return;
+      /*
+        **En el buscador no hay menú.**
+
+        Lo que queda en este menú para una película o una serie es "No me
+        interesa", y ahí no significa nada: descartar algo lo quita de lo que
+        se **sugiere** —la portada, las novedades, las filas por tema— y el
+        buscador es justo la puerta de atrás que sigue enseñándolo todo. Una
+        opción que no cambia lo que estás viendo es peor que ninguna.
+
+        Lo que se hace con un resultado se hace desde su ficha, que es a donde
+        lleva pulsarlo, igual que en el inicio.
+      */
+      if (instancia.pantalla.tipo === 'buscador') return;
       const elemento = instancia.estado().elementos[indice];
       const medio = elemento ? medioDeElemento(elemento) : null;
       if (!medio) return;

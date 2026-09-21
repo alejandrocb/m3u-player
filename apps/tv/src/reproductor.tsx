@@ -195,6 +195,18 @@ interface Props {
  * del panel es un caso esperado y no un fallo del reproductor: con el límite
  * de conexiones al tope, el servidor rechaza mientras haya otra en curso.
  */
+/**
+ * Si lo que no arrancó fue el decodificador **de audio**.
+ *
+ * ExoPlayer lo dice en claro: `MediaCodecAudioRenderer error` y, debajo,
+ * `Decoder init failed`. Con eso se sabe que el vídeo iba bien y que merece la
+ * pena probar otra pista del mismo fichero antes de rendirse.
+ */
+export function falloDeAudio(fallo: unknown): boolean {
+  const detalle = JSON.stringify(fallo ?? {});
+  return /MediaCodecAudioRenderer/.test(detalle) && /Decoder init failed|ERROR_CODE_DECODING/.test(detalle);
+}
+
 export function mensajeDeError(fallo: unknown): string {
   const detalle = JSON.stringify(fallo ?? {});
   const codigo = /Response code: (\d{3})/.exec(detalle)?.[1];
@@ -242,7 +254,13 @@ export function mensajeDeError(fallo: unknown): string {
     ];
     const codec = conLicencia.find(([patron]) => patron.test(detalle))?.[1];
     if (codec) {
-      return `Esta copia trae el audio en ${codec} y este aparato no sabe decodificarlo. Prueba otra calidad del mismo título.`;
+      /*
+        Sin prometer salidas que pueden no existir: cuando se llega aquí ya se
+        han probado **todas** las pistas del fichero, y muchos títulos vienen
+        en una sola calidad, así que "prueba otra" mandaba a buscar algo que a
+        veces no está. Lo que sí es verdad siempre es de quién es el problema.
+      */
+      return `Esta copia trae el audio en ${codec} y este aparato no sabe decodificarlo.`;
     }
 
     return 'El aparato no puede decodificar este vídeo o su audio.';
@@ -307,7 +325,13 @@ export function Reproductor({
    * con una cuenta atrás, espera.
    */
   const [espera, setEspera] = useState<number | null>(null);
-  /** Sube en cada reintento: es lo que rehace la petición y remonta el vídeo. */
+  /**
+   * Sube en cada reintento: es lo que rehace la petición y remonta el vídeo.
+   *
+   * Lo usan dos cosas: la cuenta atrás del 403 y el reintento con otra pista
+   * de audio. Cambiar `selectedAudioTrack` a secas no bastaría, porque el
+   * reproductor ya está en error y no vuelve a intentar nada por su cuenta.
+   */
   const [intento, setIntento] = useState(0);
   /**
    * Cuándo se puso lo que está sonando.
@@ -329,6 +353,15 @@ export function Reproductor({
   const [formato, setFormato] = useState<string | null>(null);
 
   const [audios, setAudios] = useState<Pista[]>([]);
+  /**
+   * Las pistas de audio que este aparato no ha sabido decodificar.
+   *
+   * Un ripeo puede traer varias —DTS en español y AC3 en inglés es lo
+   * corriente— y el aparato solo saber una. Antes se elegía una, fallaba y ahí
+   * se acababa todo; ahora se prueban las demás antes de rendirse, que es lo
+   * que haría uno a mano.
+   */
+  const pistasFallidas = useRef<Set<number>>(new Set());
   const [subtitulos, setSubtitulos] = useState<Pista[]>([]);
   const [audio, setAudio] = useState(0);
   // -1 es "sin subtítulos", que es como debe empezar.
@@ -1118,6 +1151,32 @@ export function Reproductor({
               setEspera(Math.max(1, Math.ceil(ms / 1000)));
               return;
             }
+
+            /*
+              El audio que este aparato no sabe decodificar: se prueba otra
+              pista del mismo fichero antes de rendirse.
+
+              DTS, TrueHD y los Dolby de gama alta se pagan por aparato y casi
+              ningún Android los trae. Pero un ripeo suele venir con más de una
+              pista —DTS en español y AC3 en inglés es lo corriente—, así que
+              rendirse a la primera es dejar de ver algo que sí se puede ver.
+
+              Cada intento cuesta una conexión del panel, así que no se insiste
+              a lo tonto: cada pista se prueba **una vez**, y cuando se acaban,
+              se dice lo que pasa.
+            */
+            if (falloDeAudio(fallo)) {
+              pistasFallidas.current.add(audio);
+              const otra = audios.find((pista) => !pistasFallidas.current.has(pista.indice));
+              if (otra) {
+                console.warn(`[reproductor] audio ${audio} no se puede decodificar; probando ${otra.indice}`);
+                setAudio(otra.indice);
+                setIntento((van) => van + 1);
+                return;
+              }
+              console.warn('[reproductor] ninguna pista de audio se puede decodificar aquí');
+            }
+
             setError(mensajeDeError(fallo));
           }}
         />

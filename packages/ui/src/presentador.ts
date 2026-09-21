@@ -2541,12 +2541,16 @@ export class Presentador {
                   logo: ficha?.logo ?? null,
                   avance: null,
                   favorito: false,
-                  // Aceptar sobre una serie entra en ella, con sus temporadas
-                  // en la barra: no devuelve al listado de series.
-                  accion: {
-                    tipo: 'entrar',
-                    pantalla: { tipo: 'serie', serieId: resultado.id, titulo: ficha?.titulo ?? resultado.titulo },
-                  },
+                  /*
+                    Abre su información, igual que en el inicio.
+
+                    Aquí entraba directamente en la serie, y era la única
+                    carátula de la aplicación que se comportaba distinta según
+                    de dónde vinieras: la misma serie llevaba a un sitio desde
+                    el inicio y a otro desde el buscador. Desde la ficha se
+                    llega a los episodios con "Ver episodios".
+                  */
+                  accion: verLaFicha('serie', resultado.id, ficha?.titulo ?? resultado.titulo),
                 },
               ];
             }
@@ -2584,10 +2588,9 @@ export class Presentador {
                 logo: ficha?.logo ?? null,
                 avance: null,
                 favorito: false,
-                accion: {
-                  tipo: 'reproducir',
-                  medio: { clase: 'pelicula', id: resultado.id, titulo: ficha?.titulo ?? resultado.titulo },
-                },
+                // Lo mismo que en el inicio: pulsar lleva a la información, y
+                // reproducir es el primer botón de ahí dentro.
+                accion: verLaFicha('pelicula', resultado.id, ficha?.titulo ?? resultado.titulo),
               },
             ];
           }),

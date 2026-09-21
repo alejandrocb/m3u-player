@@ -52,9 +52,9 @@ test('el HEVC de 10 bits se nombra por lo que es', () => {
 test('el audio con licencia se nombra, y se dice que es de esta copia', () => {
   const mensaje = mensajeDeError(AUDIO_DTS);
   expect(mensaje).toContain('DTS');
-  // Que el problema es de **esta copia** y no del título: otra calidad del
-  // mismo suele traer AC3 y funcionar.
-  expect(mensaje).toContain('otra calidad');
+  // Que el problema es de **esta copia** y de **este aparato**, no del título.
+  expect(mensaje).toContain('Esta copia');
+  expect(mensaje).toContain('este aparato');
   // Y no el genérico, que deja sin saber si falla el vídeo o el sonido.
   expect(mensaje).not.toBe('El aparato no puede decodificar este vídeo o su audio.');
 });

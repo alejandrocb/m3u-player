@@ -1317,7 +1317,15 @@ test('el orden de relevancia de la búsqueda se respeta', async () => {
   );
 });
 
-test('aceptar sobre una serie del buscador entra en ella, no en el listado', async () => {
+/*
+  Un resultado del buscador se comporta como una carátula del inicio.
+
+  Era la única de la aplicación que cambiaba según de dónde vinieras: la misma
+  serie entraba en sus episodios desde el buscador y abría su información desde
+  el inicio, y la misma película se ponía a reproducir de un toque. Desde que
+  pulsar lleva a la información, aquí también.
+*/
+test('una serie del buscador abre su información, como en el inicio', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
   await presentador.abrirBuscador();
@@ -1325,24 +1333,23 @@ test('aceptar sobre una serie del buscador entra en ella, no en el listado', asy
 
   const { estado, reproducir } = await presentador.aceptar();
   assert.equal(reproducir, null);
-  assert.equal(pantallaDe(presentador), 'serie');
-  // Y entra ya con sus temporadas en la barra y los episodios de la primera.
-  assert.equal(estado.titulo, 'Doctor Who · Temporada 1');
-  assert.deepEqual(
-    estado.lateral?.opciones.map((opcion) => opcion.nombre),
-    ['Temporada 1', 'Temporada 2'],
-  );
+  assert.equal(pantallaDe(presentador), 'ficha');
+  assert.equal(estado.ficha?.titulo, 'Doctor Who');
+  // Y desde ahí se llega a los episodios, que es lo que antes era el toque.
+  assert.ok(estado.elementos.some((uno) => uno.titulo === 'Ver episodios'));
 });
 
-test('una película del buscador se reproduce', async () => {
+test('una película del buscador abre su información, no se reproduce', async () => {
   const presentador = new Presentador(bibliotecaFalsa());
   await presentador.cargar();
   await presentador.abrirBuscador();
   await presentador.buscar('lo que sea');
   presentador.enfocar(1);
 
-  const { reproducir } = await presentador.aceptar();
-  assert.deepEqual(reproducir, { clase: 'pelicula', id: 'p1', titulo: 'Película 1' });
+  const { estado, reproducir } = await presentador.aceptar();
+  assert.equal(reproducir, null, 'no arranca de un toque');
+  assert.equal(pantallaDe(presentador), 'ficha');
+  assert.equal(estado.ficha?.titulo, 'Película 1');
 });
 
 test('un canal del buscador lleva su grupo como detalle', async () => {
