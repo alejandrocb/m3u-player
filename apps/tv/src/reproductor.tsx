@@ -217,6 +217,34 @@ export function mensajeDeError(fallo: unknown): string {
         ? 'Este vídeo va en HEVC de 10 bits y el aparato no sabe decodificarlo. Prueba otra calidad del mismo título.'
         : 'El aparato no puede con el HEVC de este vídeo.';
     }
+    /*
+      El audio con licencia, que es el caso que se repite de verdad.
+
+      DTS, TrueHD y los Dolby de gama alta se pagan por aparato, así que casi
+      ningún Android los trae: ni los teléfonos ni la mayoría de las cajas de
+      TV. Medido en la tele de casa con *Baby Driver*:
+
+        format=Format(… audio/vnd.dts, … es, [6, 48000])
+        format_supported=NO_UNSUPPORTED_TYPE
+
+      El vídeo iba bien —el decodificador de H.264 arrancó— y lo que no había
+      era con qué sonar. Decir "no puede decodificar este vídeo o su audio"
+      ahí es lo peor de los dos mundos: no dice cuál de las dos cosas es, ni
+      que el problema es de **esta copia** y no del título, ni que otra
+      calidad del mismo suele traer AC3 y funcionar.
+    */
+    const conLicencia: Array<[RegExp, string]> = [
+      [/audio\/vnd\.dts|audio\/dts/, 'DTS'],
+      [/audio\/true-hd|audio\/mlp/, 'Dolby TrueHD'],
+      [/audio\/eac3-joc/, 'Dolby Atmos'],
+      [/audio\/eac3/, 'Dolby Digital Plus'],
+      [/audio\/ac3/, 'Dolby Digital'],
+    ];
+    const codec = conLicencia.find(([patron]) => patron.test(detalle))?.[1];
+    if (codec) {
+      return `Esta copia trae el audio en ${codec} y este aparato no sabe decodificarlo. Prueba otra calidad del mismo título.`;
+    }
+
     return 'El aparato no puede decodificar este vídeo o su audio.';
   }
   return 'No se pudo reproducir.';

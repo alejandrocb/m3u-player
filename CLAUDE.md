@@ -1269,6 +1269,28 @@ escribe el `version.json` que se sube junto al APK a la carpeta `APK_DIR`.
   parece un fallo de la tele y no lo es. Antes de buscar el problema en el
   código, mirar **el cuerpo** del 403, no solo el código.
 
+- **El audio con licencia no lo trae casi ningún Android: DTS, TrueHD, Atmos.**
+  Se pagan por aparato, así que ni los teléfonos ni la mayoría de las cajas de
+  TV los tienen. Medido en la tele de casa con *Baby Driver*:
+  `format=Format(… audio/vnd.dts, … es, [6, 48000])`,
+  `format_supported=NO_UNSUPPORTED_TYPE`, `Decoder init failed: [-49999]`, con
+  `index=1` —el renderizador de audio— y el decodificador de H.264 arrancando
+  sin problemas. **El vídeo iba bien; lo que no había era con qué sonar.**
+
+  Por eso el mensaje los nombra y dice que el problema es de **esta copia**:
+  otra calidad del mismo título suele venir en AC3 y funcionar. El genérico
+  "no puede decodificar este vídeo o su audio" era lo peor de los dos mundos,
+  porque no decía ni cuál de las dos cosas fallaba ni que hubiera salida.
+
+  Ojo con dar por hecho que es esto: la sospecha del DTS ya se dio por buena
+  una vez sin medir y la medición dijo H.264 + AC3. El dato está en
+  `adb logcat -s ExoPlayerImplInternal:V`, en la línea `format=`.
+
+  Y la Samsung SM-T580 es otro caso distinto y más gordo: **no trae ningún
+  decodificador Dolby**, ni siquiera AC3 —comprobado en los nueve ficheros de
+  códecs del sistema—, así que ahí falla la mayoría del catálogo y no solo
+  algún título suelto.
+
 - **El EPG del panel viene en UTC y en base64.** Los títulos y las sinopsis van
   codificados, y los tiempos —incluidas las cadenas `start` y `end`, que
   parecen hora local— están en UTC. Comprobado: el programa que el panel da

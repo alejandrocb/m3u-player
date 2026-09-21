@@ -20,6 +20,24 @@ const HEVC_10_BITS = {
   },
 };
 
+/**
+ * Lo que soltó la tele al abrir *Baby Driver*, recortado.
+ *
+ * DTS 5.1 en español: el decodificador de H.264 arrancó bien y el que no
+ * existe es el de audio. `format_supported=NO_UNSUPPORTED_TYPE` quiere decir
+ * que el aparato no tiene con qué, no que el fichero esté roto.
+ */
+const AUDIO_DTS = {
+  error: {
+    errorCode: '24001',
+    errorException:
+      'androidx.media3.exoplayer.ExoPlaybackException: MediaCodecAudioRenderer error, index=1, ' +
+      'format=Format(2, Movieshdgratis, video/x-matroska, audio/vnd.dts, null, -1, es, ' +
+      '[-1, -1, -1.0, null], [6, 48000]), format_supported=NO_UNSUPPORTED_TYPE ... ' +
+      'DecoderInitializationException: Decoder init failed: [-49999]',
+  },
+};
+
 const MAX_CONEXIONES = {
   error: { errorException: 'InvalidResponseCodeException: Response code: 403' },
 };
@@ -28,6 +46,16 @@ test('el HEVC de 10 bits se nombra por lo que es', () => {
   const mensaje = mensajeDeError(HEVC_10_BITS);
   expect(mensaje).toContain('10 bits');
   // Y no el genérico, que no dice si es el fichero, la red o el aparato.
+  expect(mensaje).not.toBe('El aparato no puede decodificar este vídeo o su audio.');
+});
+
+test('el audio con licencia se nombra, y se dice que es de esta copia', () => {
+  const mensaje = mensajeDeError(AUDIO_DTS);
+  expect(mensaje).toContain('DTS');
+  // Que el problema es de **esta copia** y no del título: otra calidad del
+  // mismo suele traer AC3 y funcionar.
+  expect(mensaje).toContain('otra calidad');
+  // Y no el genérico, que deja sin saber si falla el vídeo o el sonido.
   expect(mensaje).not.toBe('El aparato no puede decodificar este vídeo o su audio.');
 });
 
