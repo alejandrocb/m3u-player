@@ -150,7 +150,16 @@ export function PantallaPerfiles({ almacen, onElegir, onVolver, conexiones }: Pr
           edicion={editando}
           alCambiar={(cambio) => setEdicion({ ...editando, ...cambio })}
           alGuardar={() => void guardar()}
-          alCancelar={lista.length > 0 ? () => setEdicion(null) : undefined}
+          /*
+            Sin ningún perfil, cancelar no es volver a la lista —no hay— sino
+            **salir de aquí**, que es lo que hacía falta y no existía: un
+            aparato recién emparejado, o revocado desde la web, aterriza en
+            "¿Cómo te llamas?" y se quedaba encerrado, con inventarse un perfil
+            como única salida. Y eso es lo peor que se puede hacer ahí: se
+            sincroniza y la casa acaba con un perfil de más.
+          */
+          alCancelar={lista.length > 0 ? () => setEdicion(null) : onVolver}
+          textoCancelar={lista.length > 0 ? 'Cancelar' : 'Volver'}
           alBorrar={
             // No se borra el único que hay: sin perfiles no se puede ver nada,
             // y la pantalla siguiente sería volver a crear uno.
@@ -253,6 +262,7 @@ function Editor({
   alCambiar,
   alGuardar,
   alCancelar,
+  textoCancelar = 'Cancelar',
   alBorrar,
   borrando,
   alConfirmarBorrado,
@@ -262,6 +272,8 @@ function Editor({
   alCambiar: (cambio: Partial<Edicion>) => void;
   alGuardar: () => void;
   alCancelar?: () => void;
+  /** "Cancelar" mientras se edita; "Volver" cuando no hay a qué cancelar. */
+  textoCancelar?: string;
   alBorrar?: () => void;
   borrando: boolean;
   alConfirmarBorrado: () => void;
@@ -358,7 +370,7 @@ function Editor({
 
       <View style={estilos.fila}>
         <Boton texto={edicion.perfil ? 'Guardar' : 'Crear y entrar'} onPress={alGuardar} principal />
-        {alCancelar ? <Boton texto="Cancelar" onPress={alCancelar} /> : null}
+        {alCancelar ? <Boton texto={textoCancelar} onPress={alCancelar} /> : null}
         {alBorrar ? <Boton texto="Borrar perfil" onPress={alBorrar} peligro /> : null}
       </View>
     </View>
