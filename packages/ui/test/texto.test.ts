@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { cantidad, duracion, mediasEstrellas, nota, numero, reloj } from '../src/texto.ts';
+import {
+  fechaDeCompilacion, cantidad, duracion, mediasEstrellas, nota, numero, reloj } from '../src/texto.ts';
 import { nombreDeCategoria, ordenarCategorias } from '../src/presentador.ts';
 
 test('los miles se separan con punto', () => {
@@ -120,4 +121,31 @@ test('las categorías se ordenan por lo que ve el perfil, y luego por tamaño', 
     ordenarCategorias(categorias, { Terror: 3, Comedia: 1 }).map((una) => una.nombre),
     ['Terror', 'Comedia', 'Acción'],
   );
+});
+
+/*
+  El sello se guarda en ISO y se pinta en español.
+
+  Guardarlo ya en `DD-MM-YYYY` rompería la comparación que decide si hay
+  versión nueva, y de la peor manera: en texto, `03-10-2026` es **menor** que
+  `22-09-2026`, así que una actualización de octubre no se ofrecería nunca y
+  no habría forma de ver por qué.
+*/
+test('la fecha de compilación se pinta como se lee en España', () => {
+  assert.equal(fechaDeCompilacion('2026-09-22 13:19'), '22-09-2026 13:19');
+  assert.equal(fechaDeCompilacion('2026-09-22'), '22-09-2026');
+});
+
+test('y en ISO sigue ordenándose sola, que es de lo que depende actualizar', () => {
+  const sellos = ['2026-10-03 09:00', '2026-09-22 13:19', '2026-09-22 08:00'];
+  assert.deepEqual([...sellos].sort(), [
+    '2026-09-22 08:00',
+    '2026-09-22 13:19',
+    '2026-10-03 09:00',
+  ]);
+});
+
+test('lo que no se reconozca se deja tal cual, que es mejor que un hueco', () => {
+  assert.equal(fechaDeCompilacion('desconocida'), 'desconocida');
+  assert.equal(fechaDeCompilacion(''), '');
 });

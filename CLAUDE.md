@@ -1267,6 +1267,14 @@ Cuatro cosas que no son opcionales:
   emparejar. No duele tanto como parece —la casa devuelve perfiles, historial y
   listas con sus credenciales— pero el coste solo crece con los aparatos, así
   que es una decisión de ahora y no de luego.
+- **El sello se guarda en ISO y se pinta en español.** Viaja como
+  `YYYY-MM-DD HH:mm` porque así se ordena comparando dos cadenas, que es lo
+  que decide si hay versión nueva. Guardarlo ya como `DD-MM-YYYY` rompería esa
+  comparación de la peor manera: en texto `03-10-2026` es **menor** que
+  `22-09-2026`, así que una actualización de octubre no se ofrecería nunca y
+  no habría forma de ver por qué. Se convierte al pintar, con
+  `fechaDeCompilacion`, y solo al pintar.
+
 - **Se compara la fecha de compilación, no el commit.** Con el commit solo se
   sabría que es *distinta*, no que sea más nueva, y al volver atrás a propósito
   la aplicación se ofrecería a sí misma lo que ya tiene.

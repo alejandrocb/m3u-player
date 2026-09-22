@@ -86,6 +86,7 @@ import {
   elementosDeFila,
   Presentador,
   cantidad,
+  fechaDeCompilacion,
   mediasEstrellas,
   nota,
   numero,
@@ -2560,7 +2561,7 @@ function BibliotecaVista({
           },
         ]
       : nuevaVersion
-        ? [{ texto: `Actualizar a ${nuevaVersion.compilada}`, onPress: onActualizarApp }]
+        ? [{ texto: `Actualizar a ${fechaDeCompilacion(nuevaVersion.compilada)}`, onPress: onActualizarApp }]
         : []),
     ...otrosPerfiles.map((otro) => ({
       texto: otro.nombre,

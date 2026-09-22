@@ -90,3 +90,26 @@ export function mediasEstrellas(valoracion: number): number {
   if (!Number.isFinite(valoracion) || valoracion <= 0) return 0;
   return Math.round(Math.min(5, valoracion / 2) * 2);
 }
+
+/**
+ * La fecha de una compilación, escrita como se lee en España.
+ *
+ * **Se guarda en ISO y se pinta en español, y eso no es capricho.** El sello
+ * viaja como `YYYY-MM-DD HH:mm` porque así se ordena comparando dos cadenas,
+ * que es exactamente lo que decide si hay una versión más nueva
+ * (`esMasNueva`). Guardarlo como `DD-MM-YYYY` rompería esa comparación de la
+ * peor manera posible: `03-10-2026` sería "menor" que `22-09-2026`, así que
+ * una actualización de octubre no se ofrecería nunca y nadie sabría por qué.
+ *
+ * Lo que no vale es lo contrario: enseñarle `2026-09-22` a quien lee
+ * `22-09-2026`. Así que se convierte al pintar, y solo al pintar.
+ *
+ * Lo que no reconozca se devuelve tal cual: más vale una fecha rara que un
+ * hueco.
+ */
+export function fechaDeCompilacion(sello: string): string {
+  const partes = /^(\d{4})-(\d{2})-(\d{2})(.*)$/.exec(sello.trim());
+  if (!partes) return sello;
+  const [, anio, mes, dia, resto] = partes;
+  return `${dia}-${mes}-${anio}${resto}`;
+}

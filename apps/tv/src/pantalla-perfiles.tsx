@@ -19,7 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { AlmacenPerfiles, Perfil } from '@m3u/ui';
-import { COLORES_PERFIL } from '@m3u/ui';
+import { COLORES_PERFIL, fechaDeCompilacion } from '@m3u/ui';
 import { Retrato } from './retrato';
 import { RETRATOS } from './retratos';
 import { FONDO, ROJO, TINTA, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
@@ -247,7 +247,7 @@ export function PantallaPerfiles({ almacen, onElegir, onVolver, conexiones }: Pr
           */}
           <Text style={estilos.pie}>
             {conexiones ? `Conexiones de este aparato ${conexiones.usadas}/${conexiones.ranuras} · ` : ''}
-            v{VERSION} · {COMPILADA}
+            v{VERSION} · {fechaDeCompilacion(COMPILADA)}
             {COMMIT ? ` · ${COMMIT}` : ''}
           </Text>
         </>
