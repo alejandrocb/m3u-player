@@ -12,3 +12,8 @@ apps/tv/servidor.local.js
 # compilación, así que en el repositorio solo sería ruido. Lo crean el
 # postinstall y Gradle, así que siempre está.
 apps/tv/src/version.ts
+
+# El decodificador FFmpeg: 3,3 MB de binario que se reconstruyen con
+# `tools/ffmpeg`. Sin el, la aplicacion compila igual y lo unico que pierde es
+# el audio con licencia (DTS, TrueHD).
+apps/tv/android/app/libs/*.aar

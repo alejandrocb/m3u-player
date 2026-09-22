@@ -91,6 +91,22 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+
+        /*
+          Solo ARM: los aparatos de la casa son los cuatro ARM y x86 solo lo
+          usan los emuladores.
+
+          Medido: de las librerias nativas del APK, 29,5 MB eran x86 y x86_64
+          —React Native, Hermes, SQLite, y ahora tambien el decodificador
+          FFmpeg, todos vienen con las cuatro—. Quitarlas baja el APK casi a la
+          mitad, y eso se nota en cada instalacion: la tablet Samsung tiene un
+          wifi tan flojo que un envio de 67 MB se colgaba indefinidamente.
+
+          Si algun dia hace falta un emulador, se quitan estas dos lineas.
+        */
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
     }
     signingConfigs {
         debug {

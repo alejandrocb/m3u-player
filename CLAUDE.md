@@ -1280,6 +1280,44 @@ Publicar es `node tools/publicar.mjs`, que **comprueba la firma antes** —un AP
 de depuración publicado por error deja a toda la casa sin poder actualizar— y
 escribe el `version.json` que se sube junto al APK a la carpeta `APK_DIR`.
 
+### El audio con licencia: el decodificador va dentro
+
+DTS, Dolby TrueHD y los Dolby de gama alta se pagan por aparato, asi que casi
+ningun Android los trae. En esta casa: la tele no decodifica DTS —*Baby
+Driver* y *Diarios de Motocicleta* traen una sola pista y es DTS— y la tablet
+Samsung (SM-T580) no decodifica **ningun** Dolby, ni siquiera AC3, comprobado
+en los nueve ficheros de codecs del sistema.
+
+La pista de que tenia arreglo la dio el usuario: IBO Player Pro reproduce todo
+**incluso en esa tablet**, o sea que lleva los suyos propios. Esto es lo mismo:
+la extension FFmpeg de media3 dentro del APK.
+
+Tres piezas, y ninguna es opcional:
+
+- **`tools/ffmpeg`** compila `media3-decoder-ffmpeg` en un contenedor. En
+  Docker porque el guion de FFmpeg es `bash` con autotools y en Windows no
+  funciona, y de paso queda repetible. La version de media3 tiene que ser
+  **exactamente** `RNVideo_media3Version` (hoy 1.8.0): la extension se enchufa
+  por reflexion y otra version no encaja.
+- **`tools/parche-video.mjs`**, en el `postinstall`: `react-native-video` trae
+  las extensiones apagadas a fuego
+  (`setExtensionRendererMode(EXTENSION_RENDERER_MODE_OFF)`) y sin tocarlo el
+  decodificador no se usa nunca aunque este dentro del APK. Queda en `..._ON`
+  y **no en `PREFER`**: asi el hardware del aparato sigue mandando —H.264 por
+  hardware, que es lo que ahorra bateria— y FFmpeg solo cubre los huecos.
+- El AAR entra por **`fileTree`** y no como dependencia fija, y **no esta en el
+  repositorio**: son 3,3 MB de binario y esto es publico. Quien clone compila
+  igual; lo unico que pierde es el audio con licencia. Para recuperarlo, el
+  contenedor.
+
+**Y solo ARM.** De las librerias nativas del APK, 29,5 MB eran x86 y x86_64
+—React Native, Hermes, SQLite y el propio FFmpeg vienen con las cuatro—, y no
+hay un solo aparato x86 en la casa. Con `reactNativeArchitectures` y
+`abiFilters` el APK pasa de 67 a 36 MB, **menos que antes de meter el
+decodificador**. Ojo: manda `reactNativeArchitectures` de
+`android/gradle.properties`; poner solo `abiFilters` no cambia nada y el APK
+sale igual de gordo.
+
 ## Trampas conocidas
 
 - **Un `403` con una página que dice "Acceso Denegado… ajenas a Vodafone" no
