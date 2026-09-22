@@ -21,8 +21,14 @@ import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** Dónde deja el APK quien publica. Se cambia con `APK_DIR`. */
-export const CARPETA = process.env.APK_DIR ?? '/datos/apk';
+/**
+ * Dónde deja el APK quien publica.
+ *
+ * Cuelga de `DATOS` —el mismo sitio donde vive todo lo demás del servidor, que
+ * en el VPS es el volumen `m3u-sync-datos`— para que publicar no obligue a
+ * montar nada nuevo ni a tocar `compose.yaml`. Se puede mover con `APK_DIR`.
+ */
+export const CARPETA = process.env.APK_DIR ?? join(process.env.DATOS ?? '/datos', 'apk');
 
 const APK = 'chocitatv.apk';
 const FICHA = 'version.json';
