@@ -23,7 +23,7 @@ import { COLORES_PERFIL, fechaDeCompilacion } from '@m3u/ui';
 import { Retrato } from './retrato';
 import { RETRATOS } from './retratos';
 import { FONDO, ROJO, TINTA, TINTA_SUAVE, TINTA_TENUE, VERDE } from './tema';
-import { COMMIT, COMPILADA, VERSION } from './version';
+import { COMMIT, COMPILADA } from './version';
 
 const LOGOTIPO = require('./marca/logotipo.png');
 
@@ -247,7 +247,17 @@ export function PantallaPerfiles({ almacen, onElegir, onVolver, conexiones }: Pr
           */}
           <Text style={estilos.pie}>
             {conexiones ? `Conexiones de este aparato ${conexiones.usadas}/${conexiones.ranuras} · ` : ''}
-            v{VERSION} · {fechaDeCompilacion(COMPILADA)}
+            {/*
+              Sin número de versión a propósito.
+
+              `v0.0.1` llevaba ahí desde el primer día y **no lo tocaba nadie**,
+              así que no distinguía dos compilaciones: parecía decir algo y no
+              decía nada. Un número que nunca cambia es peor que ninguno,
+              porque con dos aparatos marcando lo mismo no sabes si tienen lo
+              mismo. La fecha y el commit sí lo dicen siempre, y son además lo
+              único que mira la comparación de versiones.
+            */}
+            {fechaDeCompilacion(COMPILADA)}
             {COMMIT ? ` · ${COMMIT}` : ''}
           </Text>
         </>
