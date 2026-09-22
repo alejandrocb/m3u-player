@@ -608,7 +608,20 @@ function Raiz() {
                   }
                 });
               }
-            : undefined
+            : /*
+                Sin perfil del que venir, "Volver" lleva a las listas.
+
+                Antes no se pintaba, y eso dejaba el aparato **encerrado**: un
+                aparato sin ningún perfil —recién emparejado, o revocado desde
+                la web— aterriza en "¿Cómo te llamas?" y ahí no había más
+                salida que inventarse uno. Y crear uno es lo peor que se puede
+                hacer en ese momento: se sincroniza y la casa se queda con un
+                perfil de más.
+
+                Desde las listas sí se puede emparejar otra vez, que es lo que
+                de verdad hace falta cuando pasa esto.
+              */
+              () => setFase({ tipo: 'listas' })
         }
       />
     );

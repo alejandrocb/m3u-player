@@ -17,10 +17,31 @@ interface Nativo {
 
 const nativo = (NativeModules as { Llavero?: Nativo }).Llavero;
 
-/** Si este fallo es el del llavero roto y no otra cosa. */
+/**
+ * Si este fallo es el del llavero roto y no otra cosa.
+ *
+ * Son dos averías distintas con el mismo remedio —borrar y empezar— y las dos
+ * se han visto en esta casa:
+ *
+ * - **El fichero corrupto**, "Unable to parse preferences proto". Pasó en la
+ *   tablet Xiaomi sin que nadie tocara nada.
+ * - **La clave invalidada**, `CryptoFailedException: Key permanently
+ *   invalidated`. El llavero cifra con una clave del almacén de Android que
+ *   **se destruye al desinstalar la aplicación**, mientras que el fichero
+ *   cifrado sí puede volver con la copia de seguridad automática del sistema.
+ *   El resultado son datos que ya no puede descifrar nadie. Salió al cambiar
+ *   la clave de firma, que obligó a desinstalar y reinstalar en los cuatro
+ *   aparatos; y sale igual si alguien cambia el bloqueo de pantalla.
+ *
+ * Lo que hay dentro es irrecuperable en los dos casos, así que no se pierde
+ * nada borrándolo: el emparejamiento se rehace y las listas las devuelve la
+ * casa.
+ */
 export function esLlaveroRoto(fallo: unknown): boolean {
   const mensaje = fallo instanceof Error ? fallo.message : String(fallo);
-  return /preferences proto|CorruptionException|Corruption/i.test(mensaje);
+  return /preferences proto|CorruptionException|Corruption|permanently invalidated|CryptoFailedException/i.test(
+    mensaje,
+  );
 }
 
 /**
