@@ -759,6 +759,27 @@ Las reglas, que hay que respetar al tocar cualquier escritura de perfil:
   `packages/storage/src/sincronizar.ts`, contra `SINCRONIZADAS` del esquema:
   añadir una tabla al reparto es una línea allí.
 
+**Y al adoptar la casa, la marca de bajada vuelve a cero.** Entre emparejar y
+adoptar pasa un rato largo —hay que elegir lista e importar el catálogo, minuto
+y medio—, y en ese rato la sincronización periódica ya se ha traído la casa
+entera y ha adelantado su marca. `vaciarLoLocal` borra eso con lo demás, así
+que si la marca se quedara donde estaba, la vuelta siguiente pediría "lo
+posterior a esto" y **esas filas quedarían detrás para siempre**. Pasó en el
+teléfono al emparejarlo:
+
+```
+[sync] 0 subidos, 200 bajados      ← llegan los perfiles de la casa
+[catalogo] refrescando por primera vez
+[perfiles] vaciados los locales    ← y noventa segundos después, fuera
+[sync] 0 subidos, 1 bajados        ← ya no vuelven
+```
+
+Por fuera se ve como un aparato recién emparejado que **te pide que te
+inventes un perfil**, que es justo lo contrario de adoptar los de la casa. Y
+crear uno ahí es peor que no hacer nada: se sincroniza y la casa se queda con
+un perfil de más. Vaciar lo tuyo y olvidar por dónde ibas son la misma
+operación, así que van juntas en `adoptado()`.
+
 **Hay dos marcas de agua, y no son intercambiables.** La de subida va en la
 fecha del cambio (`updated`, el reloj del aparato) y la de bajada en el sello
 de recepción del servidor (`recibido`, el reloj del VPS). Confundirlas se traga

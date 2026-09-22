@@ -59,6 +59,71 @@ test('al aprobarse, el emparejamiento se guarda con lo que hace falta', async ()
   assert.equal(guardado!.bajada, '');
 });
 
+/*
+  Adoptar la casa vacía lo local, así que hay que volver a pedirlo todo.
+
+  Entre emparejar y adoptar pasa un rato largo —elegir lista e importar el
+  catálogo, minuto y medio— y en ese rato la sincronización periódica ya se ha
+  traído la casa entera y ha adelantado su marca de bajada. Al vaciar, eso se
+  borra; si la marca se quedara donde estaba, la vuelta siguiente pediría "lo
+  posterior a esto" y esas filas quedarían detrás para siempre.
+
+  Medido en el teléfono, que acabó pidiendo que te inventaras un perfil:
+
+      [sync] 0 subidos, 200 bajados
+      [perfiles] vaciados los locales
+      [sync] 0 subidos, 1 bajados
+*/
+test('al adoptar la casa, la marca de bajada vuelve a cero', async () => {
+  let guardado: EstadoSync | null = {
+    servidor: 'https://sync.ejemplo.com',
+    token: 'un-token',
+    grupo: { id: 'g1', nombre: 'Casa' },
+    subida: '2026-09-22T09:00:00.000Z',
+    // Ya se había traído la casa entera antes de adoptar.
+    bajada: '2026-09-22T11:33:56.000Z',
+    adoptar: true,
+  };
+  const cliente = clienteCon({
+    leer: async () => guardado,
+    guardar: async (estado) => {
+      guardado = estado;
+    },
+    olvidar: async () => {
+      guardado = null;
+    },
+  });
+
+  await cliente.adoptado();
+
+  assert.equal(guardado!.adoptar, false, 'no se vacía dos veces');
+  assert.equal(guardado!.bajada, '', 'y se vuelve a pedir todo');
+  // Lo que este aparato tenga por subir no se toca: es suyo y no se ha ido.
+  assert.equal(guardado!.subida, '2026-09-22T09:00:00.000Z');
+});
+
+test('sin nada que adoptar no se toca la marca', async () => {
+  let guardado: EstadoSync | null = {
+    servidor: 'https://sync.ejemplo.com',
+    token: 'un-token',
+    grupo: null,
+    subida: '',
+    bajada: '2026-09-22T11:33:56.000Z',
+    adoptar: false,
+  };
+  const cliente = clienteCon({
+    leer: async () => guardado,
+    guardar: async (estado) => {
+      guardado = estado;
+    },
+    olvidar: async () => {},
+  });
+
+  await cliente.adoptado();
+
+  assert.equal(guardado!.bajada, '2026-09-22T11:33:56.000Z', 'volver a pedirlo todo cuesta');
+});
+
 test('si no se puede guardar, se dice: reintentar solo quema otro código', async () => {
   const cliente = clienteCon({
     leer: async () => null,

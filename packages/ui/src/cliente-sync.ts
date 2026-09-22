@@ -505,11 +505,34 @@ export class ClienteSync {
     }
   }
 
-  /** Ya se han vaciado los perfiles locales: no hay que volver a hacerlo. */
+  /**
+   * Ya se han vaciado los perfiles locales: no hay que volver a hacerlo.
+   *
+   * **Y la marca de bajada vuelve a cero**, que es la mitad que faltaba y que
+   * dejaba al aparato sin los perfiles de la casa.
+   *
+   * Lo que pasaba, medido en el teléfono al emparejarlo:
+   *
+   *     [sync] 0 subidos, 200 bajados      ← llegan los perfiles de la casa
+   *     [catalogo] refrescando por primera vez
+   *     [perfiles] vaciados los locales    ← y noventa segundos después, fuera
+   *     [sync] 0 subidos, 1 bajados        ← ya no vuelven
+   *
+   * Entre emparejar y adoptar pasa un rato largo —hay que elegir lista e
+   * importar el catálogo, minuto y medio—, y en ese rato la sincronización
+   * periódica ya se ha traído la casa entera y ha adelantado su marca. Al
+   * vaciar, eso se borra con lo demás; pero la marca se queda donde estaba, así
+   * que la vuelta siguiente pide "lo posterior a esto" y esas filas quedan
+   * detrás **para siempre**. El aparato se queda sin perfiles y pidiendo que
+   * te inventes uno, que es justo lo contrario de adoptar los de la casa.
+   *
+   * Vaciar y olvidar por dónde ibas son la misma operación, así que van
+   * juntas: quien tira lo suyo tiene que volver a pedirlo todo.
+   */
   async adoptado(): Promise<void> {
     const estado = await this.#almacen.leer();
     if (!estado?.adoptar) return;
-    await this.#almacen.guardar({ ...estado, adoptar: false });
+    await this.#almacen.guardar({ ...estado, adoptar: false, bajada: '' });
   }
 
   /** Deja de sincronizar. Lo guardado en el aparato se queda como está. */
