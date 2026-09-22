@@ -47,15 +47,34 @@ echo "==> compilando FFmpeg para las cuatro arquitecturas (esto tarda)"
 cd "${RUTA}/jni"
 ./build_ffmpeg.sh "${RUTA}" "${NDK_PATH}" linux-x86_64 "${NIVEL}" "${DECODIFICADORES[@]}"
 
-echo "==> lo que ha quedado:"
-ls -la "${RUTA}/jniLibs"/*/ | head -20
+echo "==> librerias nativas que han quedado:"
+find "${RUTA}/jniLibs" -name '*.so' -printf '%p  %s bytes
+' 2>/dev/null || echo "  (ninguna: algo ha ido mal arriba)"
 
 echo "==> empaquetando el AAR"
 cd /media3
-# Sin daemon ni caché de configuración: es un contenedor de usar y tirar.
+# Sin daemon: es un contenedor de usar y tirar.
 ./gradlew --no-daemon :lib-decoder-ffmpeg:assembleRelease
 
 mkdir -p /salida
-find /media3/libraries/decoder_ffmpeg/buildout -name '*.aar' -exec cp -v {} /salida/ \;
+
+# Se busca por todo el arbol a proposito: media3 ha cambiado de sitio el
+# directorio de salida entre versiones —`build` o `buildout`— y acertar la
+# ruta a la primera no merece la pena cuando el precio de fallar es tirar a la
+# basura media hora de compilacion.
+echo "==> buscando el AAR"
+ENCONTRADOS=$(find /media3 -name '*.aar' -path '*ffmpeg*' 2>/dev/null || true)
+if [ -z "${ENCONTRADOS}" ]; then
+  # Sin filtrar por nombre, por si el fichero se llama de otra forma.
+  ENCONTRADOS=$(find /media3 -name '*.aar' 2>/dev/null || true)
+fi
+
+if [ -z "${ENCONTRADOS}" ]; then
+  echo "!! No hay ningun .aar. Lo que hay bajo los directorios de salida:"
+  find /media3/libraries/decoder_ffmpeg -maxdepth 3 -type d 2>/dev/null | head -30
+  exit 1
+fi
+
+echo "${ENCONTRADOS}" | while read -r uno; do cp -v "${uno}" /salida/; done
 ls -la /salida
 echo "==> listo"
