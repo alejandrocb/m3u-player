@@ -146,6 +146,26 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    /*
+      El decodificador FFmpeg de media3, si esta compilado.
+
+      Es lo que trae los codecs de audio con licencia —DTS, Dolby TrueHD y los
+      Dolby de gama alta—, que se pagan por aparato y casi ningun Android
+      incluye: la tele de casa no decodifica DTS y la tablet Samsung no
+      decodifica ni AC3. Se compila aparte, en un contenedor, con
+      `tools/ffmpeg`, porque necesita el NDK y un `bash` de verdad.
+
+      Va con `fileTree` y no como dependencia fija **para que el proyecto siga
+      compilando sin el**: quien clone esto no tiene por que pasar por el
+      contenedor para tener una aplicacion que funcione, solo para que suene el
+      DTS. Sin el AAR, `fileTree` no encuentra nada y no pasa nada.
+
+      La version del AAR tiene que ser la misma que `RNVideo_media3Version`
+      (hoy 1.8.0): la extension se enchufa por reflexion y una version
+      distinta no encaja.
+    */
+    implementation fileTree(dir: 'libs', include: ['*.aar'])
 }
 
 /**
