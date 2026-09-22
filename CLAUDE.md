@@ -1702,9 +1702,22 @@ que sea y se ve lo que se está eligiendo. **El borrado avisa**: se lleva por
 delante el historial y la Mi Lista de esa persona, y lo hace en todos los
 aparatos de la casa.
 
-Al pie van **la versión y las conexiones**, y solo aquí: es información de
-mantenimiento, que al entrar se mira un momento y dentro de la biblioteca sería
-ruido sobre las carátulas.
+Al pie van **la fecha de la compilación y las conexiones**, y solo aquí: es
+información de mantenimiento, que al entrar se mira un momento y dentro de la
+biblioteca sería ruido sobre las carátulas.
+
+**Y ahí mismo, subrayado, "Actualizar" cuando hay algo que actualizar.** Va
+pegado al sello a propósito: ese es el sitio donde uno mira para saber si este
+aparato va atrasado, así que es donde tiene sentido ofrecerle ponerse al día.
+Estuvo un rato en el menú del perfil y era ruido entre cosas de todos los días
+—cambiar de persona, las descargas— cuando esto pasa una vez cada mucho. No
+ocupa sitio el resto del tiempo, que es casi siempre.
+
+**No lleva número de versión.** `v0.0.1` salía de `package.json`, no lo tocaba
+nadie y por tanto no distinguía dos compilaciones: parecía decir algo y no
+decía nada. Con dos aparatos marcando lo mismo no sabes si tienen lo mismo. La
+fecha y el commit sí lo dicen siempre, y son además lo único que mira la
+comparación de versiones.
 
 El sello lo genera `tools/sello.mjs`, que lanza Gradle antes de empaquetar el
 JavaScript. Lleva **fecha y commit** porque la versión de `package.json` no

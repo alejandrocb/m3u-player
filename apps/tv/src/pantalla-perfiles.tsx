@@ -51,12 +51,32 @@ interface Props {
    * hay adónde volver, y un botón que no lleva a ninguna parte confunde.
    */
   onVolver?: () => void;
+  /**
+   * La fecha de la versión publicada, si es más nueva que esta.
+   *
+   * Va **aquí y no en el menú del perfil** porque este pie es donde vive la
+   * información de mantenimiento: la que se mira un momento al entrar y que
+   * dentro de la biblioteca sería ruido sobre las carátulas. Actualizar es
+   * exactamente eso, y además pasa una vez cada mucho.
+   */
+  nuevaVersion?: string | null;
+  /** Por dónde va la descarga mientras se baja, para poder decirlo. */
+  bajandoVersion?: { bytes: number; total: number } | null;
+  onActualizar?: () => void;
 }
 
 /** A quién se está editando: uno de la casa, o el que se está creando. */
 type Edicion = { perfil: Perfil | null; nombre: string; color: string; avatar: string };
 
-export function PantallaPerfiles({ almacen, onElegir, onVolver, conexiones }: Props) {
+export function PantallaPerfiles({
+  almacen,
+  onElegir,
+  onVolver,
+  conexiones,
+  nuevaVersion,
+  bajandoVersion,
+  onActualizar,
+}: Props) {
   const [perfiles, setPerfiles] = useState<Perfil[] | null>(null);
   const [administrando, setAdministrando] = useState(false);
   const [edicion, setEdicion] = useState<Edicion | null>(null);
@@ -260,6 +280,28 @@ export function PantallaPerfiles({ almacen, onElegir, onVolver, conexiones }: Pr
             {fechaDeCompilacion(COMPILADA)}
             {COMMIT ? ` · ${COMMIT}` : ''}
           </Text>
+
+          {/*
+            "Actualizar", solo cuando hay algo que actualizar.
+
+            Subrayado y a continuación del sello: al lado de la fecha que
+            acabas de leer, que es donde uno mira para saber si este aparato va
+            atrasado. Y no ocupa sitio el resto del tiempo, que es casi
+            siempre.
+          */}
+          {bajandoVersion ? (
+            <Text style={estilos.pie}>
+              Bajando… {Math.round((bajandoVersion.bytes / Math.max(1, bajandoVersion.total)) * 100)} %
+            </Text>
+          ) : nuevaVersion && onActualizar ? (
+            <Pressable onPress={onActualizar}>
+              {({ focused, pressed }) => (
+                <Text style={[estilos.actualizar, (focused || pressed) && estilos.actualizarEnfocado]}>
+                  Actualizar a {fechaDeCompilacion(nuevaVersion)}
+                </Text>
+              )}
+            </Pressable>
+          ) : null}
         </>
       )}
     </ScrollView>
@@ -451,6 +493,22 @@ const estilos = StyleSheet.create({
     color: TINTA_TENUE,
     fontSize: 12,
     marginTop: 24,
+  },
+  /*
+    Subrayado, que es lo que dice "esto se puede pulsar" sin gritar. Del mismo
+    tamaño que el sello al que acompaña: no compite con los perfiles, que es lo
+    que uno viene a hacer aquí.
+  */
+  actualizar: {
+    color: TINTA_SUAVE,
+    fontSize: 12,
+    marginTop: 6,
+    textDecorationLine: 'underline',
+  },
+  // Con el mando, el verde de siempre: es el único foco de esta pantalla que
+  // no es un círculo, y sin esto no se vería dónde está.
+  actualizarEnfocado: {
+    color: VERDE,
   },
   fila: {
     alignItems: 'center',

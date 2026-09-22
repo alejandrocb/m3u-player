@@ -86,7 +86,6 @@ import {
   elementosDeFila,
   Presentador,
   cantidad,
-  fechaDeCompilacion,
   mediasEstrellas,
   nota,
   numero,
@@ -318,6 +317,33 @@ function Raiz() {
   const [nuevaVersion, setNuevaVersion] = useState<VersionPublicada | null>(null);
   /** Por dónde va la descarga de la actualización, mientras se baja. */
   const [bajandoVersion, setBajandoVersion] = useState<AvanceDeActualizacion | null>(null);
+  /** Por referencia: así `actualizarApp` no se rehace en cada pintado. */
+  const nuevaVersionRef = useRef<VersionPublicada | null>(null);
+  nuevaVersionRef.current = nuevaVersion;
+
+  /**
+   * Se baja la versión publicada y se la da al instalador de Android.
+   *
+   * Vive aquí y no dentro del JSX porque lo usa la pantalla de perfiles, que
+   * es donde está el sello de la compilación: ahí es donde uno mira para saber
+   * si este aparato va atrasado, y donde tiene sentido ofrecerle ponerse al
+   * día. En el menú del perfil era ruido entre cosas de todos los días.
+   */
+  const actualizarApp = useCallback(async () => {
+    const publicada = nuevaVersionRef.current;
+    if (!publicada) return;
+    const estado = await sync.current.estado();
+    if (!estado) return;
+
+    setBajandoVersion({ bytes: 0, total: publicada.bytes });
+    try {
+      await bajarEInstalar(estado.servidor, estado.token, publicada, setBajandoVersion);
+    } catch (fallo) {
+      console.warn('[actualizar] no se pudo', fallo);
+    } finally {
+      setBajandoVersion(null);
+    }
+  }, []);
 
   const comprobarVersion = useCallback(async () => {
     try {
@@ -586,6 +612,9 @@ function Raiz() {
         // Lo que este aparato tiene abierto contra el panel, que es lo único
         // que se puede saber: lo de la casa entera no lo dice nadie.
         conexiones={arbitro.current.resumen()}
+        nuevaVersion={nuevaVersion?.compilada ?? null}
+        bajandoVersion={bajandoVersion}
+        onActualizar={() => void actualizarApp()}
         onElegir={(perfil) => setFase({ tipo: 'biblioteca', cuenta: fase.cuenta, medicion: fase.medicion, perfil })}
         onVolver={
           fase.perfil
@@ -673,23 +702,6 @@ function Raiz() {
       }
       onActualizar={() => conectar(fase.cuenta, true)}
       onFaltanFichas={(cuantas) => void rehacerCatalogo(fase.cuenta, cuantas)}
-      nuevaVersion={nuevaVersion}
-      bajandoVersion={bajandoVersion}
-      onActualizarApp={() => {
-        if (!nuevaVersion) return;
-        void (async () => {
-          const estado = await sync.current.estado();
-          if (!estado) return;
-          setBajandoVersion({ bytes: 0, total: nuevaVersion.bytes });
-          try {
-            await bajarEInstalar(estado.servidor, estado.token, nuevaVersion, setBajandoVersion);
-          } catch (fallo) {
-            console.warn('[actualizar] no se pudo', fallo);
-          } finally {
-            setBajandoVersion(null);
-          }
-        })();
-      }}
       sincronizado={sincronizado}
       preparado={preparado}
       aparato={nombreAparato}
@@ -725,9 +737,6 @@ function BibliotecaVista({
   onCambiarPerfil,
   onActualizar,
   onFaltanFichas,
-  nuevaVersion,
-  bajandoVersion,
-  onActualizarApp,
   sincronizado,
   preparado,
   aparato,
@@ -754,11 +763,6 @@ function BibliotecaVista({
   onActualizar: () => void;
   /** El historial trae fichas que este catálogo no conoce: está viejo. */
   onFaltanFichas: (cuantas: number) => void;
-  /** Lo que hay publicado en el servidor, si es más nuevo que esto. */
-  nuevaVersion: VersionPublicada | null;
-  /** Por dónde va la descarga de la actualización, mientras se baja. */
-  bajandoVersion: AvanceDeActualizacion | null;
-  onActualizarApp: () => void;
   /** Sube cuando ha llegado algo de otro aparato: hay que repintar. */
   sincronizado: number;
   /** Pide sincronizar ahora, sin esperar al temporizador. */
@@ -2548,21 +2552,6 @@ function BibliotecaVista({
     ...(enLaTele && !verMando
       ? [{ texto: `En la tele: ${enLaTele.medio.titulo}`, onPress: () => setVerMando(true) }]
       : []),
-    /*
-      La actualización, cuando la hay. Es una entrada que **aparece y se va**,
-      así que va aquí y no en una pantalla de ajustes donde nadie la buscaría:
-      lo que pasa es que un día abres el menú y está.
-    */
-    ...(bajandoVersion
-      ? [
-          {
-            texto: `Bajando… ${Math.round((bajandoVersion.bytes / Math.max(1, bajandoVersion.total)) * 100)} %`,
-            onPress: () => {},
-          },
-        ]
-      : nuevaVersion
-        ? [{ texto: `Actualizar a ${fechaDeCompilacion(nuevaVersion.compilada)}`, onPress: onActualizarApp }]
-        : []),
     ...otrosPerfiles.map((otro) => ({
       texto: otro.nombre,
       retrato: otro,
